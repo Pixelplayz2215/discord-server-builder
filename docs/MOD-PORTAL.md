@@ -27,7 +27,7 @@ These rules always apply:
 
 ## Set it up (about 10 minutes)
 
-You need a free [Render](https://render.com) account, connected to the GitHub account that holds this repo.
+Each bot owner runs **their own** portal, because it holds their bot's token. You don't need permission from anyone, and you never share your token. You'll need a free [GitHub](https://github.com) account and a free [Render](https://render.com) account.
 
 ### 1. Get your app's OAuth details
 
@@ -35,19 +35,54 @@ You need a free [Render](https://render.com) account, connected to the GitHub ac
 2. Go to **OAuth2** and copy the **Client ID**.
 3. Press **Reset Secret** and copy the **Client Secret**. Keep it private, like the bot token.
 
-### 2. Deploy the portal on Render
+### 2. Get your own copy of the code
 
-1. In Render, go to **New → Blueprint** and pick the `discord-server-builder` repository. Render reads `render.yaml` from it.
-2. Fill in the three values it asks for:
+Render deploys from a GitHub repository you can access, so make a copy (a "fork") of this one in your own account:
+
+1. Sign in to GitHub and open [Pixelplayz2215/discord-server-builder](https://github.com/Pixelplayz2215/discord-server-builder).
+2. Click **Fork** (top right), then **Create fork**. You now have `<your-name>/discord-server-builder`.
+
+When the portal gets fixes later, open your fork on GitHub and click **Sync fork**. Render redeploys your portal on its own.
+
+*If you own this repository, skip this step and use it directly.*
+
+### 3. Deploy the portal on Render
+
+1. Sign up at Render with **GitHub**. When GitHub asks which repositories Render may access, pick your `discord-server-builder` fork.
+2. In Render, go to **New → Blueprint** and pick that repository. Render reads `render.yaml` from it.
+3. Fill in the three values it asks for:
    - `DISCORD_BOT_TOKEN`: your bot token.
    - `DISCORD_CLIENT_ID`: from step 1.
    - `DISCORD_CLIENT_SECRET`: from step 1.
 
    `SESSION_SECRET` is generated for you.
-3. Press **Apply** and wait for the deploy to finish. Copy the service URL, for example `https://discord-mod-portal-abcd.onrender.com`.
-4. Open that URL in a browser. You should see **"Mod portal is running"**.
+4. Press **Deploy Blueprint** (or **Apply**) and wait for the deploy to finish. Copy the service URL, for example `https://discord-mod-portal-abcd.onrender.com`.
+5. Open that URL in a browser. You should see **"Mod portal is running"**.
 
-### 3. Allow the sign-in redirect
+<details>
+<summary>No GitHub account? Deploy straight from this public repo instead</summary>
+
+In Render, go to **New → Web Service → Public Git Repository**, paste `https://github.com/Pixelplayz2215/discord-server-builder` and use these settings:
+
+| Setting | Value |
+| --- | --- |
+| Runtime | Node |
+| Build command | `npm ci --omit=dev` |
+| Start command | `node server/index.js` |
+| Health check path | `/health` |
+| Instance type | Free |
+
+Then add these environment variables:
+
+- `NODE_VERSION`: `22`
+- `DISCORD_BOT_TOKEN`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`: from step 1.
+- `SESSION_SECRET`: a random password, at least 32 characters long. Use a password generator.
+
+Render won't redeploy this kind of service on its own. To pick up portal fixes later, press **Manual Deploy → Deploy latest commit**.
+
+</details>
+
+### 4. Allow the sign-in redirect
 
 In the Developer Portal, go to **OAuth2 → Redirects** and add the URL below (your Render URL plus `/auth/callback`), then press **Save Changes**:
 
@@ -55,11 +90,11 @@ In the Developer Portal, go to **OAuth2 → Redirects** and add the URL below (y
 https://discord-mod-portal-abcd.onrender.com/auth/callback
 ```
 
-### 4. Give your mods the app
+### 5. Give your mods the app
 
-Mods use the same app. They choose **Sign in with Discord** on the Home page and paste the portal URL. They'll see every server the bot is in where they are a mod.
+Mods download the regular app from the [latest release](https://github.com/Pixelplayz2215/discord-server-builder/releases/latest). They choose **Sign in with Discord** on the Home page and paste **your** portal URL, then see every server your bot is in where they are a mod.
 
-To skip the pasting, put your portal URL in `package.json` → `modViewPortalUrl` and run `npm run dist:mod`. This builds `mod-view-<version>.exe` with the address already filled in. `npm run release` also attaches it to the GitHub release, so mods can download it from there.
+To save them the pasting, you can build your own `mod-view` exe with your address already filled in. Put your portal URL in your fork's `package.json` → `modViewPortalUrl`, then run `npm install` and `npm run dist:mod` on a Windows PC with Node.js installed. You'll find it at `dist/mod-view-<version>.exe`.
 
 ## Good to know
 

@@ -57,7 +57,7 @@ Running copies of the app will show the "New version found" popup the next time 
 
 ## Mod portal
 
-`server/` is a small Node 20+ web server, with no dependencies, that keeps the bot token so moderators never need it. Deploy it with `render.yaml` (Render → New → Blueprint), or on any host with `npm run portal`. The full setup is in [docs/MOD-PORTAL.md](docs/MOD-PORTAL.md).
+`server/` is a small Node 20+ web server, with no dependencies, that keeps the bot token so moderators never need it. Each bot owner runs their own: fork this repo, then deploy your fork with `render.yaml` (Render → New → Blueprint), or run it on any host with `npm run portal`. The full setup is in [docs/MOD-PORTAL.md](docs/MOD-PORTAL.md).
 
 After it's deployed, put its address in `package.json` → `modViewPortalUrl`. `npm run dist:mod` (and every `npm run release`) then also builds `mod-view-<version>.exe`. That's the same app with your portal address already filled in on the sign-in box, ready to hand to your moderators. The regular build leaves the box empty, so people who download the app aren't sent to your portal. `npm run test:portal` runs the portal's permission tests.
 
