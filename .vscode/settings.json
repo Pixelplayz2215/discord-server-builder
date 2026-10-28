@@ -1,0 +1,10 @@
+{
+  "files.exclude": {
+    "dist": true
+  },
+  "search.exclude": {
+    "node_modules": true,
+    "dist": true
+  },
+  "editor.tabSize": 2
+}
