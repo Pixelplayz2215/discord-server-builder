@@ -78,6 +78,7 @@
     font: 'poppins',
     pixelLabels: true,
     effects: true,
+    checkUpdates: true,
   };
 
   const HEX = /^#[0-9a-f]{6}$/i;
@@ -105,6 +106,7 @@
       font: FONTS[s.font] ? s.font : DEFAULTS.font,
       pixelLabels: s.pixelLabels !== false,
       effects: s.effects !== false,
+      checkUpdates: s.checkUpdates !== false,
     };
   }
 

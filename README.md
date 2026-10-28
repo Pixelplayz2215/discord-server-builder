@@ -13,7 +13,13 @@ A Windows desktop app (Electron) in the Pixelplayz2215 theme for running Discord
 
 - **Settings** (gear icon at the bottom left). Includes 8 themes, some of them light. You can also edit the colours, upload your own logo (it also becomes the window and taskbar icon), rename the app, and set the UI scale, text size, corner roundness and font. Pixel-style labels and the animations and background glow can be switched off. The "by Pixelplayz2215" credit in the title bar can't be changed. Settings are saved in `settings.json` in the same folder as the bot tokens.
 
-Bot tokens are encrypted with Windows DPAPI (Electron `safeStorage`) and stored in `%APPDATA%\Discord Server Builder`. The UI never sees a token. Every Discord call runs in the main process.
+- **Updates.** Settings → **Check for updates** reads the latest GitHub release, and the app also checks on startup (this can be turned off). When a newer version is out, a "New version found" popup appears. In the portable .exe, **Reload to update** downloads the new .exe next to the current one and restarts into it.
+
+- **Moderator sign-in.** Your mods can use the app without the bot token. They click **Sign in with Discord** and get the servers where they have Kick, Ban or Timeout permission, with moderation tools only. Each action is checked against their own Discord permissions. This needs the small mod portal server in `server/` running on a host. Setup steps are in [docs/MOD-PORTAL.md](docs/MOD-PORTAL.md).
+
+## Your data stays on your PC
+
+Bots, settings and saved templates are stored only in `%APPDATA%\Discord Server Builder` (`bots.json`, `settings.json`, `templates.json`). Bot tokens are encrypted with Windows DPAPI (Electron `safeStorage`). None of this is in the project folder, the GitHub repo or the built .exe, so every copy of the app starts empty. `.gitignore` also blocks those file names in case one gets copied into the project. The UI never sees a token, and every Discord call runs in the main process.
 
 ## Run it
 
@@ -35,7 +41,24 @@ npm install
 npm start          # run the app
 npm run dev        # run with DevTools open
 npm run dist       # portable .exe in dist/
+npm run release    # build + publish a GitHub release (see below)
 ```
+
+## Publishing an update
+
+The app's update check reads the latest release of the repository named in `package.json` → `updateRepo`. That repository's releases must be **public**, because GitHub doesn't show a private repository's releases to apps that aren't signed in.
+
+1. Bump `version` in `package.json` (for example `1.2.0` → `1.3.0`).
+2. Commit and push.
+3. Run `npm run release`, or in VS Code: Terminal → Run Task → **Publish GitHub release**. This builds `dist\DiscordServerBuilder-<version>-portable.exe` and creates the release `v<version>` with that .exe attached and auto-generated notes. It stops if there are uncommitted or unpushed changes, or if the release already exists.
+
+Running copies of the app will show the "New version found" popup the next time they check.
+
+## Mod portal
+
+`server/` is a small Node 20+ web server, with no dependencies, that keeps the bot token so moderators never need it. Deploy it with `render.yaml` (Render → New → Blueprint), or on any host with `npm run portal`. The full setup is in [docs/MOD-PORTAL.md](docs/MOD-PORTAL.md).
+
+After it's deployed, put its address in `package.json` → `modPortalUrl` before building a release. Mods' copies will then have it filled in on the sign-in box. `npm run test:portal` runs the portal's permission tests.
 
 ## Bot setup
 
@@ -58,20 +81,30 @@ src/main/       Electron main process
   discord.js      REST client with rate-limit handling
   gateway.js      presence-only gateway connection (keeps bots "online")
   builder.js      template → server builder, clone, purge, lock, member paging
-  store.js        encrypted token + saved-template storage
+  updater.js      GitHub release check, download, restart into the new .exe
+  portal.js       "Sign in with Discord" client for moderators (talks to server/)
+  store.js        encrypted token/session, settings and saved-template storage
   preload.js      narrow IPC bridge
 src/shared/
   appearance.js   theme presets + settings defaults/validation (used by main and UI)
 src/renderer/   UI (plain HTML/CSS/JS, no bundler)
   js/theme.js     applies appearance settings as CSS variables (loaded in <head>)
   js/settings.js  Settings page
+  js/updates.js   update check + "New version found" popup
   js/core.js      element helper, icons, modals, toasts
   js/home.js      Home page / connect a bot
   js/bot.js       per-bot page + dashboard
   js/server.js    server header and Overview/Members/Moderation/Channels/Audit tabs
   js/builder.js   Builder tab
   js/templates.js built-in server templates
-scripts/        make-icon.js (draws the logo → build/icon.png/.ico), copy-fonts.js
+scripts/        make-icon.js (draws the logo → build/icon.png/.ico), copy-fonts.js, release.js
+server/         mod portal (not part of the .exe)
+  index.js        HTTP server: sign-in, moderation-only API
+  auth.js         Discord OAuth sign-in + signed sessions
+  guard.js        per-request permission and role-hierarchy checks
+  portal.test.js  tests with a fake Discord
+docs/MOD-PORTAL.md  how to deploy the portal and give mods access
+render.yaml     Render blueprint for the portal
 ```
 
 The theme colours come from pixelplayz.org: navy `#0f0c22`, teal `#0bbfbc`, coral `#fc354c` and magenta `#a41d70`, set in Poppins and Silkscreen.

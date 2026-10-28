@@ -3,13 +3,15 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 const INVOKE = new Set([
   'bots:list', 'bots:add', 'bots:refresh', 'bots:update', 'bots:remove', 'bots:reorder',
+  'mod:signIn', 'mod:cancelSignIn',
   'presence:set', 'rest', 'members:all', 'channel:purge', 'channel:lock',
   'builder:run', 'builder:clone',
   'templates:list', 'templates:save', 'templates:delete', 'templates:export', 'templates:import',
   'settings:set', 'settings:pickLogo',
+  'update:check', 'update:install',
   'open:external', 'app:info',
 ]);
-const EVENTS = new Set(['presence:state', 'builder:event']);
+const EVENTS = new Set(['presence:state', 'builder:event', 'update:progress']);
 
 contextBridge.exposeInMainWorld('bridge', {
   // Read synchronously so theme.js can style the page before its first paint.

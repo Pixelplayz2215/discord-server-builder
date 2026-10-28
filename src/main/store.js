@@ -38,6 +38,12 @@ const store = {
     return readJson('bots.json', []).map(publicBot);
   },
 
+  getBot(botId) {
+    const bot = readJson('bots.json', []).find((b) => b.id === botId);
+    return bot ? publicBot(bot) : null;
+  },
+
+  // A bot token, or the mod-portal session for accounts with type 'mod'.
   getToken(botId) {
     const bot = readJson('bots.json', []).find((b) => b.id === botId);
     if (!bot) throw new Error('That bot is no longer saved.');
@@ -48,7 +54,7 @@ const store = {
     const bots = readJson('bots.json', []);
     const existing = bots.find((b) => b.id === bot.id);
     const record = {
-      presence: { enabled: true, status: 'online', text: '' },
+      ...(bot.type === 'mod' ? {} : { presence: { enabled: true, status: 'online', text: '' } }),
       addedAt: Date.now(),
       ...existing,
       ...bot,

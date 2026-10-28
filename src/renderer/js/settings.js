@@ -1,4 +1,4 @@
-// Settings page: theme presets, colours, logo and name, size, fonts and effects.
+// Settings page: theme presets, colours, logo and name, size, fonts and effects, updates.
 // Changes apply instantly via Theme.apply and are saved (debounced) through the main process.
 
 const SettingsPage = {
@@ -29,6 +29,7 @@ const SettingsPage = {
         SettingsPage.brandCard(),
         SettingsPage.sizeCard(),
         SettingsPage.styleCard(),
+        SettingsPage.updatesCard(),
       ),
     );
   },
@@ -222,6 +223,43 @@ const SettingsPage = {
           { class: 'stack', style: { gap: '14px', paddingTop: '26px' } },
           switchEl(s.pixelLabels, (v) => SettingsPage.update({ pixelLabels: v }), 'Pixel-style labels'),
           switchEl(s.effects, (v) => SettingsPage.update({ effects: v }), 'Animations & background glow'),
+        ),
+      ),
+    );
+  },
+
+  updatesCard() {
+    const s = Theme.settings;
+    const version = h('span', { class: 'badge teal pixel' }, '…');
+    let releasesUrl = null;
+    api('app:info')
+      .then((info) => {
+        version.textContent = `v${info.version}`;
+        releasesUrl = info.releasesUrl;
+      })
+      .catch(() => (version.textContent = '?'));
+    const checkBtn = h('button', { class: 'btn teal' }, icon('refresh'), 'Check for updates');
+    checkBtn.addEventListener('click', withBusy(checkBtn, () => Updater.check()));
+    return SettingsPage.card(
+      'Updates',
+      'download',
+      h(
+        'div',
+        { class: 'stack', style: { gap: '14px' } },
+        h(
+          'div',
+          { class: 'row wrap' },
+          h('span', { class: 'label' }, 'Installed version'),
+          version,
+          h('div', { class: 'grow' }),
+          checkBtn,
+          h('button', { class: 'btn', onclick: () => releasesUrl && openExternal(releasesUrl) }, icon('external'), 'View releases'),
+        ),
+        switchEl(s.checkUpdates, (v) => SettingsPage.update({ checkUpdates: v }), 'Check for updates when the app starts'),
+        h(
+          'p',
+          { class: 'subtle', style: { fontSize: 'calc(12rem / 14)' } },
+          'New versions come from the app\'s GitHub releases. The portable .exe downloads the update next to itself and restarts into it. Your bots and settings carry over.',
         ),
       ),
     );

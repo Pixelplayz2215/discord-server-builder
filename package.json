@@ -1,12 +1,14 @@
 {
   "name": "discord-server-builder",
   "productName": "Discord Server Builder",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Pixelplayz-themed desktop app to manage Discord bots, moderate servers and build server layouts from templates.",
   "main": "src/main/main.js",
   "author": "Pixelplayz2215",
   "license": "MIT",
   "private": true,
+  "updateRepo": "Pixelplayz2215/discord-server-builder",
+  "modPortalUrl": "",
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
@@ -14,7 +16,10 @@
     "fonts": "node scripts/copy-fonts.js",
     "pack": "electron-builder --win dir",
     "dist": "electron-builder --win portable",
-    "dist:installer": "electron-builder --win nsis"
+    "dist:installer": "electron-builder --win nsis",
+    "release": "node scripts/release.js",
+    "portal": "node server/index.js",
+    "test:portal": "node --test server/portal.test.js"
   },
   "dependencies": {
     "ws": "8.18.3"

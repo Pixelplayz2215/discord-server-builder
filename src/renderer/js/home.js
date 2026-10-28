@@ -28,6 +28,16 @@ const HomePage = {
     connectBtn.addEventListener('click', connect);
     tokenInput.addEventListener('keydown', (e) => e.key === 'Enter' && connect());
 
+    // Moderators sign in through the owner's mod portal instead of using a token.
+    const portalInput = h('input', { class: 'input', id: 'portal-input', placeholder: 'https://your-mod-portal.onrender.com', autocomplete: 'off' });
+    const lastPortal = App.bots.find((b) => b.type === 'mod')?.portalUrl;
+    if (lastPortal) portalInput.value = lastPortal;
+    else api('app:info').then((info) => !portalInput.value && (portalInput.value = info.modPortalUrl || ''), () => {});
+    const modBtn = h('button', { class: 'btn discord lg' }, icon('logIn'), 'Sign in with Discord');
+    const modSignIn = withBusy(modBtn, () => HomePage.signInAsMod(portalInput.value));
+    modBtn.addEventListener('click', modSignIn);
+    portalInput.addEventListener('keydown', (e) => e.key === 'Enter' && modSignIn());
+
     const shape = (name, cls) => h('div', { class: `shape ${cls}` }, icon(name));
 
     return h(
@@ -55,6 +65,13 @@ const HomePage = {
               h('label', { class: 'label', for: 'token-input' }, 'Bot token'),
               h('div', { class: 'row' }, h('div', { class: 'input-wrap' }, icon('key'), tokenInput, eye), connectBtn),
               h('div', { class: 'hint subtle', style: { fontSize: 'calc(12rem / 14)' } }, 'Tokens are encrypted on this PC (Windows DPAPI) and are only ever sent to Discord.'),
+            ),
+            h(
+              'div',
+              { class: 'connect-card card mod-card' },
+              h('label', { class: 'label', for: 'portal-input' }, h('span', { class: 'badge peri' }, icon('shield'), 'Moderator?'), ' Sign in with your Discord account — no bot token needed'),
+              h('div', { class: 'row' }, h('div', { class: 'input-wrap' }, icon('link'), portalInput), modBtn),
+              h('div', { class: 'hint subtle', style: { fontSize: 'calc(12rem / 14)' } }, 'Paste the mod portal address your server owner gave you. You\'ll see the servers where you have Kick, Ban or Timeout permission.'),
             ),
           ),
           h(
@@ -117,6 +134,35 @@ const HomePage = {
         ),
       ),
     );
+  },
+
+  async signInAsMod(portalUrl) {
+    if (!portalUrl.trim()) {
+      document.getElementById('portal-input')?.focus();
+      return toast('Paste the mod portal address first.', 'error');
+    }
+    let cancelled = false;
+    const waiting = openModal({
+      title: 'Finish signing in',
+      dismissable: false,
+      body: [
+        h('p', null, 'Your browser is opening Discord. Approve the sign-in there, then come back — this window updates by itself.'),
+        h('div', { class: 'progress indeterminate' }, h('div')),
+      ],
+      actions: [{ label: 'Cancel', kind: 'ghost', onClick: () => { cancelled = true; api('mod:cancelSignIn').catch(() => {}); } }],
+    });
+    const modal = document.querySelector('#modal-root .modal-backdrop:last-child .modal');
+    try {
+      const account = await api('mod:signIn', portalUrl);
+      App.upsertBot(account);
+      toast(`Signed in as ${displayName(account)}`);
+      App.go({ page: 'bot', botId: account.id });
+    } catch (err) {
+      if (!cancelled) toastError(err);
+    } finally {
+      modal?.closeModal?.();
+      await waiting;
+    }
   },
 
   step(title, text, action) {

@@ -1,3 +1,14 @@
 node_modules/
 dist/
 *.log
+
+# Local app data. The app keeps these in %APPDATA%\Discord Server Builder, never in the project,
+# but block them here too so a copied bot token or settings file can't be committed by accident.
+bots.json
+settings.json
+!.vscode/settings.json
+templates.json
+userdata/
+*.token
+.env
+.env.*

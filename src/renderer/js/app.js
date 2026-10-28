@@ -71,13 +71,22 @@ const App = {
     if (guild) crumb.append(' › ', guild.name);
   },
 
+  isMod(botId) {
+    return this.bot(botId)?.type === 'mod';
+  },
+
   presenceClass(botId) {
+    if (this.isMod(botId)) return 'mod';
     const p = this.presence[botId] || { state: 'offline' };
     if (p.state === 'online') return this.bot(botId)?.presence?.status || 'online';
     return p.state;
   },
 
   presenceLabel(botId) {
+    if (this.isMod(botId)) {
+      const portalBot = this.bot(botId).portalBot;
+      return portalBot ? `Moderator · via ${displayName(portalBot)}` : 'Moderator';
+    }
     const p = this.presence[botId] || { state: 'offline' };
     const labels = { online: 'Online', idle: 'Idle', dnd: 'Do Not Disturb', connecting: 'Connecting…', error: 'Error', offline: 'Offline' };
     if (p.state === 'error') return p.detail || 'Error';
@@ -103,7 +112,7 @@ const App = {
     const botItems = this.bots.map((bot) => {
       const el = item(
         '',
-        displayName(bot),
+        bot.type === 'mod' ? `${displayName(bot)} (moderator)` : displayName(bot),
         h('button', { class: 'rail-btn', onclick: () => this.go({ page: 'bot', botId: bot.id }) }, h('img', { src: userAvatar(bot), alt: '' })),
         this.route.page === 'bot' && this.route.botId === bot.id,
       );
@@ -162,6 +171,7 @@ async function init() {
   // Presence events can arrive before the bot list does; keep whichever state is newer.
   for (const bot of App.bots) App.presence[bot.id] ??= { state: bot.presence?.enabled ? 'connecting' : 'offline' };
   App.render();
+  if (Theme.settings.checkUpdates) setTimeout(() => Updater.check({ silent: true }), 2500);
 }
 
 init();

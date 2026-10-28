@@ -37,6 +37,9 @@ const ServerPage = {
     return {
       bot,
       botId: bot.id,
+      // A moderator signed in through a mod portal: owner-only tools are hidden, and "bot" member
+      // lookups (srv.botMember) resolve to the moderator themself, so permissions shown are theirs.
+      mod: bot.type === 'mod',
       view,
       guildId,
       srv: App.server(bot.id, guildId),
@@ -102,6 +105,7 @@ const ServerPage = {
       return;
     }
     const tabs = { overview: OverviewTab, members: MembersTab, moderation: ModerationTab, channels: ChannelsTab, builder: Builder, audit: AuditTab };
+    if (ctx.mod && view.tab === 'builder') view.tab = 'overview';
     (tabs[view.tab] || OverviewTab).render(ctx, el);
   },
 
@@ -134,11 +138,13 @@ const ServerPage = {
             g.approximate_presence_count != null ? h('span', { class: 'badge teal' }, `${fmtNum(g.approximate_presence_count)} online`) : null,
             g.premium_tier ? h('span', { class: 'badge pixel peri' }, `Boost lvl ${g.premium_tier}`) : null,
             g.features?.includes('COMMUNITY') ? h('span', { class: 'badge gold' }, 'Community') : null,
-            bits == null
-              ? null
-              : ServerPage.can(bits, PERM.ADMINISTRATOR)
-                ? h('span', { class: 'badge teal' }, icon('shield'), 'Bot is Administrator')
-                : h('span', { class: 'badge coral' }, icon('alert'), 'Bot has limited permissions'),
+            ctx.mod
+              ? h('span', { class: 'badge peri' }, icon('shield'), 'You are a moderator here')
+              : bits == null
+                ? null
+                : ServerPage.can(bits, PERM.ADMINISTRATOR)
+                  ? h('span', { class: 'badge teal' }, icon('shield'), 'Bot is Administrator')
+                  : h('span', { class: 'badge coral' }, icon('alert'), 'Bot has limited permissions'),
           ),
         ),
         refresh,
@@ -147,7 +153,7 @@ const ServerPage = {
       h(
         'div',
         { class: 'tabs' },
-        SERVER_TABS.map(([id, label, ic]) =>
+        SERVER_TABS.filter(([id]) => !(ctx.mod && id === 'builder')).map(([id, label, ic]) =>
           h('button', { class: `tab ${view.tab === id ? 'active' : ''}`, onclick: () => { view.tab = id; App.renderMain(); } }, icon(ic), label),
         ),
       ),
@@ -258,7 +264,7 @@ const OverviewTab = {
           h(
             'div',
             { class: 'card' },
-            h('div', { class: 'card-head' }, icon('shield'), h('h3', null, 'Bot permissions')),
+            h('div', { class: 'card-head' }, icon('shield'), h('h3', null, ctx.mod ? 'Your permissions' : 'Bot permissions')),
             h(
               'div',
               { class: 'grid cols-2', style: { gap: '0 12px' } },
@@ -276,11 +282,17 @@ const OverviewTab = {
             h(
               'p',
               { class: 'subtle', style: { fontSize: 'calc(12rem / 14)', marginTop: '12px' } },
-              topRole ? `Highest bot role: @${topRole.name}. The bot can only manage members and roles below it.` : 'The bot has no roles in this server.',
+              ctx.mod
+                ? topRole
+                  ? `Your highest role: @${topRole.name}. You can only act on members ranked below it.`
+                  : 'You have no roles in this server.'
+                : topRole
+                  ? `Highest bot role: @${topRole.name}. The bot can only manage members and roles below it.`
+                  : 'The bot has no roles in this server.',
             ),
           ),
         ),
-        h('div', { class: 'grid cols-2' }, OverviewTab.rolesCard(ctx), OverviewTab.settingsCard(ctx)),
+        ctx.mod ? OverviewTab.rolesCard(ctx) : h('div', { class: 'grid cols-2' }, OverviewTab.rolesCard(ctx), OverviewTab.settingsCard(ctx)),
       ),
     );
   },
@@ -289,7 +301,7 @@ const OverviewTab = {
     const { srv } = ctx;
     const top = ServerPage.botTopPosition(ctx);
     const roles = srv.roles.filter((r) => r.id !== srv.guild.id).sort((a, b) => b.position - a.position);
-    const addBtn = h('button', { class: 'btn sm', onclick: () => OverviewTab.createRole(ctx) }, icon('plus'), 'New role');
+    const addBtn = ctx.mod ? null : h('button', { class: 'btn sm', onclick: () => OverviewTab.createRole(ctx) }, icon('plus'), 'New role');
     return h(
       'div',
       { class: 'card flush' },
@@ -307,7 +319,9 @@ const OverviewTab = {
             role.managed ? h('span', { class: 'badge peri' }, 'Integration') : null,
             BigInt(role.permissions) & PERM.ADMINISTRATOR ? h('span', { class: 'badge coral' }, 'Admin') : null,
             role.hoist ? h('span', { class: 'badge' }, 'Hoisted') : null,
-            h('button', { class: 'icon-btn danger', title: manageable ? 'Delete role' : 'The bot cannot manage this role', disabled: !manageable, onclick: () => OverviewTab.deleteRole(ctx, role) }, icon('trash')),
+            ctx.mod
+              ? null
+              : h('button', { class: 'icon-btn danger', title: manageable ? 'Delete role' : 'The bot cannot manage this role', disabled: !manageable, onclick: () => OverviewTab.deleteRole(ctx, role) }, icon('trash')),
           );
         }),
       ),
@@ -710,7 +724,9 @@ const MembersTab = {
     const { srv } = ctx;
     const name = MembersTab.memberName(m);
     const top = ServerPage.botTopPosition(ctx);
-    const assignable = srv.roles.filter((r) => r.id !== srv.guild.id && !r.managed && r.position < top).sort((a, b) => b.position - a.position);
+    // For moderators, `top` is their own highest role; without Manage Roles they can't change any.
+    const canAssign = !ctx.mod || ServerPage.can(ServerPage.perms(ctx), PERM.MANAGE_ROLES);
+    const assignable = canAssign ? srv.roles.filter((r) => r.id !== srv.guild.id && !r.managed && r.position < top).sort((a, b) => b.position - a.position) : [];
     const locked = ServerPage.memberRoles(ctx, m).filter((r) => !assignable.includes(r));
     const timedOut = MembersTab.timedOut(m);
 
@@ -764,7 +780,7 @@ const MembersTab = {
                 h('span', null, role.name),
               ),
             ),
-            locked.map((role) => h('span', { class: 'chip', style: { opacity: 0.6 }, title: 'Above the bot — cannot change' }, icon('lock'), h('span', null, role.name))),
+            locked.map((role) => h('span', { class: 'chip', style: { opacity: 0.6 }, title: ctx.mod ? "You can't change this role" : 'Above the bot — cannot change' }, icon('lock'), h('span', null, role.name))),
             !assignable.length && !locked.length ? h('span', { class: 'subtle' }, 'No roles the bot can assign.') : null,
           ),
         ),
@@ -775,7 +791,7 @@ const MembersTab = {
             ? h('button', { class: 'btn', onclick: () => Mod.removeTimeout(ctx, m.user.id, name) }, icon('clock'), 'End timeout')
             : h('button', { class: 'btn', onclick: () => Mod.timeout(ctx, m.user.id, name) }, icon('clock'), 'Timeout'),
           h('button', { class: 'btn', onclick: () => Mod.nickname(ctx, m) }, icon('edit'), 'Nickname'),
-          h('button', { class: 'btn', onclick: () => Mod.dm(ctx, m.user) }, icon('send'), 'Send DM'),
+          ctx.mod ? null : h('button', { class: 'btn', onclick: () => Mod.dm(ctx, m.user) }, icon('send'), 'Send DM'),
           h('button', { class: 'btn', onclick: () => copyText(`<@${m.user.id}>`, 'Mention copied') }, icon('copy'), 'Copy mention'),
           h('button', { class: 'btn danger', onclick: () => Mod.kick(ctx, m.user.id, name) }, icon('kick'), 'Kick'),
           h('button', { class: 'btn danger', onclick: () => Mod.ban(ctx, m.user.id, name) }, icon('ban'), 'Ban'),
@@ -864,7 +880,7 @@ const ModerationTab = {
   render(ctx, el) {
     const { srv } = ctx;
     if (!srv.bans && !srv.bansLoading && !srv.bansError) ModerationTab.loadBans(ctx);
-    el.append(h('div', { class: 'split', style: { gridTemplateColumns: 'minmax(0,1fr) 380px' } }, ModerationTab.bansCard(ctx), h('div', { class: 'stack', style: { gap: '16px' } }, ModerationTab.quickCard(ctx), ModerationTab.pruneCard(ctx))));
+    el.append(h('div', { class: 'split', style: { gridTemplateColumns: 'minmax(0,1fr) 380px' } }, ModerationTab.bansCard(ctx), h('div', { class: 'stack', style: { gap: '16px' } }, ModerationTab.quickCard(ctx), ctx.mod ? null : ModerationTab.pruneCard(ctx))));
   },
 
   bansCard(ctx) {
@@ -1041,7 +1057,7 @@ const ChannelsTab = {
         { class: 'toolbar' },
         h('span', { class: 'muted' }, `${srv.channels.filter((c) => c.type !== 4).length} channels in ${srv.channels.filter((c) => c.type === 4).length} categories`),
         h('div', { class: 'grow' }),
-        h('button', { class: 'btn sm teal', onclick: () => ChannelsTab.create(ctx) }, icon('plus'), 'New channel'),
+        ctx.mod ? null : h('button', { class: 'btn sm teal', onclick: () => ChannelsTab.create(ctx) }, icon('plus'), 'New channel'),
         reload,
       ),
       h(
@@ -1070,7 +1086,7 @@ const ChannelsTab = {
     const reason = 'Discord Server Builder';
     const sections = [];
 
-    if (textLike) {
+    if (textLike && !ctx.mod) {
       const msg = h('textarea', { class: 'textarea', placeholder: `Message #${ch.name}`, maxlength: 2000 });
       const sendBtn = h('button', { class: 'btn primary' }, icon('send'), 'Send');
       sendBtn.addEventListener(
@@ -1127,6 +1143,28 @@ const ChannelsTab = {
       sections.push(h('div', { class: 'row' }, h('div', { class: 'grow label' }, 'Slowmode'), h('div', { style: { width: '120px' } }, slow)));
     }
 
+    // Renaming and deleting channels stay with the owner.
+    if (!ctx.mod) sections.push(...ChannelsTab.ownerSections(ctx, ch, reason));
+
+    return h(
+      'div',
+      { class: 'card' },
+      h(
+        'div',
+        { class: 'card-head' },
+        icon(CHANNEL_ICON[ch.type] || 'hash'),
+        h('h3', { class: 'ellipsis' }, ch.name),
+        h('span', { class: 'badge' }, CHANNEL_LABEL[ch.type] || 'Channel'),
+      ),
+      h('div', { class: 'row', style: { marginTop: '-6px', marginBottom: '14px' } }, h('span', { class: 'mono subtle', style: { cursor: 'pointer' }, onclick: () => copyText(ch.id, 'Channel ID copied') }, ch.id)),
+      sections.length
+        ? h('div', { class: 'stack', style: { gap: '18px' } }, sections.flatMap((s, i) => (i ? [h('div', { style: { height: '1px', background: 'var(--border)' } }), s] : [s])))
+        : h('p', { class: 'subtle' }, 'Nothing to moderate on a category.'),
+    );
+  },
+
+  ownerSections(ctx, ch, reason) {
+    const sections = [];
     const nameInput = h('input', { class: 'input', value: ch.name, maxlength: 100 });
     const topicInput = !isVoice(ch.type) && ch.type !== 4 ? h('input', { class: 'input', value: ch.topic || '', placeholder: 'Topic', maxlength: 1024 }) : null;
     const saveBtn = h('button', { class: 'btn' }, icon('save'), 'Save');
@@ -1155,20 +1193,7 @@ const ChannelsTab = {
       }),
     );
     sections.push(h('div', { class: 'row', style: { justifyContent: 'flex-end' } }, deleteBtn));
-
-    return h(
-      'div',
-      { class: 'card' },
-      h(
-        'div',
-        { class: 'card-head' },
-        icon(CHANNEL_ICON[ch.type] || 'hash'),
-        h('h3', { class: 'ellipsis' }, ch.name),
-        h('span', { class: 'badge' }, CHANNEL_LABEL[ch.type] || 'Channel'),
-      ),
-      h('div', { class: 'row', style: { marginTop: '-6px', marginBottom: '14px' } }, h('span', { class: 'mono subtle', style: { cursor: 'pointer' }, onclick: () => copyText(ch.id, 'Channel ID copied') }, ch.id)),
-      h('div', { class: 'stack', style: { gap: '18px' } }, sections.flatMap((s, i) => (i ? [h('div', { style: { height: '1px', background: 'var(--border)' } }), s] : [s]))),
-    );
+    return sections;
   },
 
   async create(ctx) {

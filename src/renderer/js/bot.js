@@ -17,7 +17,8 @@ const BotPage = {
   },
 
   mainContent(bot, view) {
-    return view.guildId ? ServerPage.render(bot, view) : BotPage.dashboard(bot, view);
+    if (view.guildId) return ServerPage.render(bot, view);
+    return bot.type === 'mod' ? BotPage.modDashboard(bot, view) : BotPage.dashboard(bot, view);
   },
 
   async loadGuilds(botId) {
@@ -55,9 +56,13 @@ const BotPage = {
     const refreshBtn = h('button', { class: 'icon-btn', title: 'Refresh servers' }, icon('refresh'));
     refreshBtn.addEventListener('click', () => BotPage.loadGuilds(bot.id));
 
+    const mod = bot.type === 'mod';
     let servers;
     if (!view.guilds) servers = [1, 2, 3].map(() => h('div', { class: 'skeleton', style: { height: '44px', margin: '2px 0' } }));
-    else if (!view.guilds.length) servers = h('div', { class: 'subtle', style: { padding: '8px 10px', fontSize: 'calc(12rem / 14)' } }, view.guildsError || 'Not in any servers yet — invite it below.');
+    else if (!view.guilds.length) {
+      const empty = mod ? 'You aren\'t a moderator in any server this bot is in.' : 'Not in any servers yet — invite it below.';
+      servers = h('div', { class: 'subtle', style: { padding: '8px 10px', fontSize: 'calc(12rem / 14)' } }, view.guildsError || empty);
+    }
     else {
       servers = view.guilds.map((g) =>
         h(
@@ -99,8 +104,8 @@ const BotPage = {
         h(
           'button',
           { class: `side-item ${!view.guildId ? 'active' : ''}`, onclick: () => BotPage.openGuild(bot.id, null) },
-          icon('bot'),
-          h('span', null, 'Bot dashboard'),
+          icon(mod ? 'shield' : 'bot'),
+          h('span', null, mod ? 'My mod account' : 'Bot dashboard'),
         ),
         h('div', { class: 'side-label' }, `Servers — ${view.guilds ? view.guilds.length : '…'}`, refreshBtn),
         servers,
@@ -108,8 +113,116 @@ const BotPage = {
       h(
         'div',
         { class: 'side-foot' },
-        h('button', { class: 'btn teal', onclick: () => openExternal(inviteUrl(bot, '8')) }, icon('userPlus'), 'Invite to a server'),
+        mod
+          ? h('button', { class: 'btn', onclick: () => BotPage.removeBot(bot) }, icon('logOut'), 'Sign out')
+          : h('button', { class: 'btn teal', onclick: () => openExternal(inviteUrl(bot, '8')) }, icon('userPlus'), 'Invite to a server'),
       ),
+    );
+  },
+
+  // Dashboard for a moderator who signed in through a mod portal (no bot token on this PC).
+  modDashboard(bot, view) {
+    const guilds = view.guilds || [];
+    const portalBot = bot.portalBot;
+    const recheck = h('button', { class: 'btn sm' }, icon('refresh'), 'Check sign-in');
+    recheck.addEventListener(
+      'click',
+      withBusy(recheck, async () => {
+        App.upsertBot(await api('bots:refresh', bot.id));
+        App.render();
+        toast('Still signed in');
+      }),
+    );
+    const rule = (ic, text) => h('div', { class: 'row', style: { alignItems: 'flex-start', padding: '4px 0' } }, h('span', { class: 'badge teal' }, icon(ic)), h('span', { class: 'muted' }, text));
+
+    return h(
+      'div',
+      { class: 'content stack', style: { gap: '18px' } },
+      h(
+        'div',
+        { class: 'row' },
+        h('img', { class: 'avatar', src: userAvatar(bot, 256), width: 72, height: 72, alt: '' }),
+        h(
+          'div',
+          { class: 'grow' },
+          h('span', { class: 'eyebrow' }, 'Moderator'),
+          h('h2', { style: { fontSize: 'calc(28rem / 14)', marginTop: '6px' } }, displayName(bot)),
+          h(
+            'div',
+            { class: 'row wrap', style: { marginTop: '6px', gap: '6px' } },
+            h('span', { class: 'badge' }, `@${bot.username}`),
+            h('span', { class: 'badge peri' }, icon('shield'), 'Signed in with Discord'),
+          ),
+        ),
+      ),
+      h(
+        'div',
+        { class: 'grid cols-2' },
+        h(
+          'div',
+          { class: 'card' },
+          h('div', { class: 'card-head' }, icon('link'), h('h3', null, 'Mod portal'), recheck),
+          h(
+            'dl',
+            { class: 'kv' },
+            h('dt', null, 'Portal'),
+            h('dd', { class: 'mono' }, bot.portalUrl),
+            h('dt', null, 'Bot'),
+            h('dd', null, portalBot ? h('span', { class: 'row', style: { gap: '8px' } }, h('img', { class: 'avatar', src: userAvatar(portalBot, 64), width: 22, height: 22, alt: '' }), displayName(portalBot)) : '—'),
+            h('dt', null, 'Signed in as'),
+            h('dd', null, `${displayName(bot)} (@${bot.username})`),
+          ),
+          h('div', { style: { marginTop: '14px' } }, h('button', { class: 'btn', onclick: () => BotPage.removeBot(bot) }, icon('logOut'), 'Sign out')),
+        ),
+        h(
+          'div',
+          { class: 'card' },
+          h('div', { class: 'card-head' }, icon('shield'), h('h3', null, 'What you can do')),
+          rule('users', 'Servers where you have Kick, Ban or Timeout permission show up on the left.'),
+          rule('check', 'Each action needs the same Discord permission it would need in Discord itself.'),
+          rule('crown', 'You can only act on members ranked below you, never on the owner.'),
+          rule('list', 'Your actions are signed with your name in the server\'s audit log.'),
+          rule('lock', 'The Builder and server settings stay with the server owner.'),
+        ),
+      ),
+      BotPage.serversCard(bot, view, guilds),
+    );
+  },
+
+  serversCard(bot, view, guilds) {
+    const mod = bot.type === 'mod';
+    return h(
+      'div',
+      { class: 'card' },
+      h('div', { class: 'card-head' }, icon('server'), h('h3', null, 'Servers')),
+      !view.guilds
+        ? h('div', { class: 'loading-block' }, h('div', { class: 'skeleton' }), h('div', { class: 'skeleton' }))
+        : guilds.length
+          ? h(
+              'div',
+              { class: 'grid cols-3' },
+              guilds.map((g) =>
+                h(
+                  'div',
+                  { class: 'card bot-card', style: { padding: '14px' }, onclick: () => BotPage.openGuild(bot.id, g.id) },
+                  guildIcon(g, 48),
+                  h(
+                    'div',
+                    { class: 'grow' },
+                    h('div', { class: 'ellipsis', style: { fontWeight: 600 } }, g.name),
+                    h('div', { class: 'subtle', style: { fontSize: 'calc(12rem / 14)' } }, `${fmtNum(g.approximate_member_count)} members${g.owner ? ' · bot owns it' : ''}`),
+                  ),
+                ),
+              ),
+            )
+          : h(
+              'div',
+              { class: 'empty' },
+              icon('server'),
+              h('h3', null, mod ? 'No servers to moderate' : 'No servers yet'),
+              h('p', null, view.guildsError || (mod ? 'Ask the server owner to give you Kick, Ban or Timeout permission.' : 'Invite the bot to a server you manage. It will appear here.')),
+              mod ? null : h('button', { class: 'btn teal', onclick: () => openExternal(inviteUrl(bot, '8')) }, icon('userPlus'), 'Invite to a server'),
+            ),
     );
   },
 
@@ -153,39 +266,7 @@ const BotPage = {
 
       BotPage.inviteCard(bot),
 
-      h(
-        'div',
-        { class: 'card' },
-        h('div', { class: 'card-head' }, icon('server'), h('h3', null, 'Servers')),
-        !view.guilds
-          ? h('div', { class: 'loading-block' }, h('div', { class: 'skeleton' }), h('div', { class: 'skeleton' }))
-          : guilds.length
-            ? h(
-                'div',
-                { class: 'grid cols-3' },
-                guilds.map((g) =>
-                  h(
-                    'div',
-                    { class: 'card bot-card', style: { padding: '14px' }, onclick: () => BotPage.openGuild(bot.id, g.id) },
-                    guildIcon(g, 48),
-                    h(
-                      'div',
-                      { class: 'grow' },
-                      h('div', { class: 'ellipsis', style: { fontWeight: 600 } }, g.name),
-                      h('div', { class: 'subtle', style: { fontSize: 'calc(12rem / 14)' } }, `${fmtNum(g.approximate_member_count)} members${g.owner ? ' · bot owns it' : ''}`),
-                    ),
-                  ),
-                ),
-              )
-            : h(
-                'div',
-                { class: 'empty' },
-                icon('server'),
-                h('h3', null, 'No servers yet'),
-                h('p', null, view.guildsError || 'Invite the bot to a server you manage. It will appear here.'),
-                h('button', { class: 'btn teal', onclick: () => openExternal(inviteUrl(bot, '8')) }, icon('userPlus'), 'Invite to a server'),
-              ),
-      ),
+      BotPage.serversCard(bot, view, guilds),
 
       h(
         'div',
@@ -288,11 +369,14 @@ const BotPage = {
   },
 
   async removeBot(bot) {
+    const mod = bot.type === 'mod';
     const ok = await confirmDialog({
-      title: `Remove ${displayName(bot)}?`,
-      message: 'The saved token is deleted from this PC. You can add the bot again later with its token.',
-      confirmLabel: 'Remove bot',
-      danger: true,
+      title: mod ? 'Sign out?' : `Remove ${displayName(bot)}?`,
+      message: mod
+        ? 'Your mod portal sign-in is removed from this PC. You can sign in with Discord again any time.'
+        : 'The saved token is deleted from this PC. You can add the bot again later with its token.',
+      confirmLabel: mod ? 'Sign out' : 'Remove bot',
+      danger: !mod,
     });
     if (!ok) return;
     try {
@@ -301,7 +385,7 @@ const BotPage = {
       delete App.views[bot.id];
       delete App.presence[bot.id];
       App.go({ page: 'home' });
-      toast('Bot removed');
+      toast(mod ? 'Signed out' : 'Bot removed');
     } catch (err) {
       toastError(err);
     }

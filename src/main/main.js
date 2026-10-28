@@ -6,6 +6,9 @@ const { PresenceConnection } = require('./gateway');
 const store = require('./store');
 const Appearance = require('../shared/appearance');
 const { buildServer, cloneServer, fetchAllMembers, purgeMessages, setChannelLock } = require('./builder');
+const updater = require('./updater');
+const portal = require('./portal');
+const pkg = require('../../package.json');
 
 const DEV = process.argv.includes('--dev');
 const ROOT = path.join(__dirname, '..', '..');
@@ -44,6 +47,14 @@ function restFor(botId) {
   if (!clients.has(botId)) clients.set(botId, new DiscordRest(store.getToken(botId)));
   return clients.get(botId);
 }
+
+// Moderators who signed in with Discord go through their mod portal instead of using a bot token.
+const isMod = (botId) => store.getBot(botId)?.type === 'mod';
+const modCall = (botId, route, body) =>
+  portal.call(store.getBot(botId).portalUrl, route, { method: 'POST', token: store.getToken(botId), body });
+const ownerOnly = () => {
+  throw new Error('Only the server owner can do that. Moderators can moderate members and channels.');
+};
 
 function send(channel, payload) {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
@@ -86,7 +97,7 @@ async function describeBot(rest) {
   };
 }
 
-const SAFE_HOSTS = ['discord.com', 'support.discord.com', 'discord.dev', 'pixelplayz.org'];
+const SAFE_HOSTS = ['discord.com', 'support.discord.com', 'discord.dev', 'pixelplayz.org', 'github.com'];
 const isSafeUrl = (url) => {
   try {
     const u = new URL(url);
@@ -112,7 +123,19 @@ const handlers = {
     return bot;
   },
 
-  'bots:refresh': async (botId) => store.updateBot(botId, await describeBot(restFor(botId))),
+  'bots:refresh': async (botId) => {
+    const bot = store.getBot(botId);
+    if (bot?.type !== 'mod') return store.updateBot(botId, await describeBot(restFor(botId)));
+    const me = await portal.call(bot.portalUrl, '/api/me', { token: store.getToken(botId) });
+    return store.updateBot(botId, portal.modProfile(bot.portalUrl, me));
+  },
+
+  'mod:signIn': async (portalUrl) => {
+    const { portalUrl: url, token, me } = await portal.signIn(portalUrl);
+    return store.upsertBot(portal.modProfile(url, me), token);
+  },
+
+  'mod:cancelSignIn': () => portal.cancelSignIn(),
 
   'bots:update': (botId, patch) => {
     const allowed = {};
@@ -131,6 +154,7 @@ const handlers = {
   'bots:reorder': (ids) => store.reorderBots(ids),
 
   'presence:set': (botId, presence) => {
+    if (isMod(botId)) ownerOnly();
     const bot = store.updateBot(botId, { presence });
     const conn = presenceFor(botId);
     if (presence.enabled) conn.start(presence);
@@ -142,19 +166,32 @@ const handlers = {
     if (!METHODS.has(method) || typeof apiPath !== 'string' || !apiPath.startsWith('/') || apiPath.includes('..') || apiPath.includes('://')) {
       throw new Error('Blocked request.');
     }
+    if (isMod(botId)) return modCall(botId, '/api/discord', { method, path: apiPath, query: opts.query, body: opts.body, reason: opts.reason });
     return restFor(botId).request(method, apiPath, opts);
   },
 
-  'members:all': (botId, guildId, max) => fetchAllMembers(restFor(botId), guildId, max),
+  'members:all': (botId, guildId, max) =>
+    isMod(botId) ? modCall(botId, '/api/members-all', { guildId, max }) : fetchAllMembers(restFor(botId), guildId, max),
 
-  'channel:purge': (botId, channelId, count, reason) => purgeMessages(restFor(botId), channelId, Math.min(Math.max(1, count | 0), 1000), reason),
+  'channel:purge': (botId, channelId, count, reason) => {
+    const n = Math.min(Math.max(1, count | 0), 1000);
+    return isMod(botId) ? modCall(botId, '/api/purge', { channelId, count: n, reason }) : purgeMessages(restFor(botId), channelId, n, reason);
+  },
 
-  'channel:lock': (botId, guildId, channelId, locked, reason) => setChannelLock(restFor(botId), guildId, channelId, locked, reason),
+  'channel:lock': (botId, guildId, channelId, locked, reason) =>
+    isMod(botId)
+      ? modCall(botId, '/api/lock', { guildId, channelId, locked, reason })
+      : setChannelLock(restFor(botId), guildId, channelId, locked, reason),
 
-  'builder:run': (botId, guildId, template, opts) =>
-    buildServer(restFor(botId), guildId, template, opts, (event) => send('builder:event', { botId, guildId, ...event })),
+  'builder:run': (botId, guildId, template, opts) => {
+    if (isMod(botId)) ownerOnly();
+    return buildServer(restFor(botId), guildId, template, opts, (event) => send('builder:event', { botId, guildId, ...event }));
+  },
 
-  'builder:clone': (botId, guildId) => cloneServer(restFor(botId), guildId),
+  'builder:clone': (botId, guildId) => {
+    if (isMod(botId)) ownerOnly();
+    return cloneServer(restFor(botId), guildId);
+  },
 
   'templates:list': () => store.listTemplates(),
   'templates:save': (template) => store.saveTemplate(template),
@@ -205,12 +242,26 @@ const handlers = {
     return `data:${type};base64,${data.toString('base64')}`;
   },
 
+  'update:check': () => updater.checkForUpdate(),
+
+  'update:install': async () => {
+    const file = await updater.installUpdate((received, total) => send('update:progress', { received, total }));
+    // Give the UI a moment to show "Restarting…" before this window closes.
+    setTimeout(() => updater.restartInto(file), 400);
+    return { file };
+  },
+
   'open:external': (url) => {
     if (!isSafeUrl(url)) throw new Error('Blocked link.');
     return shell.openExternal(url);
   },
 
-  'app:info': () => ({ version: app.getVersion(), dataPath: app.getPath('userData') }),
+  'app:info': () => ({
+    version: app.getVersion(),
+    dataPath: app.getPath('userData'),
+    releasesUrl: updater.RELEASES_PAGE,
+    modPortalUrl: pkg.modPortalUrl || '',
+  }),
 };
 
 for (const [channel, fn] of Object.entries(handlers)) {
@@ -261,7 +312,7 @@ function createWindow() {
 
   // Bring bots that were online last session back online.
   for (const bot of store.listBots()) {
-    if (bot.presence?.enabled) {
+    if (bot.type !== 'mod' && bot.presence?.enabled) {
       try {
         presenceFor(bot.id).start(bot.presence);
       } catch {
