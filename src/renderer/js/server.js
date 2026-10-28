@@ -275,7 +275,7 @@ const OverviewTab = {
             ),
             h(
               'p',
-              { class: 'subtle', style: { fontSize: '12px', marginTop: '12px' } },
+              { class: 'subtle', style: { fontSize: 'calc(12rem / 14)', marginTop: '12px' } },
               topRole ? `Highest bot role: @${topRole.name}. The bot can only manage members and roles below it.` : 'The bot has no roles in this server.',
             ),
           ),
@@ -383,7 +383,7 @@ const OverviewTab = {
       h(
         'div',
         { class: 'row' },
-        h('div', { class: 'grow' }, h('div', { style: { fontWeight: 600 } }, 'Remove the bot from this server'), h('div', { class: 'subtle', style: { fontSize: '12px' } }, 'You can invite it again any time.')),
+        h('div', { class: 'grow' }, h('div', { style: { fontWeight: 600 } }, 'Remove the bot from this server'), h('div', { class: 'subtle', style: { fontSize: 'calc(12rem / 14)' } }, 'You can invite it again any time.')),
         h('button', { class: 'btn danger', onclick: () => OverviewTab.leave(ctx) }, icon('kick'), 'Leave server'),
       ),
     );
@@ -722,7 +722,7 @@ const MembersTab = {
         { class: 'head', style: { position: 'relative' } },
         h('button', { class: 'icon-btn', style: { position: 'absolute', top: '10px', right: '10px' }, onclick: close, title: 'Close' }, icon('x')),
         h('img', { class: 'avatar', src: memberAvatar(ctx.guildId, m, 256), width: 84, height: 84, alt: '' }),
-        h('h3', { style: { fontSize: '18px' } }, name),
+        h('h3', { style: { fontSize: 'calc(18rem / 14)' } }, name),
         h('div', { class: 'subtle' }, `@${m.user.username}`),
         h(
           'div',
@@ -919,7 +919,7 @@ const ModerationTab = {
       h(
         'div',
         { class: 'stack' },
-        h('p', { class: 'muted', style: { fontSize: '13px' } }, 'Works even for people who already left (ban) or when the members list is unavailable.'),
+        h('p', { class: 'muted', style: { fontSize: 'calc(13rem / 14)' } }, 'Works even for people who already left (ban) or when the members list is unavailable.'),
         input,
         h(
           'div',
@@ -935,7 +935,7 @@ const ModerationTab = {
 
   pruneCard(ctx) {
     const days = selectEl([['1', '1 day'], ['7', '7 days'], ['14', '14 days'], ['30', '30 days']], '30');
-    const result = h('div', { class: 'subtle', style: { fontSize: '12px' } }, 'Removes members without roles who have not been active for the chosen time.');
+    const result = h('div', { class: 'subtle', style: { fontSize: 'calc(12rem / 14)' } }, 'Removes members without roles who have not been active for the chosen time.');
     const countBtn = h('button', { class: 'btn' }, icon('search'), 'Count');
     countBtn.addEventListener(
       'click',
@@ -1097,7 +1097,7 @@ const ChannelsTab = {
           toast(`Deleted ${res.deleted} message(s)${res.skipped ? `, skipped ${res.skipped}` : ''}`);
         }),
       );
-      sections.push(h('div', { class: 'stack', style: { gap: '8px' } }, h('div', { class: 'label' }, 'Purge recent messages'), h('div', { class: 'row' }, count, h('span', { class: 'subtle grow', style: { fontSize: '12px' } }, 'max 1000'), purgeBtn)));
+      sections.push(h('div', { class: 'stack', style: { gap: '8px' } }, h('div', { class: 'label' }, 'Purge recent messages'), h('div', { class: 'row' }, count, h('span', { class: 'subtle grow', style: { fontSize: 'calc(12rem / 14)' } }, 'max 1000'), purgeBtn)));
     }
 
     if (ch.type !== 4) {
@@ -1110,7 +1110,7 @@ const ChannelsTab = {
           ctx.rerender();
         }),
       );
-      const row = [h('div', { class: 'grow' }, h('div', { class: 'label' }, 'Lock'), h('div', { class: 'subtle', style: { fontSize: '12px' } }, isVoice(ch.type) ? 'Stops @everyone joining.' : 'Stops @everyone sending messages.')), lockBtn];
+      const row = [h('div', { class: 'grow' }, h('div', { class: 'label' }, 'Lock'), h('div', { class: 'subtle', style: { fontSize: 'calc(12rem / 14)' } }, isVoice(ch.type) ? 'Stops @everyone joining.' : 'Stops @everyone sending messages.')), lockBtn];
       sections.push(h('div', { class: 'row' }, row));
     }
 
@@ -1191,7 +1191,7 @@ const ChannelsTab = {
       body: [
         field('Name', name),
         h('div', { class: 'grid cols-2', style: { gap: '12px' } }, field('Type', type), field('Category', parent)),
-        community ? null : h('p', { class: 'subtle', style: { fontSize: '12px' } }, 'Announcement and Stage channels need Community turned on (Server Settings → Enable Community in Discord).'),
+        community ? null : h('p', { class: 'subtle', style: { fontSize: 'calc(12rem / 14)' } }, 'Announcement and Stage channels need Community turned on (Server Settings → Enable Community in Discord).'),
       ],
       actions: [
         { label: 'Cancel', kind: 'ghost' },
@@ -1343,7 +1343,7 @@ const AuditTab = {
         h('div', { class: 'ellipsis' }, h('b', null, executor ? displayName(executor) : 'Someone'), ` ${action} `, h('b', null, AuditTab.targetName(ctx, e))),
         e.reason ? h('div', { class: 'secondary ellipsis' }, `Reason: ${e.reason}`) : null,
       ),
-      h('span', { class: 'subtle', style: { fontSize: '12px', whiteSpace: 'nowrap' }, title: when.toLocaleString() }, fmtRelative(when)),
+      h('span', { class: 'subtle', style: { fontSize: 'calc(12rem / 14)', whiteSpace: 'nowrap' }, title: when.toLocaleString() }, fmtRelative(when)),
     );
   },
 };

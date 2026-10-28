@@ -57,7 +57,7 @@ const BotPage = {
 
     let servers;
     if (!view.guilds) servers = [1, 2, 3].map(() => h('div', { class: 'skeleton', style: { height: '44px', margin: '2px 0' } }));
-    else if (!view.guilds.length) servers = h('div', { class: 'subtle', style: { padding: '8px 10px', fontSize: '12px' } }, view.guildsError || 'Not in any servers yet — invite it below.');
+    else if (!view.guilds.length) servers = h('div', { class: 'subtle', style: { padding: '8px 10px', fontSize: 'calc(12rem / 14)' } }, view.guildsError || 'Not in any servers yet — invite it below.');
     else {
       servers = view.guilds.map((g) =>
         h(
@@ -129,7 +129,7 @@ const BotPage = {
           'div',
           { class: 'grow' },
           h('span', { class: 'eyebrow' }, 'Bot dashboard'),
-          h('h2', { style: { fontSize: '28px', marginTop: '6px' } }, displayName(bot)),
+          h('h2', { style: { fontSize: 'calc(28rem / 14)', marginTop: '6px' } }, displayName(bot)),
           h(
             'div',
             { class: 'row wrap', style: { marginTop: '6px', gap: '6px' } },
@@ -146,7 +146,7 @@ const BotPage = {
         BotPage.stat(view.guilds ? guilds.length : '…', 'Servers'),
         BotPage.stat(view.guilds ? fmtNum(totalMembers) : '…', 'Members reached'),
         BotPage.stat([intents.members, intents.content, intents.presence].filter(Boolean).length + '/3', 'Intents enabled'),
-        h('div', { class: 'stat' }, h('div', { class: 'stat-value', style: { fontSize: '18px', paddingTop: '6px' }, 'data-presence-text': bot.id }, App.presenceLabel(bot.id)), h('div', { class: 'stat-label' }, 'Status')),
+        h('div', { class: 'stat' }, h('div', { class: 'stat-value', style: { fontSize: 'calc(18rem / 14)', paddingTop: '6px' }, 'data-presence-text': bot.id }, App.presenceLabel(bot.id)), h('div', { class: 'stat-label' }, 'Status')),
       ),
 
       h('div', { class: 'grid cols-2' }, BotPage.presenceCard(bot), BotPage.intentsCard(bot)),
@@ -172,7 +172,7 @@ const BotPage = {
                       'div',
                       { class: 'grow' },
                       h('div', { class: 'ellipsis', style: { fontWeight: 600 } }, g.name),
-                      h('div', { class: 'subtle', style: { fontSize: '12px' } }, `${fmtNum(g.approximate_member_count)} members${g.owner ? ' · bot owns it' : ''}`),
+                      h('div', { class: 'subtle', style: { fontSize: 'calc(12rem / 14)' } }, `${fmtNum(g.approximate_member_count)} members${g.owner ? ' · bot owns it' : ''}`),
                     ),
                   ),
                 ),
@@ -228,7 +228,7 @@ const BotPage = {
       h(
         'div',
         { class: 'stack' },
-        h('p', { class: 'muted', style: { fontSize: '13px' } }, 'Keeps the bot showing as online in Discord while this app is open.'),
+        h('p', { class: 'muted', style: { fontSize: 'calc(13rem / 14)' } }, 'Keeps the bot showing as online in Discord while this app is open.'),
         h('div', { class: 'grid cols-2', style: { gap: '10px' } }, field('Status', statusSelect), field('Custom status', textInput)),
         h('div', null, h('button', { class: 'btn', onclick: () => save(true) }, icon('check'), 'Apply')),
       ),
@@ -242,7 +242,7 @@ const BotPage = {
         'div',
         { class: 'row', style: { padding: '6px 0' } },
         h('span', { class: `badge ${on ? 'teal' : 'coral'}` }, icon(on ? 'check' : 'x'), on ? 'On' : 'Off'),
-        h('div', { class: 'grow' }, h('div', { style: { fontWeight: 600 } }, name), h('div', { class: 'subtle', style: { fontSize: '12px' } }, why)),
+        h('div', { class: 'grow' }, h('div', { style: { fontWeight: 600 } }, name), h('div', { class: 'subtle', style: { fontSize: 'calc(12rem / 14)' } }, why)),
       );
     const recheck = h('button', { class: 'btn sm' }, icon('refresh'), 'Re-check');
     recheck.addEventListener(

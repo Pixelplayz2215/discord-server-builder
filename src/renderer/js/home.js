@@ -54,7 +54,7 @@ const HomePage = {
               { class: 'connect-card card' },
               h('label', { class: 'label', for: 'token-input' }, 'Bot token'),
               h('div', { class: 'row' }, h('div', { class: 'input-wrap' }, icon('key'), tokenInput, eye), connectBtn),
-              h('div', { class: 'hint subtle', style: { fontSize: '12px' } }, 'Tokens are encrypted on this PC (Windows DPAPI) and are only ever sent to Discord.'),
+              h('div', { class: 'hint subtle', style: { fontSize: 'calc(12rem / 14)' } }, 'Tokens are encrypted on this PC (Windows DPAPI) and are only ever sent to Discord.'),
             ),
           ),
           h(
@@ -64,7 +64,12 @@ const HomePage = {
             shape('circle', 's2'),
             shape('cross', 's3'),
             shape('square', 's4'),
-            h('div', { class: 'hero-badge' }, h('img', { src: '../../build/icon.png', alt: '' }), h('div', { class: 'ring-text' }, 'Server Builder')),
+            h(
+              'div',
+              { class: 'hero-badge' },
+              h('img', { src: Theme.logoSrc(), class: Theme.hasCustomLogo() ? 'custom' : null, alt: '' }),
+              h('div', { class: 'ring-text' }, Theme.settings.appName),
+            ),
           ),
         ),
 
@@ -88,7 +93,7 @@ const HomePage = {
                       'div',
                       { class: 'grow' },
                       h('div', { class: 'ellipsis', style: { fontWeight: 700 } }, displayName(bot)),
-                      h('div', { class: 'subtle ellipsis', style: { fontSize: '12px' }, 'data-presence-text': bot.id }, App.presenceLabel(bot.id)),
+                      h('div', { class: 'subtle ellipsis', style: { fontSize: 'calc(12rem / 14)' }, 'data-presence-text': bot.id }, App.presenceLabel(bot.id)),
                     ),
                     icon('chevronRight', 'subtle'),
                   ),

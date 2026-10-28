@@ -40,7 +40,11 @@ const App = {
   renderPage() {
     const bot = this.route.page === 'bot' ? this.bot(this.route.botId) : null;
     if (this.route.page === 'bot' && !bot) this.route = { page: 'home' };
-    document.getElementById('page').replaceChildren(bot ? BotPage.render(bot) : HomePage.render());
+    let content;
+    if (bot) content = BotPage.render(bot);
+    else if (this.route.page === 'settings') content = SettingsPage.render();
+    else content = HomePage.render();
+    document.getElementById('page').replaceChildren(content);
     this.renderCrumb();
   },
 
@@ -58,6 +62,7 @@ const App = {
   renderCrumb() {
     const crumb = document.getElementById('crumb');
     crumb.replaceChildren();
+    if (this.route.page === 'settings') return crumb.append(h('b', null, 'Settings'));
     if (this.route.page !== 'bot') return;
     const bot = this.bot(this.route.botId);
     const view = this.view(bot.id);
@@ -92,7 +97,7 @@ const App = {
 
   renderRail() {
     const rail = document.getElementById('rail');
-    const isHome = this.route.page !== 'bot';
+    const isHome = this.route.page === 'home';
     const item = (cls, tip, btn, active) => h('div', { class: `rail-item ${cls} ${active ? 'active' : ''}`, 'data-tip': tip }, btn);
 
     const botItems = this.bots.map((bot) => {
@@ -100,7 +105,7 @@ const App = {
         '',
         displayName(bot),
         h('button', { class: 'rail-btn', onclick: () => this.go({ page: 'bot', botId: bot.id }) }, h('img', { src: userAvatar(bot), alt: '' })),
-        this.route.botId === bot.id && !isHome,
+        this.route.page === 'bot' && this.route.botId === bot.id,
       );
       el.append(h('span', { class: `status-dot ${this.presenceClass(bot.id)}`, 'data-presence': bot.id }));
       el.draggable = true;
@@ -135,6 +140,8 @@ const App = {
         }, icon('plus')),
         false,
       ),
+      h('div', { class: 'rail-spacer' }),
+      item('rail-settings', 'Settings', h('button', { class: 'rail-btn', onclick: () => this.go({ page: 'settings' }) }, icon('settings')), this.route.page === 'settings'),
     );
   },
 };

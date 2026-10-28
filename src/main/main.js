@@ -1,17 +1,44 @@
 const path = require('path');
 const fs = require('fs');
-const { app, BrowserWindow, ipcMain, shell, dialog, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, Menu, nativeImage } = require('electron');
 const { DiscordRest } = require('./discord');
 const { PresenceConnection } = require('./gateway');
 const store = require('./store');
+const Appearance = require('../shared/appearance');
 const { buildServer, cloneServer, fetchAllMembers, purgeMessages, setChannelLock } = require('./builder');
 
 const DEV = process.argv.includes('--dev');
 const ROOT = path.join(__dirname, '..', '..');
+const TITLEBAR_HEIGHT = 40;
+const LOGO_TYPES = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml' };
+const MAX_LOGO_BYTES = 2 * 1024 * 1024;
 
 let win = null;
+let settings = null; // appearance settings, loaded once the app is ready
 const clients = new Map(); // botId -> DiscordRest
 const presences = new Map(); // botId -> PresenceConnection
+
+// A custom logo doubles as the window/taskbar icon when Electron can decode it (PNG/JPEG).
+function windowIcon() {
+  if (settings.logo) {
+    const image = nativeImage.createFromDataURL(settings.logo);
+    if (!image.isEmpty()) return image;
+  }
+  return path.join(ROOT, 'build', 'icon.png');
+}
+
+function titleBarOverlay() {
+  const pal = Appearance.palette(settings);
+  return { color: pal.bg, symbolColor: pal.text, height: Math.round(TITLEBAR_HEIGHT * settings.scale) };
+}
+
+function applyWindowAppearance() {
+  if (!win || win.isDestroyed()) return;
+  win.setBackgroundColor(Appearance.palette(settings).bg);
+  win.setTitleBarOverlay(titleBarOverlay());
+  win.webContents.setZoomFactor(settings.scale);
+  win.setIcon(windowIcon());
+}
 
 function restFor(botId) {
   if (!clients.has(botId)) clients.set(botId, new DiscordRest(store.getToken(botId)));
@@ -157,6 +184,27 @@ const handlers = {
     return data;
   },
 
+  'settings:set': (next) => {
+    settings = Appearance.normalize(next);
+    store.saveSettings(settings);
+    applyWindowAppearance();
+    return settings;
+  },
+
+  'settings:pickLogo': async () => {
+    const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+      title: 'Choose a logo',
+      filters: [{ name: 'Images', extensions: Object.keys(LOGO_TYPES) }],
+      properties: ['openFile'],
+    });
+    if (canceled || !filePaths[0]) return null;
+    const type = LOGO_TYPES[path.extname(filePaths[0]).slice(1).toLowerCase()];
+    if (!type) throw new Error('Pick a PNG, JPG, GIF, WebP or SVG image.');
+    const data = fs.readFileSync(filePaths[0]);
+    if (data.length > MAX_LOGO_BYTES) throw new Error('That image is over 2 MB — pick a smaller one.');
+    return `data:${type};base64,${data.toString('base64')}`;
+  },
+
   'open:external': (url) => {
     if (!isSafeUrl(url)) throw new Error('Blocked link.');
     return shell.openExternal(url);
@@ -175,24 +223,30 @@ for (const [channel, fn] of Object.entries(handlers)) {
   });
 }
 
+ipcMain.on('settings:initial', (event) => {
+  event.returnValue = settings;
+});
+
 function createWindow() {
+  settings = Appearance.normalize(store.getSettings());
   win = new BrowserWindow({
     width: 1360,
     height: 860,
     minWidth: 1040,
     minHeight: 660,
     show: false,
-    backgroundColor: '#0f0c22',
-    title: 'Discord Server Builder',
-    icon: path.join(ROOT, 'build', 'icon.png'),
+    backgroundColor: Appearance.palette(settings).bg,
+    title: settings.appName,
+    icon: windowIcon(),
     titleBarStyle: 'hidden',
-    titleBarOverlay: { color: '#0f0c22', symbolColor: '#fbf9fc', height: 40 },
+    titleBarOverlay: titleBarOverlay(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
       spellcheck: false,
+      zoomFactor: settings.scale,
     },
   });
 

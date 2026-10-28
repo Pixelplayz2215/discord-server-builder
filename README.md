@@ -11,6 +11,8 @@ A Windows desktop app (Electron) in the Pixelplayz2215 theme for running Discord
 - **Audit log.** Recent actions, with filters.
 - **Builder.** Start from a template (Content Creator, Gaming, Study, Dev Team, Blank) or clone an existing server. Edit roles (colour, permission preset, hoist, mentionable), categories and channels (type, topic, private-to-roles, read-only, welcome channel). You can optionally wipe existing channels and roles first, then build with a live progress log. Templates can be saved and exported or imported as JSON.
 
+- **Settings** (gear icon at the bottom left). Includes 8 themes, some of them light. You can also edit the colours, upload your own logo (it also becomes the window and taskbar icon), rename the app, and set the UI scale, text size, corner roundness and font. Pixel-style labels and the animations and background glow can be switched off. The "by Pixelplayz2215" credit in the title bar can't be changed. Settings are saved in `settings.json` in the same folder as the bot tokens.
+
 Bot tokens are encrypted with Windows DPAPI (Electron `safeStorage`) and stored in `%APPDATA%\Discord Server Builder`. The UI never sees a token. Every Discord call runs in the main process.
 
 ## Run it
@@ -58,7 +60,11 @@ src/main/       Electron main process
   builder.js      template → server builder, clone, purge, lock, member paging
   store.js        encrypted token + saved-template storage
   preload.js      narrow IPC bridge
+src/shared/
+  appearance.js   theme presets + settings defaults/validation (used by main and UI)
 src/renderer/   UI (plain HTML/CSS/JS, no bundler)
+  js/theme.js     applies appearance settings as CSS variables (loaded in <head>)
+  js/settings.js  Settings page
   js/core.js      element helper, icons, modals, toasts
   js/home.js      Home page / connect a bot
   js/bot.js       per-bot page + dashboard

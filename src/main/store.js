@@ -77,6 +77,14 @@ const store = {
     writeJson('bots.json', bots);
   },
 
+  getSettings() {
+    return readJson('settings.json', {});
+  },
+
+  saveSettings(settings) {
+    writeJson('settings.json', settings);
+  },
+
   listTemplates() {
     return readJson('templates.json', []);
   },

@@ -112,7 +112,7 @@ const Builder = {
         'div',
         { class: 'card', style: { padding: '16px', marginBottom: '16px' } },
         h('div', { class: 'card-head' }, icon('tag'), h('h3', null, `Roles (${t.roles.length})`), h('button', { class: 'btn sm', onclick: () => { t.roles.push({ key: `r_${Math.random().toString(36).slice(2, 9)}`, name: 'New role', color: '#7f8cf0', hoist: false, mentionable: false, perms: 'none' }); dirty(); redraw(); } }, icon('plus'), 'Add role')),
-        h('p', { class: 'subtle', style: { fontSize: '12px', margin: '-6px 0 10px' } }, 'Top of the list is the highest role. Roles are created just below the bot\'s own role. Drag ⠿ to reorder.'),
+        h('p', { class: 'subtle', style: { fontSize: 'calc(12rem / 14)', margin: '-6px 0 10px' } }, 'Top of the list is the highest role. Roles are created just below the bot\'s own role. Drag ⠿ to reorder.'),
         t.roles.length
           ? h('div', { class: 'role-grid' }, t.roles.map((role, i) => Builder.roleRow(t, role, i, dirty, redraw)))
           : h('p', { class: 'subtle' }, 'No roles — the build will only create channels.'),
@@ -238,7 +238,7 @@ const Builder = {
       name,
       perms,
       toggle('hoist', 'layers', 'Show members separately'),
-      toggle('mentionable', h('b', { style: { fontSize: '13px' } }, '@'), 'Anyone can @mention'),
+      toggle('mentionable', h('b', { style: { fontSize: 'calc(13rem / 14)' } }, '@'), 'Anyone can @mention'),
       del,
     );
     return row;
@@ -338,7 +338,7 @@ const Builder = {
       detail = h('input', { class: 'input sm topic', type: 'number', min: 0, max: 99, value: ch.userLimit ? String(ch.userLimit) : '', placeholder: 'User limit (empty = no limit)' });
       detail.addEventListener('input', () => { ch.userLimit = Math.min(99, Math.max(0, Number(detail.value) || 0)); dirty(); });
     } else if (ch.type === 'stage') {
-      detail = h('div', { class: 'topic subtle', style: { fontSize: '12px', paddingLeft: '4px' } }, 'Stage channels need a Community server (falls back to voice).');
+      detail = h('div', { class: 'topic subtle', style: { fontSize: 'calc(12rem / 14)', paddingLeft: '4px' } }, 'Stage channels need a Community server (falls back to voice).');
     } else {
       detail = h('input', { class: 'input sm topic', value: ch.topic, placeholder: ch.type === 'forum' ? 'Post guidelines' : 'Topic (optional)', maxlength: 1024 });
       detail.addEventListener('input', () => { ch.topic = detail.value; dirty(); });
@@ -518,14 +518,14 @@ const Builder = {
     const t = b.template;
     const existing = App.savedTemplates.find((x) => x.id === b.selectedId);
     const name = h('input', { class: 'input', value: existing ? existing.name : t.name.replace(/ \(copy\)$/, ''), maxlength: 60 });
-    const emoji = h('input', { class: 'input', value: t.icon, maxlength: 4, style: { width: '70px', textAlign: 'center', fontSize: '18px' } });
+    const emoji = h('input', { class: 'input', value: t.icon, maxlength: 4, style: { width: '70px', textAlign: 'center', fontSize: 'calc(18rem / 14)' } });
     const desc = h('input', { class: 'input', value: t.description, placeholder: 'What is this layout for?', maxlength: 140 });
     const result = await openModal({
       title: existing ? `Save "${existing.name}"` : 'Save as template',
       body: [
         h('div', { class: 'row', style: { alignItems: 'flex-end' } }, field('Icon', emoji), h('div', { class: 'grow' }, field('Name', name))),
         field('Description', desc),
-        existing ? h('p', { class: 'subtle', style: { fontSize: '12px' } }, 'This overwrites the saved template you started from.') : null,
+        existing ? h('p', { class: 'subtle', style: { fontSize: 'calc(12rem / 14)' } }, 'This overwrites the saved template you started from.') : null,
       ],
       actions: [
         { label: 'Cancel', kind: 'ghost' },

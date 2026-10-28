@@ -6,11 +6,14 @@ const INVOKE = new Set([
   'presence:set', 'rest', 'members:all', 'channel:purge', 'channel:lock',
   'builder:run', 'builder:clone',
   'templates:list', 'templates:save', 'templates:delete', 'templates:export', 'templates:import',
+  'settings:set', 'settings:pickLogo',
   'open:external', 'app:info',
 ]);
 const EVENTS = new Set(['presence:state', 'builder:event']);
 
 contextBridge.exposeInMainWorld('bridge', {
+  // Read synchronously so theme.js can style the page before its first paint.
+  initialSettings: ipcRenderer.sendSync('settings:initial'),
   // Resolves to { ok, data } or { ok: false, error } — unwrapped by api() in the renderer.
   invoke: (channel, ...args) => {
     if (!INVOKE.has(channel)) return Promise.resolve({ ok: false, error: { message: `Blocked channel ${channel}` } });
