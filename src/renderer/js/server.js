@@ -1156,7 +1156,17 @@ const ChannelsTab = {
         h('h3', { class: 'ellipsis' }, ch.name),
         h('span', { class: 'badge' }, CHANNEL_LABEL[ch.type] || 'Channel'),
       ),
-      h('div', { class: 'row', style: { marginTop: '-6px', marginBottom: '14px' } }, h('span', { class: 'mono subtle', style: { cursor: 'pointer' }, onclick: () => copyText(ch.id, 'Channel ID copied') }, ch.id)),
+      h(
+        'div',
+        { class: 'row', style: { marginTop: '-6px', marginBottom: '14px' } },
+        h('span', { class: 'mono subtle grow', style: { cursor: 'pointer' }, onclick: () => copyText(ch.id, 'Channel ID copied') }, ch.id),
+        h(
+          'button',
+          { class: 'btn sm', onclick: () => ChannelPerms.open(ctx, ch), title: 'See every role and member override on this channel' },
+          icon('shield'),
+          `Permissions${ch.permission_overwrites?.length ? ` · ${ch.permission_overwrites.length}` : ''}`,
+        ),
+      ),
       sections.length
         ? h('div', { class: 'stack', style: { gap: '18px' } }, sections.flatMap((s, i) => (i ? [h('div', { style: { height: '1px', background: 'var(--border)' } }), s] : [s])))
         : h('p', { class: 'subtle' }, 'Nothing to moderate on a category.'),

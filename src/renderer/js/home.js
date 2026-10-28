@@ -132,8 +132,113 @@ const HomePage = {
           HomePage.step('Turn on Server Members Intent', 'Still on the Bot tab, enable "Server Members Intent" so the Members page can list everyone.'),
           HomePage.step('Invite it and build', 'Open the bot\'s page, press "Invite to a server" (Administrator recommended), then pick the server and start building.'),
         ),
+
+        HomePage.modAccessSection(),
       ),
     );
+  },
+
+  // Owner guide for letting mods and admins in through a mod portal (mirrors docs/MOD-PORTAL.md).
+  modAccessSection() {
+    const REPO = 'https://github.com/Pixelplayz2215/discord-server-builder';
+    let saved = '';
+    try {
+      saved = localStorage.getItem('ownerPortalUrl') || '';
+    } catch {
+      // storage unavailable; start empty
+    }
+    const portalInput = h('input', { class: 'input', placeholder: 'https://your-mod-portal.onrender.com', value: saved, autocomplete: 'off' });
+    const redirectCode = h('code', { class: 'mono' });
+    const redirectBox = h('div', { class: 'redirect-box hidden' }, h('div', { class: 'grow ellipsis' }, redirectCode), h('button', { class: 'btn sm', onclick: () => copyText(redirectCode.textContent, 'Redirect copied') }, icon('copy'), 'Copy'));
+    const status = h('div', { class: 'subtle', style: { fontSize: 'calc(12rem / 14)' } });
+
+    const origin = () => {
+      try {
+        const url = new URL(portalInput.value.trim());
+        return /^https?:$/.test(url.protocol) ? url.origin : null;
+      } catch {
+        return null;
+      }
+    };
+    const update = () => {
+      const o = origin();
+      redirectBox.classList.toggle('hidden', !o);
+      redirectCode.textContent = o ? `${o}/auth/callback` : '';
+      status.textContent = '';
+      try {
+        localStorage.setItem('ownerPortalUrl', portalInput.value.trim());
+      } catch {
+        // remembering the address is only a convenience
+      }
+    };
+    portalInput.addEventListener('input', update);
+    update();
+
+    const checkBtn = h('button', { class: 'btn sm teal' }, icon('check'), 'Check portal');
+    checkBtn.addEventListener(
+      'click',
+      withBusy(checkBtn, async () => {
+        if (!origin()) return toast('Paste your portal address first.', 'error');
+        status.textContent = 'Checking… (a sleeping portal can take up to a minute)';
+        try {
+          await api('mod:checkPortal', portalInput.value);
+          status.textContent = '✓ Your portal is running. If sign-in still fails, check the redirect above is saved in the Developer Portal.';
+        } catch (err) {
+          status.textContent = `✗ ${err.message}`;
+        }
+      }),
+    );
+    const copyAddress = () => (origin() ? copyText(origin(), 'Portal address copied') : toast('Paste your portal address first.', 'error'));
+
+    return [
+      h(
+        'div',
+        { class: 'section-title' },
+        h('h2', null, 'Give your mods & admins access'),
+        h('span', { class: 'badge pixel peri' }, 'Optional'),
+      ),
+      h(
+        'p',
+        { class: 'muted', style: { margin: '-6px 0 16px', maxWidth: '760px' } },
+        'Let your moderators use this app by signing in with Discord, without ever seeing your bot token. You run a small free "mod portal" that keeps the token. Anyone with Kick, Ban or Timeout permission in your servers gets moderation tools only. You do this once; your mods don\'t set anything up.',
+      ),
+      h(
+        'div',
+        { class: 'grid cols-2 steps' },
+        HomePage.step(
+          'Get your sign-in keys',
+          'In the Developer Portal, open your bot\'s application → OAuth2. Copy the Client ID, then press Reset Secret and copy the Client Secret. Keep the secret private, like the token.',
+          h('button', { class: 'btn sm', onclick: () => openExternal('https://discord.com/developers/applications') }, icon('external'), 'Developer Portal'),
+        ),
+        HomePage.step(
+          'Copy the code to your GitHub',
+          'Open this project on GitHub and press Fork → Create fork, so you have your own copy to deploy. Skip this if you own the original repository.',
+          h('button', { class: 'btn sm', onclick: () => openExternal(REPO) }, icon('external'), 'Open on GitHub'),
+        ),
+        HomePage.step(
+          'Deploy the portal on Render',
+          'Sign up at Render with GitHub, then New → Blueprint → pick your copy. Paste your bot token, Client ID and Client Secret, and deploy. Copy the address it gives you (…onrender.com).',
+          h('button', { class: 'btn sm', onclick: () => openExternal('https://dashboard.render.com/blueprints') }, icon('external'), 'Open Render'),
+        ),
+        h(
+          'div',
+          { class: 'card step' },
+          h('h3', null, 'Allow the sign-in redirect'),
+          h('p', null, 'Paste your portal address. Then add the redirect below under OAuth2 → Redirects in the Developer Portal and press Save Changes.'),
+          h('div', { class: 'stack', style: { gap: '8px', marginTop: '12px' } }, h('div', { class: 'input-wrap' }, icon('link'), portalInput), redirectBox, h('div', { class: 'row' }, checkBtn), status),
+        ),
+        HomePage.step(
+          'Share it with your mods',
+          'Mods download the app, choose "Sign in with Discord" on the Home page and paste your portal address. They\'ll see the servers where they can kick, ban or time out members — nothing else.',
+          h(
+            'div',
+            { class: 'row wrap' },
+            h('button', { class: 'btn sm', onclick: copyAddress }, icon('copy'), 'Copy portal address'),
+            h('button', { class: 'btn sm ghost', onclick: () => openExternal(`${REPO}/blob/main/docs/MOD-PORTAL.md`) }, icon('external'), 'Full guide'),
+          ),
+        ),
+      ),
+    ];
   },
 
   async signInAsMod(portalUrl) {

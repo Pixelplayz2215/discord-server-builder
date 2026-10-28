@@ -97,7 +97,7 @@ async function describeBot(rest) {
   };
 }
 
-const SAFE_HOSTS = ['discord.com', 'support.discord.com', 'discord.dev', 'pixelplayz.org', 'github.com'];
+const SAFE_HOSTS = ['discord.com', 'support.discord.com', 'discord.dev', 'pixelplayz.org', 'github.com', 'render.com'];
 const isSafeUrl = (url) => {
   try {
     const u = new URL(url);
@@ -136,6 +136,12 @@ const handlers = {
   },
 
   'mod:cancelSignIn': () => portal.cancelSignIn(),
+
+  'mod:checkPortal': async (portalUrl) => {
+    const url = portal.normalizePortalUrl(portalUrl);
+    await portal.call(url, '/health');
+    return url;
+  },
 
   'bots:update': (botId, patch) => {
     const allowed = {};

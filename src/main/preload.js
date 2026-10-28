@@ -3,7 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 const INVOKE = new Set([
   'bots:list', 'bots:add', 'bots:refresh', 'bots:update', 'bots:remove', 'bots:reorder',
-  'mod:signIn', 'mod:cancelSignIn',
+  'mod:signIn', 'mod:cancelSignIn', 'mod:checkPortal',
   'presence:set', 'rest', 'members:all', 'channel:purge', 'channel:lock',
   'builder:run', 'builder:clone',
   'templates:list', 'templates:save', 'templates:delete', 'templates:export', 'templates:import',

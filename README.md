@@ -13,7 +13,7 @@ A Windows desktop app (Electron) in the Pixelplayz2215 theme for running Discord
 
 - **Settings** (gear icon at the bottom left). Includes 8 themes, some of them light. You can also edit the colours, upload your own logo (it also becomes the window and taskbar icon), rename the app, and set the UI scale, text size, corner roundness and font. Pixel-style labels and the animations and background glow can be switched off. The "by Pixelplayz2215" credit in the title bar can't be changed. Settings are saved in `settings.json` in the same folder as the bot tokens.
 
-- **Updates.** Settings → **Check for updates** reads the latest GitHub release, and the app also checks on startup (this can be turned off). When a newer version is out, a "New version found" popup appears. In the portable .exe, **Reload to update** downloads the new .exe next to the current one and restarts into it.
+- **Updates.** Settings → **Check for updates** reads the latest GitHub release, and the app also checks on startup (this can be turned off). When a newer version is out, a "New version found" popup appears. In the portable .exe, **Reload to update** downloads the new .exe, swaps it in place of the current one (same file name, so shortcuts keep working) and restarts.
 
 - **Moderator sign-in.** Your mods can use the app without the bot token. They click **Sign in with Discord** and get the servers where they have Kick, Ban or Timeout permission, with moderation tools only. Each action is checked against their own Discord permissions. This needs the small mod portal server in `server/` running on a host. Setup steps are in [docs/MOD-PORTAL.md](docs/MOD-PORTAL.md).
 
@@ -23,7 +23,7 @@ Bots, settings and saved templates are stored only in `%APPDATA%\Discord Server 
 
 ## Run it
 
-**Just the app:** download `DiscordServerBuilder-<version>-portable.exe` from the [latest release](https://github.com/Pixelplayz2215/discord-server-builder/releases/latest) and run it. No install is needed. Windows may show a SmartScreen warning the first time because the app isn't code-signed. Click **More info → Run anyway**.
+**Just the app:** download [DiscordServerBuilder-portable.exe](https://github.com/Pixelplayz2215/discord-server-builder/releases/latest/download/DiscordServerBuilder-portable.exe) (always the newest build, from the [release page](https://github.com/Pixelplayz2215/discord-server-builder/releases/latest)) and run it. No install is needed. Windows may show a SmartScreen warning the first time because the app isn't code-signed. Click **More info → Run anyway**.
 
 **From VS Code:** open this folder (`File → Open Folder…`), then:
 
@@ -41,25 +41,32 @@ npm install
 npm start          # run the app
 npm run dev        # run with DevTools open
 npm run dist       # portable .exe in dist/
-npm run release    # build + publish a GitHub release (see below)
+npm run release    # build + replace the files on the GitHub release (see below)
 ```
 
 ## Publishing an update
 
-The app's update check reads the latest release of the repository named in `package.json` → `updateRepo`. That repository's releases must be **public**, because GitHub doesn't show a private repository's releases to apps that aren't signed in.
+There is **one permanent release** (tag `latest`). Every update replaces its files, so download links never change. The app's update check reads that release from the repository named in `package.json` → `updateRepo`, which must be public. A small `version.json` attached to the release tells the app which version the files are.
 
-1. Bump `version` in `package.json` (for example `1.0.0` → `1.1.0`).
-2. Optionally, write release notes in `release-notes/v<version>.md`. Without that file, GitHub generates notes from the commits.
-3. Commit and push.
-4. Run `npm run release`, or in VS Code: Terminal → Run Task → **Publish GitHub release**. This builds `DiscordServerBuilder-<version>-portable.exe`, plus `mod-view-<version>.exe` when `modViewPortalUrl` is set. It creates the release `v<version>` with both attached and keeps copies in `releases\`. It stops if there are uncommitted or unpushed changes, or if the release already exists.
+1. Commit and push your changes. If you like, update the **What's new** part of `RELEASE_NOTES.md` first, because that file becomes the release's description.
+2. Run `npm run release`, or in VS Code: Terminal → Run Task → **Publish GitHub release**.
 
-Running copies of the app will show the "New version found" popup the next time they check.
+The script:
+- bumps the patch version in `package.json` if the current one is already published, then commits and pushes the bump
+- builds `DiscordServerBuilder-portable.exe`, plus `mod-view.exe` when `modViewPortalUrl` is set
+- uploads both, along with `version.json`, replacing the old files
+- moves the `latest` tag to your newest commit and refreshes the release notes
+- keeps copies in `releases\`
+
+It stops if there are uncommitted or unpushed changes.
+
+Running copies of the app show the "New version found" popup the next time they check. **Reload to update** swaps the new .exe in place under the same file name.
 
 ## Mod portal
 
 `server/` is a small Node 20+ web server, with no dependencies, that keeps the bot token so moderators never need it. Each bot owner runs their own: fork this repo, then deploy your fork with `render.yaml` (Render → New → Blueprint), or run it on any host with `npm run portal`. The full setup is in [docs/MOD-PORTAL.md](docs/MOD-PORTAL.md).
 
-After it's deployed, put its address in `package.json` → `modViewPortalUrl`. `npm run dist:mod` (and every `npm run release`) then also builds `mod-view-<version>.exe`. That's the same app with your portal address already filled in on the sign-in box, ready to hand to your moderators. The regular build leaves the box empty, so people who download the app aren't sent to your portal. `npm run test:portal` runs the portal's permission tests.
+After it's deployed, put its address in `package.json` → `modViewPortalUrl`. `npm run dist:mod` (and every `npm run release`) then also builds `mod-view.exe`. That's the same app with your portal address already filled in on the sign-in box, ready to hand to your moderators. The regular build leaves the box empty, so people who download the app aren't sent to your portal. `npm run test:portal` runs the portal's permission tests.
 
 ## Bot setup
 

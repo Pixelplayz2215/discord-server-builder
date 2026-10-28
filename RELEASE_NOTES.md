@@ -1,0 +1,27 @@
+**Discord Server Builder** is a desktop app for running your Discord bots from one place. Build whole server layouts, moderate members and channels, and let your mods sign in with Discord.
+
+## Download
+
+| File | Who it's for |
+| --- | --- |
+| **DiscordServerBuilder-portable.exe** | Bot owners. Paste your bot token and go. |
+| **mod-view.exe** | Pixelplayz2215's moderators. Same app with the mod portal address already filled in; just click **Sign in with Discord**. |
+
+Both are portable, so there's nothing to install. This release always has the newest build. The app tells you when it's been updated and can replace itself in one click. Windows may show a SmartScreen warning the first time because the app isn't code-signed. Click **More info → Run anyway**.
+
+## What's new
+
+- **Channel permissions.** In the Channels tab, the new **Permissions** button shows every role and member override on a channel, the way Discord does. You can change them, add roles or members, and sync the channel with its category. Mods get a view-only version.
+- **Mod access guide on the Home page.** It walks owners through setting up a mod portal. It works out the exact sign-in redirect for you and checks that your portal is running.
+
+## Everything in the app
+
+- **Multiple bots.** Each bot gets its own page with its servers, an online status and an invite link.
+- **Server details.** Stats, owner, boosts, roles and the bot's permissions.
+- **Members and moderation.** Search members, then time out, kick, ban or unban them. You can also change nicknames and roles, prune inactive members, and view the audit log.
+- **Channels.** Send messages as the bot, purge, lock, set slowmode, edit permissions, rename, create and delete.
+- **Builder.** Build a server's roles, categories, channels and permissions from templates, or clone an existing server. Templates can be saved, imported and exported.
+- **Settings.** 8 themes (including light ones), custom colours, your own logo and app name, UI scale, text size, corner roundness and fonts.
+- **Mod sign-in.** Moderators sign in with Discord instead of using the bot token, and only get the moderation tools their Discord permissions allow. See [docs/MOD-PORTAL.md](https://github.com/Pixelplayz2215/discord-server-builder/blob/main/docs/MOD-PORTAL.md) to set up a portal for your own bot.
+
+Your bots, tokens and settings are stored only on your PC (`%APPDATA%\Discord Server Builder`). Tokens are encrypted with Windows DPAPI.

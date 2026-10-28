@@ -120,7 +120,7 @@ const toastError = (err) => toast(err?.message || String(err), 'error');
 
 /* ---------- Modals ---------- */
 // actions: [{ label, kind, icon, value, onClick, disabled, ref }] — onClick may return false to keep the
-// modal open; ref receives the button element.
+// modal open; ref receives the button element. wide: true for 720px, 'xl' for 1000px.
 function openModal({ title, body, actions = [], wide = false, dismissable = true }) {
   return new Promise((resolve) => {
     const root = document.getElementById('modal-root');
@@ -156,7 +156,7 @@ function openModal({ title, body, actions = [], wide = false, dismissable = true
     });
     const modal = h(
       'div',
-      { class: `modal ${wide ? 'wide' : ''}`, role: 'dialog', 'aria-modal': 'true' },
+      { class: `modal ${wide === 'xl' ? 'xwide' : wide ? 'wide' : ''}`, role: 'dialog', 'aria-modal': 'true' },
       h('div', { class: 'modal-head' }, h('h3', null, title), dismissable ? h('button', { class: 'icon-btn', onclick: () => close(undefined), 'aria-label': 'Close' }, icon('x')) : null),
       h('div', { class: 'modal-body' }, body),
       buttons.length ? h('div', { class: 'modal-foot' }, buttons) : null,

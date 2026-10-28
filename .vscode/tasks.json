@@ -30,7 +30,7 @@
     },
     {
       "label": "Publish GitHub release",
-      "detail": "Builds the portable exe and publishes it as release v<version> so the app's update check finds it",
+      "detail": "Builds both exes and replaces the files on the GitHub release, so the app's update check finds them",
       "type": "npm",
       "script": "release",
       "problemMatcher": []

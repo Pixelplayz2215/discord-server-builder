@@ -1,7 +1,7 @@
 {
   "name": "discord-server-builder",
   "productName": "Discord Server Builder",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Pixelplayz-themed desktop app to manage Discord bots, moderate servers and build server layouts from templates.",
   "main": "src/main/main.js",
   "author": "Pixelplayz2215",
@@ -52,10 +52,10 @@
       ]
     },
     "portable": {
-      "artifactName": "DiscordServerBuilder-${version}-portable.exe"
+      "artifactName": "DiscordServerBuilder-portable.exe"
     },
     "nsis": {
-      "artifactName": "DiscordServerBuilder-${version}-setup.exe",
+      "artifactName": "DiscordServerBuilder-setup.exe",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
     }
