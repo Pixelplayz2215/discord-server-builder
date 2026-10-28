@@ -57,7 +57,9 @@ https://discord-mod-portal-abcd.onrender.com/auth/callback
 
 ### 4. Give your mods the app
 
-Mods install the same `.exe`, choose **Sign in with Discord** on the Home page and paste the portal URL. They'll see every server the bot is in where they are a mod.
+Mods use the same app. They choose **Sign in with Discord** on the Home page and paste the portal URL. They'll see every server the bot is in where they are a mod.
+
+To skip the pasting, put your portal URL in `package.json` → `modViewPortalUrl` and run `npm run dist:mod`. This builds `mod-view-<version>.exe` with the address already filled in. `npm run release` also attaches it to the GitHub release, so mods can download it from there.
 
 ## Good to know
 

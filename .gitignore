@@ -1,5 +1,6 @@
 node_modules/
 dist/
+releases/
 *.log
 
 # Local app data. The app keeps these in %APPDATA%\Discord Server Builder, never in the project,

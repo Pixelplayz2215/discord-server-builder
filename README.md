@@ -23,7 +23,7 @@ Bots, settings and saved templates are stored only in `%APPDATA%\Discord Server 
 
 ## Run it
 
-**Just the app:** run `dist\DiscordServerBuilder-<version>-portable.exe`. No install is needed.
+**Just the app:** download `DiscordServerBuilder-<version>-portable.exe` from the [latest release](https://github.com/Pixelplayz2215/discord-server-builder/releases/latest) and run it. No install is needed. Windows may show a SmartScreen warning the first time because the app isn't code-signed. Click **More info → Run anyway**.
 
 **From VS Code:** open this folder (`File → Open Folder…`), then:
 
@@ -48,9 +48,10 @@ npm run release    # build + publish a GitHub release (see below)
 
 The app's update check reads the latest release of the repository named in `package.json` → `updateRepo`. That repository's releases must be **public**, because GitHub doesn't show a private repository's releases to apps that aren't signed in.
 
-1. Bump `version` in `package.json` (for example `1.2.0` → `1.3.0`).
-2. Commit and push.
-3. Run `npm run release`, or in VS Code: Terminal → Run Task → **Publish GitHub release**. This builds `dist\DiscordServerBuilder-<version>-portable.exe` and creates the release `v<version>` with that .exe attached and auto-generated notes. It stops if there are uncommitted or unpushed changes, or if the release already exists.
+1. Bump `version` in `package.json` (for example `1.0.0` → `1.1.0`).
+2. Optionally, write release notes in `release-notes/v<version>.md`. Without that file, GitHub generates notes from the commits.
+3. Commit and push.
+4. Run `npm run release`, or in VS Code: Terminal → Run Task → **Publish GitHub release**. This builds `DiscordServerBuilder-<version>-portable.exe`, plus `mod-view-<version>.exe` when `modViewPortalUrl` is set. It creates the release `v<version>` with both attached and keeps copies in `releases\`. It stops if there are uncommitted or unpushed changes, or if the release already exists.
 
 Running copies of the app will show the "New version found" popup the next time they check.
 
@@ -58,7 +59,7 @@ Running copies of the app will show the "New version found" popup the next time 
 
 `server/` is a small Node 20+ web server, with no dependencies, that keeps the bot token so moderators never need it. Deploy it with `render.yaml` (Render → New → Blueprint), or on any host with `npm run portal`. The full setup is in [docs/MOD-PORTAL.md](docs/MOD-PORTAL.md).
 
-After it's deployed, put its address in `package.json` → `modPortalUrl` before building a release. Mods' copies will then have it filled in on the sign-in box. `npm run test:portal` runs the portal's permission tests.
+After it's deployed, put its address in `package.json` → `modViewPortalUrl`. `npm run dist:mod` (and every `npm run release`) then also builds `mod-view-<version>.exe`. That's the same app with your portal address already filled in on the sign-in box, ready to hand to your moderators. The regular build leaves the box empty, so people who download the app aren't sent to your portal. `npm run test:portal` runs the portal's permission tests.
 
 ## Bot setup
 
