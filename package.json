@@ -1,7 +1,7 @@
 {
   "name": "discord-server-builder",
   "productName": "Discord Server Builder",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Pixelplayz-themed desktop app to manage Discord bots, moderate servers and build server layouts from templates.",
   "main": "src/main/main.js",
   "author": "Pixelplayz2215",
