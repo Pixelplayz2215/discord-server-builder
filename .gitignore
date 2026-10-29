@@ -1,6 +1,8 @@
 node_modules/
 dist/
 releases/
+# Your private mod-view settings (mod portal address); see scripts/build-mod-view.js.
+mod-view.json
 *.log
 
 # Local app data. The app keeps these in %APPDATA%\Discord Server Builder, never in the project,

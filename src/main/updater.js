@@ -13,8 +13,9 @@ const pkg = require('../../package.json');
 const REPO = pkg.updateRepo;
 const RELEASES_PAGE = `https://github.com/${REPO}/releases/latest`;
 const HEADERS = { Accept: 'application/vnd.github+json', 'User-Agent': 'DiscordServerBuilder-Updater' };
-// mod-view builds have a mod portal address baked in, so they keep updating to the mod-view file.
-const PREFERRED_ASSET = pkg.modPortalUrl ? /^mod-view\.exe$/i : /portable\.exe$/i;
+// Private mod-view builds aren't published, so they update to the regular exe too; a moderator's
+// saved sign-in (and its portal address) carries over, so nothing is lost.
+const UPDATE_ASSET = /portable\.exe$/i;
 
 const parseVersion = (v) =>
   String(v)
@@ -41,7 +42,7 @@ async function fetchRelease() {
   if (!res.ok) throw new Error(`GitHub returned HTTP ${res.status}.`);
   const release = await res.json();
   const assets = release.assets || [];
-  const exe = assets.find((a) => PREFERRED_ASSET.test(a.name)) || assets.find((a) => /portable\.exe$/i.test(a.name)) || null;
+  const exe = assets.find((a) => UPDATE_ASSET.test(a.name)) || null;
 
   let version = String(release.tag_name || '').replace(/^v/i, '');
   const manifest = assets.find((a) => a.name === 'version.json');

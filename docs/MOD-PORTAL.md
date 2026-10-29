@@ -94,7 +94,7 @@ https://discord-mod-portal-abcd.onrender.com/auth/callback
 
 Mods download the regular app from the [latest release](https://github.com/Pixelplayz2215/discord-server-builder/releases/latest). They choose **Sign in with Discord** on the Home page and paste **your** portal URL, then see every server your bot is in where they are a mod.
 
-To save them the pasting, you can build your own `mod-view` exe with your address already filled in. Put your portal URL in your fork's `package.json` → `modViewPortalUrl`, then run `npm install` and `npm run dist:mod` on a Windows PC with Node.js installed. You'll find it at `dist/mod-view.exe`.
+To save them the pasting, you can build a private `mod-view` exe with your address already filled in. In your fork, create `mod-view.json` containing `{ "portalUrl": "https://your-mod-portal.onrender.com" }`. Then run `npm install` and `npm run dist:mod` on a Windows PC with Node.js installed. You'll find it at `dist/mod-view.exe`. `mod-view.json` is ignored by git, so your address stays private. Share the exe with your mods directly.
 
 ## Good to know
 

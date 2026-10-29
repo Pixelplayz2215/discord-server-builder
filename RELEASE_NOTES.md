@@ -2,12 +2,9 @@
 
 ## Download
 
-| File | Who it's for |
-| --- | --- |
-| **DiscordServerBuilder-portable.exe** | Bot owners. Paste your bot token and go. |
-| **mod-view.exe** | Pixelplayz2215's moderators. Same app with the mod portal address already filled in; just click **Sign in with Discord**. |
+Download **DiscordServerBuilder-portable.exe** below. It's for everyone: bot owners paste their bot token, and moderators click **Sign in with Discord** and paste the portal address their server owner gave them.
 
-Both are portable, so there's nothing to install. This release always has the newest build. The app tells you when it's been updated and can replace itself in one click. Windows may show a SmartScreen warning the first time because the app isn't code-signed. Click **More info → Run anyway**.
+It's portable, so there's nothing to install. This release always has the newest build. The app tells you when it's been updated and can replace itself in one click. Windows may show a SmartScreen warning the first time because the app isn't code-signed. Click **More info → Run anyway**.
 
 ## What's new
 

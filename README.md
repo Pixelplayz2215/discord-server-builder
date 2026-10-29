@@ -53,7 +53,7 @@ There is **one permanent release** (tag `latest`). Every update replaces its fil
 
 The script:
 - bumps the patch version in `package.json` if the current one is already published, then commits and pushes the bump
-- builds `DiscordServerBuilder-portable.exe`, plus `mod-view.exe` when `modViewPortalUrl` is set
+- builds `DiscordServerBuilder-portable.exe`, plus a private `mod-view.exe` when you have a `mod-view.json` (see below)
 - uploads both, along with `version.json`, replacing the old files
 - moves the `latest` tag to your newest commit and refreshes the release notes
 - keeps copies in `releases\`
@@ -66,7 +66,15 @@ Running copies of the app show the "New version found" popup the next time they 
 
 `server/` is a small Node 20+ web server, with no dependencies, that keeps the bot token so moderators never need it. Each bot owner runs their own: fork this repo, then deploy your fork with `render.yaml` (Render → New → Blueprint), or run it on any host with `npm run portal`. The full setup is in [docs/MOD-PORTAL.md](docs/MOD-PORTAL.md).
 
-After it's deployed, put its address in `package.json` → `modViewPortalUrl`. `npm run dist:mod` (and every `npm run release`) then also builds `mod-view.exe`. That's the same app with your portal address already filled in on the sign-in box, ready to hand to your moderators. The regular build leaves the box empty, so people who download the app aren't sent to your portal. `npm run test:portal` runs the portal's permission tests.
+**Private build for your mods (optional).** Create `mod-view.json` in the project folder:
+
+```json
+{ "portalUrl": "https://your-mod-portal.onrender.com" }
+```
+
+`npm run dist:mod` (and every `npm run release`) then also builds `mod-view.exe`. That's the same app with your portal address already filled in on the sign-in box. It only goes into your local `releases\` folder, never to GitHub, so share it with your mods yourself. `mod-view.json` is ignored by git, so your address stays out of the repo. The public download leaves the box empty.
+
+`npm run test:portal` runs the portal's permission tests.
 
 ## Bot setup
 

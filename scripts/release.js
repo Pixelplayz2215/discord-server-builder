@@ -1,9 +1,10 @@
 // Publishes the app to its one permanent GitHub release (tag "latest"), replacing the files there.
 //   1. If package.json's version is already published, bumps the patch number and commits + pushes it
 //      (the app's update check compares versions, so every publish needs a new one).
-//   2. Builds DiscordServerBuilder-portable.exe, plus mod-view.exe when "modViewPortalUrl" is set.
-//   3. Uploads them with version.json (replacing the old files), moves the "latest" tag to this
-//      commit, refreshes the notes from RELEASE_NOTES.md, and keeps copies in releases/.
+//   2. Builds DiscordServerBuilder-portable.exe, plus your private mod-view.exe when mod-view.json exists.
+//   3. Uploads the portable exe with version.json (replacing the old files), moves the "latest" tag
+//      to this commit, refreshes the notes from RELEASE_NOTES.md, and keeps copies in releases/.
+//      mod-view.exe is only copied to releases/; it is never uploaded.
 // Run: npm run release   (needs the GitHub CLI signed in with push access to updateRepo)
 const fs = require('fs');
 const path = require('path');
@@ -59,12 +60,13 @@ if (published && !isNewer(pkg.version, published)) {
 }
 
 const assets = [path.join('dist', 'DiscordServerBuilder-portable.exe')];
+const localOnly = [];
 run('npm run dist');
-if (pkg.modViewPortalUrl) {
+if (fs.existsSync(path.join(root, 'mod-view.json'))) {
   run('npm run dist:mod');
-  assets.push(path.join('dist', 'mod-view.exe'));
+  localOnly.push(path.join('dist', 'mod-view.exe'));
 }
-for (const file of assets) if (!fs.existsSync(path.join(root, file))) fail(`Build output not found: ${file}`);
+for (const file of [...assets, ...localOnly]) if (!fs.existsSync(path.join(root, file))) fail(`Build output not found: ${file}`);
 
 const commit = output('git rev-parse HEAD').trim();
 const manifestPath = path.join('dist', 'version.json');
@@ -92,7 +94,8 @@ if (releaseExists) {
 
 const releasesDir = path.join(root, 'releases');
 fs.mkdirSync(releasesDir, { recursive: true });
-for (const file of assets) fs.copyFileSync(path.join(root, file), path.join(releasesDir, path.basename(file)));
+for (const file of [...assets, ...localOnly]) fs.copyFileSync(path.join(root, file), path.join(releasesDir, path.basename(file)));
 
 console.log(`\nPublished version ${pkg.version} to https://github.com/${repo}/releases/tag/${TAG} (copies in releases/).`);
+if (localOnly.length) console.log('mod-view.exe was built into releases/ only. Share it with your mods privately.');
 console.log('Apps checking for updates will now offer it.');

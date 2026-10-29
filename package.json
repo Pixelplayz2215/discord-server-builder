@@ -9,7 +9,6 @@
   "private": true,
   "updateRepo": "Pixelplayz2215/discord-server-builder",
   "modPortalUrl": "",
-  "modViewPortalUrl": "https://discord-mod-portal.onrender.com",
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",

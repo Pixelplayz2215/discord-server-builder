@@ -1,11 +1,21 @@
 // Builds "mod-view": the same portable app with your mod portal address pre-filled on the sign-in box,
-// for handing to your moderators. The address comes from package.json "modViewPortalUrl".
+// for handing to your moderators privately. It is never uploaded to GitHub.
+// The address comes from mod-view.json in the project folder (kept out of git):
+//   { "portalUrl": "https://your-mod-portal.onrender.com" }
 // Output: dist/mod-view.exe     Run: npm run dist:mod
+const fs = require('fs');
+const path = require('path');
 const { build, Platform } = require('electron-builder');
-const pkg = require('../package.json');
 
-if (!pkg.modViewPortalUrl) {
-  console.error('Set "modViewPortalUrl" in package.json to your mod portal address first.');
+const configPath = path.join(__dirname, '..', 'mod-view.json');
+let portalUrl = '';
+try {
+  portalUrl = JSON.parse(fs.readFileSync(configPath, 'utf8')).portalUrl || '';
+} catch {
+  // no config file yet
+}
+if (!/^https:\/\//.test(portalUrl)) {
+  console.error('Create mod-view.json in the project folder with your portal address, e.g.\n  { "portalUrl": "https://your-mod-portal.onrender.com" }');
   process.exit(1);
 }
 
@@ -13,11 +23,11 @@ if (!pkg.modViewPortalUrl) {
 build({
   targets: Platform.WINDOWS.createTarget('portable'),
   config: {
-    extraMetadata: { modPortalUrl: pkg.modViewPortalUrl },
+    extraMetadata: { modPortalUrl: portalUrl },
     portable: { artifactName: 'mod-view.exe' },
   },
 }).then(
-  () => console.log(`Built dist/mod-view.exe (portal: ${pkg.modViewPortalUrl})`),
+  () => console.log(`Built dist/mod-view.exe (portal: ${portalUrl})`),
   (err) => {
     console.error(err);
     process.exit(1);
