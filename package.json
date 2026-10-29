@@ -17,6 +17,7 @@
     "pack": "electron-builder --win dir",
     "dist": "electron-builder --win portable",
     "dist:installer": "electron-builder --win nsis",
+    "dist:all": "electron-builder --win portable nsis",
     "dist:mod": "node scripts/build-mod-view.js",
     "release": "node scripts/release.js",
     "portal": "node server/index.js",
@@ -34,7 +35,7 @@
   "build": {
     "appId": "org.pixelplayz.discordserverbuilder",
     "productName": "Discord Server Builder",
-    "copyright": "Pixelplayz2215",
+    "copyright": "Copyright © 2026 Pixelplayz2215",
     "directories": {
       "output": "dist",
       "buildResources": "build"
@@ -56,7 +57,15 @@
     "nsis": {
       "artifactName": "DiscordServerBuilder-setup.exe",
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Discord Server Builder",
+      "uninstallDisplayName": "Discord Server Builder",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "include": "build/installer.nsh"
     }
   }
 }

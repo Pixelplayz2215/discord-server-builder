@@ -13,7 +13,7 @@ A Windows desktop app (Electron) in the Pixelplayz2215 theme for running Discord
 
 - **Settings** (gear icon at the bottom left). Includes 8 themes, some of them light. You can also edit the colours, upload your own logo (it also becomes the window and taskbar icon), rename the app, and set the UI scale, text size, corner roundness and font. Pixel-style labels and the animations and background glow can be switched off. The "by Pixelplayz2215" credit in the title bar can't be changed. Settings are saved in `settings.json` in the same folder as the bot tokens.
 
-- **Updates.** Settings → **Check for updates** reads the latest GitHub release, and the app also checks on startup (this can be turned off). When a newer version is out, a "New version found" popup appears. In the portable .exe, **Reload to update** downloads the new .exe, swaps it in place of the current one (same file name, so shortcuts keep working) and restarts.
+- **Updates.** Settings → **Check for updates** reads the latest GitHub release, and the app also checks on startup (this can be turned off). When a newer version is out, a "New version found" popup appears and **Reload to update** installs it in one click. The installed app runs the new installer silently in the same folder, keeping your shortcuts. The portable .exe swaps the new file in place under the same name. Both then restart.
 
 - **Moderator sign-in.** Your mods can use the app without the bot token. They click **Sign in with Discord** and get the servers where they have Kick, Ban or Timeout permission, with moderation tools only. Each action is checked against their own Discord permissions. This needs the small mod portal server in `server/` running on a host. Setup steps are in [docs/MOD-PORTAL.md](docs/MOD-PORTAL.md).
 
@@ -23,7 +23,12 @@ Bots, settings and saved templates are stored only in `%APPDATA%\Discord Server 
 
 ## Run it
 
-**Just the app:** download [DiscordServerBuilder-portable.exe](https://github.com/Pixelplayz2215/discord-server-builder/releases/latest/download/DiscordServerBuilder-portable.exe) (always the newest build, from the [release page](https://github.com/Pixelplayz2215/discord-server-builder/releases/latest)) and run it. No install is needed. Windows may show a SmartScreen warning the first time because the app isn't code-signed. Click **More info → Run anyway**.
+**Just the app:** from the [release page](https://github.com/Pixelplayz2215/discord-server-builder/releases/latest) (always the newest build), download either:
+
+- [DiscordServerBuilder-setup.exe](https://github.com/Pixelplayz2215/discord-server-builder/releases/latest/download/DiscordServerBuilder-setup.exe), the **installer** (Start menu and desktop shortcuts, plus an uninstaller), or
+- [DiscordServerBuilder-portable.exe](https://github.com/Pixelplayz2215/discord-server-builder/releases/latest/download/DiscordServerBuilder-portable.exe), the **portable** version (no install needed).
+
+> ⚠️ The only official download is the GitHub release page above. Copies from anywhere else could be changed to steal your bot token. Windows may show a SmartScreen warning the first time because the app isn't code-signed. Click **More info → Run anyway**.
 
 **From VS Code:** open this folder (`File → Open Folder…`), then:
 
@@ -53,14 +58,16 @@ There is **one permanent release** (tag `latest`). Every update replaces its fil
 
 The script:
 - bumps the patch version in `package.json` if the current one is already published, then commits and pushes the bump
-- builds `DiscordServerBuilder-portable.exe`, plus a private `mod-view.exe` when you have a `mod-view.json` (see below)
-- uploads both, along with `version.json`, replacing the old files
+- builds `DiscordServerBuilder-setup.exe` (installer) and `DiscordServerBuilder-portable.exe`, plus a private `mod-view.exe` when you have a `mod-view.json` (see below)
+- uploads the installer and the portable exe, along with `version.json`, replacing the old files
 - moves the `latest` tag to your newest commit and refreshes the release notes
 - keeps copies in `releases\`
 
 It stops if there are uncommitted or unpushed changes.
 
-Running copies of the app show the "New version found" popup the next time they check. **Reload to update** swaps the new .exe in place under the same file name.
+Running copies of the app show the "New version found" popup the next time they check. **Reload to update** then updates them in place.
+
+The installer's own pages (credit to Pixelplayz2215, the official-download warning, the finish and uninstall text) are in `build/installer.nsh`.
 
 ## Mod portal
 

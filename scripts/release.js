@@ -1,9 +1,10 @@
 // Publishes the app to its one permanent GitHub release (tag "latest"), replacing the files there.
 //   1. If package.json's version is already published, bumps the patch number and commits + pushes it
 //      (the app's update check compares versions, so every publish needs a new one).
-//   2. Builds DiscordServerBuilder-portable.exe, plus your private mod-view.exe when mod-view.json exists.
-//   3. Uploads the portable exe with version.json (replacing the old files), moves the "latest" tag
-//      to this commit, refreshes the notes from RELEASE_NOTES.md, and keeps copies in releases/.
+//   2. Builds DiscordServerBuilder-setup.exe (installer) and DiscordServerBuilder-portable.exe, plus
+//      your private mod-view.exe when mod-view.json exists.
+//   3. Uploads the installer and portable exe with version.json (replacing the old files), moves the
+//      "latest" tag to this commit, refreshes the notes from RELEASE_NOTES.md, and keeps copies in releases/.
 //      mod-view.exe is only copied to releases/; it is never uploaded.
 // Run: npm run release   (needs the GitHub CLI signed in with push access to updateRepo)
 const fs = require('fs');
@@ -59,9 +60,9 @@ if (published && !isNewer(pkg.version, published)) {
   run('git push');
 }
 
-const assets = [path.join('dist', 'DiscordServerBuilder-portable.exe')];
+const assets = [path.join('dist', 'DiscordServerBuilder-setup.exe'), path.join('dist', 'DiscordServerBuilder-portable.exe')];
 const localOnly = [];
-run('npm run dist');
+run('npm run dist:all');
 if (fs.existsSync(path.join(root, 'mod-view.json'))) {
   run('npm run dist:mod');
   localOnly.push(path.join('dist', 'mod-view.exe'));

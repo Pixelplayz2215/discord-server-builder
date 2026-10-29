@@ -259,7 +259,7 @@ const SettingsPage = {
         h(
           'p',
           { class: 'subtle', style: { fontSize: 'calc(12rem / 14)' } },
-          'New versions come from the app\'s GitHub releases. The portable .exe downloads the update next to itself and restarts into it. Your bots and settings carry over.',
+          'New versions come from the official GitHub page. The installed app and the portable .exe both update themselves in one click and restart. Your bots and settings carry over.',
         ),
       ),
     );

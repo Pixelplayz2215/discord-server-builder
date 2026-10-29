@@ -2,11 +2,23 @@
 
 ## Download
 
-Download **DiscordServerBuilder-portable.exe** below. It's for everyone: bot owners paste their bot token, and moderators click **Sign in with Discord** and paste the portal address their server owner gave them.
+Pick one, both are the same app by **Pixelplayz2215**:
 
-It's portable, so there's nothing to install. This release always has the newest build. The app tells you when it's been updated and can replace itself in one click. Windows may show a SmartScreen warning the first time because the app isn't code-signed. Click **More info → Run anyway**.
+| File | What it is |
+| --- | --- |
+| **DiscordServerBuilder-setup.exe** | **Installer.** Adds Start menu and desktop shortcuts and an uninstaller. Recommended. |
+| **DiscordServerBuilder-portable.exe** | **Portable.** No install; run it from any folder or a USB stick. |
+
+Bot owners paste their bot token. Moderators click **Sign in with Discord** and paste the portal address their server owner gave them. This release always has the newest build, and both versions tell you when there's an update and install it in one click.
+
+> ⚠️ **The only official download is this GitHub page:** https://github.com/Pixelplayz2215/discord-server-builder/releases/latest
+> Copies from anywhere else could be changed to steal your bot token. Never share your token with anyone, including people claiming to be Pixelplayz2215.
+
+Windows may show a SmartScreen warning the first time because the app isn't code-signed. Click **More info → Run anyway**.
 
 ## What's new
+
+- **Installer version.** You can now install the app properly (Start menu, desktop shortcut, uninstaller) or keep using the portable exe. Both update themselves.
 
 - **Channel permissions.** In the Channels tab, the new **Permissions** button shows every role and member override on a channel, the way Discord does. You can change them, add roles or members, and sync the channel with its category. Mods get a view-only version.
 - **Mod access guide on the Home page.** It walks owners through setting up a mod portal. It works out the exact sign-in redirect for you and checks that your portal is running.

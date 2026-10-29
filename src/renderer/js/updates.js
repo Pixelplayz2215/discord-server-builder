@@ -53,8 +53,8 @@ const Updater = {
     };
 
     const cannotInstall = info.asset
-      ? 'This copy is not the portable .exe, so it can\'t replace itself. Download the new version from GitHub instead.'
-      : 'This release has no portable .exe attached. Download it from GitHub instead.';
+      ? 'This copy isn\'t the installed app or the portable .exe, so it can\'t update itself. Download the new version from GitHub instead.'
+      : 'This release doesn\'t have a matching download attached. Download it from GitHub instead.';
 
     openModal({
       title: 'New version found',

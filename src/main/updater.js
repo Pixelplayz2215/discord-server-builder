@@ -13,9 +13,11 @@ const pkg = require('../../package.json');
 const REPO = pkg.updateRepo;
 const RELEASES_PAGE = `https://github.com/${REPO}/releases/latest`;
 const HEADERS = { Accept: 'application/vnd.github+json', 'User-Agent': 'DiscordServerBuilder-Updater' };
-// Private mod-view builds aren't published, so they update to the regular exe too; a moderator's
-// saved sign-in (and its portal address) carries over, so nothing is lost.
-const UPDATE_ASSET = /portable\.exe$/i;
+// Portable copies update to the portable exe, installed copies to the installer. Private mod-view
+// builds aren't published, so they update to the regular portable exe; a moderator's saved sign-in
+// (and its portal address) carries over, so nothing is lost.
+const PORTABLE_ASSET = /portable\.exe$/i;
+const SETUP_ASSET = /setup\.exe$/i;
 
 const parseVersion = (v) =>
   String(v)
@@ -34,6 +36,18 @@ function isNewer(latest, current) {
 // Set by the portable launcher to the .exe the user started; unset when running from source.
 const portableExe = () => process.env.PORTABLE_EXECUTABLE_FILE || null;
 
+// Copies made by the setup exe sit next to the uninstaller electron-builder writes.
+function isInstalled() {
+  if (portableExe() || !app.isPackaged) return false;
+  try {
+    return fs.readdirSync(path.dirname(process.execPath)).some((f) => /^Uninstall .*\.exe$/i.test(f));
+  } catch {
+    return false;
+  }
+}
+
+const canSelfUpdate = () => !!portableExe() || isInstalled();
+
 // The release, the version its files are, and the exe this copy should update to (null if none).
 async function fetchRelease() {
   const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, { headers: HEADERS });
@@ -42,7 +56,7 @@ async function fetchRelease() {
   if (!res.ok) throw new Error(`GitHub returned HTTP ${res.status}.`);
   const release = await res.json();
   const assets = release.assets || [];
-  const exe = assets.find((a) => UPDATE_ASSET.test(a.name)) || null;
+  const exe = assets.find((a) => (isInstalled() ? SETUP_ASSET : PORTABLE_ASSET).test(a.name)) || null;
 
   let version = String(release.tag_name || '').replace(/^v/i, '');
   const manifest = assets.find((a) => a.name === 'version.json');
@@ -66,7 +80,7 @@ async function checkForUpdate() {
     notes: String(release.body || '').slice(0, 2000),
     url: release.html_url || RELEASES_PAGE,
     asset: exe ? { name: exe.name, size: exe.size } : null,
-    canInstall: !!exe && !!portableExe(),
+    canInstall: !!exe && canSelfUpdate(),
   };
 }
 
@@ -94,10 +108,10 @@ async function downloadFile(url, dest, onProgress) {
 }
 
 // Looks the release up again here rather than trusting a URL from the UI, and only accepts
-// assets served from this repository's release downloads. Downloads next to the running exe.
+// assets served from this repository's release downloads. The portable exe is downloaded next to
+// the running one; the installer goes to the temp folder.
 async function installUpdate(onProgress) {
-  const exe = portableExe();
-  if (!exe) throw new Error('Only the portable .exe can update itself. Download the new version from GitHub instead.');
+  if (!canSelfUpdate()) throw new Error('This copy can\'t update itself (it isn\'t the installed app or the portable exe). Download the new version from GitHub instead.');
   const found = await fetchRelease();
   if (!found?.exe || !isNewer(found.version, app.getVersion())) throw new Error('No newer version was found.');
 
@@ -105,7 +119,8 @@ async function installUpdate(onProgress) {
   if (url.protocol !== 'https:' || url.hostname !== 'github.com' || !url.pathname.startsWith(`/${REPO}/releases/download/`)) {
     throw new Error('The download link does not point at this app\'s GitHub releases.');
   }
-  const dest = path.join(path.dirname(exe), `${path.parse(exe).name}.update.exe`);
+  const exe = portableExe();
+  const dest = exe ? path.join(path.dirname(exe), `${path.parse(exe).name}.update.exe`) : path.join(os.tmpdir(), 'DiscordServerBuilder-setup.exe');
   return downloadFile(url.href, dest, onProgress);
 }
 
@@ -132,10 +147,16 @@ function swapScript(newFile, target) {
 }
 
 function restartInto(newFile) {
-  const script = path.join(os.tmpdir(), `discord-server-builder-update-${process.pid}.cmd`);
-  fs.writeFileSync(script, swapScript(newFile, portableExe()), 'utf8');
   app.releaseSingleInstanceLock();
-  spawn('cmd.exe', ['/d', '/c', script], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+  if (isInstalled()) {
+    // Silent update: the installer waits for this copy to close, installs over it in the same
+    // folder (keeping shortcuts) and starts the app again.
+    spawn(newFile, ['/S', '--updated', '--force-run'], { detached: true, stdio: 'ignore' }).unref();
+  } else {
+    const script = path.join(os.tmpdir(), `discord-server-builder-update-${process.pid}.cmd`);
+    fs.writeFileSync(script, swapScript(newFile, portableExe()), 'utf8');
+    spawn('cmd.exe', ['/d', '/c', script], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+  }
   app.quit();
 }
 
