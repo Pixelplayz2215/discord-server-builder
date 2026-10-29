@@ -17,6 +17,8 @@ A Windows desktop app (Electron) in the Pixelplayz2215 theme for running Discord
 
 - **Moderator sign-in.** Your mods can use the app without the bot token. They click **Sign in with Discord** and get the servers where they have Kick, Ban or Timeout permission, with moderation tools only. Each action is checked against their own Discord permissions. This needs the small mod portal server in `server/` running on a host. Setup steps are in [docs/MOD-PORTAL.md](docs/MOD-PORTAL.md).
 
+- **Slash commands for mods (optional).** Mods who don't use the app can moderate right in Discord with `/warn`, `/timeout`, `/untimeout`, `/kick`, `/ban`, `/unban`, `/cases`, `/purge`, `/lock`, `/unlock` and `/slowmode`. The mod portal answers them, with the same permission checks as the app. Warnings and member actions are recorded as numbered cases in a private `#mod-cases` channel the bot creates, and `/cases` looks a member up. The owner turns them on from the Home page in one click.
+
 ## Your data stays on your PC
 
 Bots, settings and saved templates are stored only in `%APPDATA%\Discord Server Builder` (`bots.json`, `settings.json`, `templates.json`). Bot tokens are encrypted with Windows DPAPI (Electron `safeStorage`). None of this is in the project folder, the GitHub repo or the built .exe, so every copy of the app starts empty. `.gitignore` also blocks those file names in case one gets copied into the project. The UI never sees a token, and every Discord call runs in the main process.
@@ -81,7 +83,7 @@ The installer's own pages (credit to Pixelplayz2215, the official-download warni
 
 `npm run dist:mod` (and every `npm run release`) then also builds `mod-view.exe`. That's the same app with your portal address already filled in on the sign-in box. It only goes into your local `releases\` folder, never to GitHub, so share it with your mods yourself. `mod-view.json` is ignored by git, so your address stays out of the repo. The public download leaves the box empty.
 
-`npm run test:portal` runs the portal's permission tests.
+`npm run test:portal` runs the portal's permission and slash command tests.
 
 ## Bot setup
 
@@ -106,6 +108,7 @@ src/main/       Electron main process
   builder.js      template → server builder, clone, purge, lock, member paging
   updater.js      GitHub release check, download, restart into the new .exe
   portal.js       "Sign in with Discord" client for moderators (talks to server/)
+  commands.js     mod slash command definitions + registering them on a bot (shared with server/)
   store.js        encrypted token/session, settings and saved-template storage
   preload.js      narrow IPC bridge
 src/shared/
@@ -122,10 +125,13 @@ src/renderer/   UI (plain HTML/CSS/JS, no bundler)
   js/templates.js built-in server templates
 scripts/        make-icon.js (draws the logo → build/icon.png/.ico), copy-fonts.js, release.js
 server/         mod portal (not part of the .exe)
-  index.js        HTTP server: sign-in, moderation-only API
+  index.js        HTTP server: sign-in, moderation-only API, /interactions
   auth.js         Discord OAuth sign-in + signed sessions
   guard.js        per-request permission and role-hierarchy checks
+  interactions.js signed slash command endpoint and the command handlers
+  cases.js        case log kept in each server's private #mod-cases channel
   portal.test.js  tests with a fake Discord
+  interactions.test.js  slash command tests with a fake Discord
 docs/MOD-PORTAL.md  how to deploy the portal and give mods access
 render.yaml     Render blueprint for the portal
 ```

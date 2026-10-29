@@ -8,31 +8,37 @@ const { fetchAllMembers, purgeMessages, setChannelLock } = require('../src/main/
 const { loadConfig } = require('./config');
 const { createAuth } = require('./auth');
 const { createGuard, auditReason } = require('./guard');
+const { createInteractions } = require('./interactions');
 
 const MAX_BODY = 64 * 1024;
+const MAX_INTERACTION_BODY = 1024 * 1024;
 
 const httpError = (status, message) => Object.assign(new Error(message), { status });
 
-function readJson(req) {
+function readBody(req, limit = MAX_BODY) {
   return new Promise((resolve, reject) => {
     let size = 0;
     const chunks = [];
     req.on('data', (chunk) => {
       size += chunk.length;
-      if (size > MAX_BODY) {
+      if (size > limit) {
         reject(httpError(413, 'Request too large.'));
         req.destroy();
       } else chunks.push(chunk);
     });
-    req.on('end', () => {
-      try {
-        resolve(chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {});
-      } catch {
-        reject(httpError(400, 'Invalid JSON.'));
-      }
-    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
     req.on('error', reject);
   });
+}
+
+async function readJson(req) {
+  const raw = await readBody(req);
+  if (!raw.length) return {};
+  try {
+    return JSON.parse(raw.toString('utf8'));
+  } catch {
+    throw httpError(400, 'Invalid JSON.');
+  }
 }
 
 function sendJson(res, status, data) {
@@ -70,7 +76,8 @@ function createLimiter(limit, windowMs) {
   };
 }
 
-function createPortal({ config, rest, auth, guard }) {
+// interactions is optional: without it the portal doesn't answer slash commands.
+function createPortal({ config, rest, auth, guard, interactions }) {
   const limitUser = createLimiter(120, 60000);
   const limitIp = createLimiter(30, 60000);
   let botUser = null;
@@ -170,6 +177,19 @@ function createPortal({ config, rest, auth, guard }) {
       }
     }
 
+    // Slash commands, sent by Discord once the bot's Interactions Endpoint URL points here.
+    if (req.method === 'POST' && url.pathname === '/interactions' && interactions) {
+      try {
+        const result = await interactions.receive(await readBody(req, MAX_INTERACTION_BODY), req.headers);
+        sendJson(res, result.status, result.body);
+        if (result.after) await result.after();
+      } catch (err) {
+        console.error('POST /interactions:', err);
+        if (!res.headersSent) sendJson(res, err.status || 500, { error: 'Something went wrong.' });
+      }
+      return;
+    }
+
     const route = api[`${req.method} ${url.pathname}`];
     if (!route) return sendJson(res, 404, { error: 'Not found.' });
     try {
@@ -193,7 +213,8 @@ function createPortal({ config, rest, auth, guard }) {
 if (require.main === module) {
   const config = loadConfig();
   const rest = new DiscordRest(config.botToken);
-  const server = createPortal({ config, rest, auth: createAuth(config), guard: createGuard(rest) });
+  const guard = createGuard(rest);
+  const server = createPortal({ config, rest, auth: createAuth(config), guard, interactions: createInteractions({ rest, guard }) });
   server.listen(config.port, () => console.log(`Mod portal listening on port ${config.port} (${config.publicUrl})`));
 }
 

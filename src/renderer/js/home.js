@@ -190,6 +190,75 @@ const HomePage = {
     );
     const copyAddress = () => (origin() ? copyText(origin(), 'Portal address copied') : toast('Paste your portal address first.', 'error'));
 
+    // Slash commands: the chosen bot's interactions go to the portal, which answers the mod commands.
+    const ownerBots = App.bots.filter((b) => b.type !== 'mod');
+    const slashStatus = h('div', { class: 'subtle', style: { fontSize: 'calc(12rem / 14)' } });
+    let lastStatus = null;
+    const showStatus = () => {
+      const s = lastStatus;
+      if (!s) return;
+      const here = origin() && s.endpoint === `${origin()}/interactions`;
+      let text;
+      if (here && s.registered === s.total) text = `✓ On. Your portal answers all ${s.total} mod commands.`;
+      else if (here) text = `On, but ${s.total - s.registered} of the commands are missing. Press Turn on again to add them.`;
+      else if (s.endpoint) text = `Off. This bot's commands go to ${s.endpoint}.`;
+      else text = s.registered ? 'Off, but the mod commands are still listed in Discord. Press Turn off to remove them.' : 'Off.';
+      if (s.others.length) text += ` This bot also has other commands (/${s.others.join(', /')}), which only work while this is off.`;
+      slashStatus.textContent = text;
+    };
+    const botSelect = ownerBots.length ? selectEl(ownerBots.map((b) => [b.id, displayName(b)]), ownerBots[0].id, () => loadStatus()) : null;
+    const loadStatus = async () => {
+      lastStatus = null;
+      slashStatus.textContent = 'Checking…';
+      try {
+        lastStatus = await api('commands:status', botSelect.value);
+        showStatus();
+      } catch (err) {
+        slashStatus.textContent = `✗ ${err.message}`;
+      }
+    };
+    portalInput.addEventListener('input', showStatus);
+
+    const enableBtn = h('button', { class: 'btn sm teal' }, icon('power'), 'Turn on');
+    enableBtn.addEventListener(
+      'click',
+      withBusy(enableBtn, async () => {
+        if (!origin()) return toast('Paste your portal address in step 4 first.', 'error');
+        const others = lastStatus?.others || [];
+        const replaced = lastStatus?.endpoint && lastStatus.endpoint !== `${origin()}/interactions` ? lastStatus.endpoint : null;
+        const ok = await confirmDialog({
+          title: 'Turn on slash commands?',
+          message: h(
+            'div',
+            { class: 'stack', style: { gap: '10px' } },
+            h('p', null, `Discord will send all of ${displayName(ownerBots.find((b) => b.id === botSelect.value))}'s slash commands to ${origin()}, and the mod commands will appear in your servers.`),
+            replaced ? h('div', { class: 'callout warn' }, icon('alert'), h('div', null, h('b', null, 'This replaces its current Interactions Endpoint URL: '), replaced)) : null,
+            others.length ? h('div', { class: 'callout warn' }, icon('alert'), h('div', null, h('b', null, 'Its other commands will stop working: '), `/${others.join(', /')}. They work again when you turn this off.`)) : null,
+          ),
+          confirmLabel: 'Turn on',
+        });
+        if (!ok) return;
+        slashStatus.textContent = 'Turning on… (a sleeping portal can take up to a minute)';
+        try {
+          lastStatus = await api('commands:enable', botSelect.value, origin());
+          showStatus();
+          toast('Slash commands are on');
+        } catch (err) {
+          slashStatus.textContent = `✗ ${err.message}`;
+        }
+      }),
+    );
+    const disableBtn = h('button', { class: 'btn sm ghost' }, 'Turn off');
+    disableBtn.addEventListener(
+      'click',
+      withBusy(disableBtn, async () => {
+        lastStatus = await api('commands:disable', botSelect.value, origin() || '');
+        showStatus();
+        toast('Slash commands are off');
+      }),
+    );
+    if (botSelect) loadStatus();
+
     return [
       h(
         'div',
@@ -235,6 +304,24 @@ const HomePage = {
             { class: 'row wrap' },
             h('button', { class: 'btn sm', onclick: copyAddress }, icon('copy'), 'Copy portal address'),
             h('button', { class: 'btn sm ghost', onclick: () => openExternal(`${REPO}/blob/main/docs/MOD-PORTAL.md`) }, icon('external'), 'Full guide'),
+          ),
+        ),
+        h(
+          'div',
+          { class: 'card step' },
+          h('h3', null, 'Add slash commands (optional)'),
+          h(
+            'p',
+            null,
+            'Mods can also moderate right in Discord with /warn, /timeout, /kick, /ban, /unban, /cases, /purge, /lock, /unlock and /slowmode. Your portal answers them with the same permission rules, and records warnings and actions in a private #mod-cases channel.',
+          ),
+          botSelect
+            ? h('div', { class: 'stack', style: { gap: '8px', marginTop: '12px' } }, h('div', { class: 'row wrap' }, botSelect, enableBtn, disableBtn), slashStatus)
+            : h('p', { class: 'subtle', style: { marginTop: '8px' } }, 'Connect your bot with its token above first.'),
+          h(
+            'p',
+            { class: 'subtle', style: { marginTop: '8px', fontSize: 'calc(12rem / 14)' } },
+            'On Render\'s free plan, the first command after 15 quiet minutes can fail while the portal wakes up. A free uptime monitor that opens your portal\'s /health page every 10 minutes keeps it awake.',
           ),
         ),
       ),

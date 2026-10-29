@@ -8,6 +8,7 @@ const Appearance = require('../shared/appearance');
 const { buildServer, cloneServer, fetchAllMembers, purgeMessages, setChannelLock } = require('./builder');
 const updater = require('./updater');
 const portal = require('./portal');
+const commands = require('./commands');
 const pkg = require('../../package.json');
 
 const DEV = process.argv.includes('--dev');
@@ -109,6 +110,18 @@ const isSafeUrl = (url) => {
 
 const METHODS = new Set(['GET', 'POST', 'PATCH', 'PUT', 'DELETE']);
 
+// Whether the bot's slash commands go to a mod portal, and how many of the mod commands it has.
+async function slashStatus(rest) {
+  const application = await rest.request('GET', '/applications/@me');
+  const registered = await rest.request('GET', `/applications/${application.id}/commands`);
+  return {
+    endpoint: application.interactions_endpoint_url || null,
+    registered: registered.filter((c) => commands.NAMES.has(c.name)).length,
+    total: commands.COMMANDS.length,
+    others: registered.filter((c) => !commands.NAMES.has(c.name)).map((c) => c.name),
+  };
+}
+
 const handlers = {
   'bots:list': () => store.listBots(),
 
@@ -141,6 +154,45 @@ const handlers = {
     const url = portal.normalizePortalUrl(portalUrl);
     await portal.call(url, '/health');
     return url;
+  },
+
+  'commands:status': (botId) => {
+    if (isMod(botId)) ownerOnly();
+    return slashStatus(restFor(botId));
+  },
+
+  // Points the bot's Interactions Endpoint URL at the portal (Discord checks it answers, signed as
+  // this bot, before saving) and adds the mod commands.
+  'commands:enable': async (botId, portalUrl) => {
+    if (isMod(botId)) ownerOnly();
+    const rest = restFor(botId);
+    const url = portal.normalizePortalUrl(portalUrl);
+    await portal.call(url, '/health'); // wake a sleeping portal so Discord's check doesn't time out
+    const application = await rest.request('GET', '/applications/@me');
+    try {
+      await rest.request('PATCH', '/applications/@me', { body: { interactions_endpoint_url: `${url}/interactions` } });
+    } catch (err) {
+      if (err.code !== 50035 || !/interactions_endpoint_url/.test(err.message)) throw err;
+      throw new Error("Discord couldn't verify your portal. Make sure it runs this bot's token and has the latest code: on GitHub, press Sync fork, then wait for Render to finish deploying.");
+    }
+    await commands.registerCommands(rest, application.id);
+    return slashStatus(rest);
+  },
+
+  // Removes the mod commands, and stops sending interactions to the portal if they go there.
+  'commands:disable': async (botId, portalUrl) => {
+    if (isMod(botId)) ownerOnly();
+    const rest = restFor(botId);
+    const application = await rest.request('GET', '/applications/@me');
+    let ours = false;
+    try {
+      ours = application.interactions_endpoint_url === `${portal.normalizePortalUrl(portalUrl)}/interactions`;
+    } catch {
+      // no usable portal address; leave the endpoint as it is
+    }
+    if (ours) await rest.request('PATCH', '/applications/@me', { body: { interactions_endpoint_url: null } });
+    await commands.removeCommands(rest, application.id);
+    return slashStatus(rest);
   },
 
   'bots:update': (botId, patch) => {

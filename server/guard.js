@@ -165,12 +165,13 @@ function createGuard(rest, { ttlMs = 30000 } = {}) {
     return { method, path: cleanPath, query: cleanQuery, body: cleanBody, reason: auditReason(reason, user) };
   }
 
-  return { actorIn, requirePermission, modGuilds, authorize, P };
+  return { actorIn, requirePermission, requireTarget, modGuilds, authorize, P };
 }
 
-function auditReason(reason, user) {
-  const who = `by ${user.global_name || user.username} (${user.id}) via mod portal`;
+// via: where the action came from, e.g. "mod portal" or "/ban".
+function auditReason(reason, user, via = 'mod portal') {
+  const who = `by ${user.global_name || user.username} (${user.id}) via ${via}`;
   return (reason ? `${reason} — ${who}` : who).slice(0, 512);
 }
 
-module.exports = { createGuard, auditReason, P, POLICY };
+module.exports = { createGuard, auditReason, P, POLICY, MOD_ACCESS };

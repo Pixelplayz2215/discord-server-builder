@@ -25,6 +25,8 @@ These rules always apply:
 - Every action shows in the server's audit log as `<reason> — by <mod> (<id>) via mod portal`.
 - To remove someone's access, take away their mod permissions in Discord. They lose access within 30 seconds.
 
+The optional [slash commands](#6-add-slash-commands-optional) follow the same rules.
+
 ## Set it up (about 10 minutes)
 
 Each bot owner runs **their own** portal, because it holds their bot's token. You don't need permission from anyone, and you never share your token. You'll need a free [GitHub](https://github.com) account and a free [Render](https://render.com) account.
@@ -96,9 +98,36 @@ Mods download the regular app from the [latest release](https://github.com/Pixel
 
 To save them the pasting, you can build a private `mod-view` exe with your address already filled in. In your fork, create `mod-view.json` containing `{ "portalUrl": "https://your-mod-portal.onrender.com" }`. Then run `npm install` and `npm run dist:mod` on a Windows PC with Node.js installed. You'll find it at `dist/mod-view.exe`. `mod-view.json` is ignored by git, so your address stays private. Share the exe with your mods directly.
 
+### 6. Add slash commands (optional)
+
+Mods who don't use the app can moderate right in Discord. Your portal answers these commands:
+
+| Command | Needs | What it does |
+| --- | --- | --- |
+| `/warn member reason` | Any mod permission | DMs the member the reason and records a warning |
+| `/timeout member duration [reason]` | Timeout Members | Times them out, from 60 seconds to 1 week |
+| `/untimeout member [reason]` | Timeout Members | Ends a timeout |
+| `/kick member [reason]` | Kick Members | DMs them, then kicks |
+| `/ban member [reason] [delete_messages]` | Ban Members | DMs them, then bans. Works with a pasted user ID too |
+| `/unban user [reason]` | Ban Members | Lifts a ban |
+| `/cases member` | Any mod permission | Shows their warnings and moderation history |
+| `/purge count [reason]` | Manage Messages | Deletes up to 500 recent messages in the channel |
+| `/lock`, `/unlock [channel] [reason]` | Manage Channels | Stops members sending messages, or lets them again |
+| `/slowmode interval [channel]` | Manage Channels | Sets slowmode, from off to 6 hours |
+
+- **Cases.** Warnings, timeouts, kicks, bans and unbans are recorded as numbered cases in a private `#mod-cases` channel. The bot creates it the first time. Only roles with Kick, Ban or Timeout permission can read it, and only the bot posts there. Don't rename it. `/cases` reads it back.
+- **Same rules as the app.** Each command checks the mod's own Discord permissions and rank, and shows in the audit log as `<reason> — by <mod> (<id>) via /<command>`. Replies are only visible to the mod who ran the command.
+- **Who sees them.** Discord only shows each command to members with the permission it needs. To change that, go to **Server Settings → Integrations → your bot**.
+
+**Turn them on:** on the app's **Home** page, under **Give your mods & admins access**, paste your portal address, pick your bot in **Add slash commands** and press **Turn on**. The app points your bot's **Interactions Endpoint URL** at `<your portal>/interactions` and adds the commands. Discord checks the portal answers for your bot before it saves anything. **Turn off** removes them again.
+
+> ⚠️ While this is on, Discord sends **all** of the bot's slash commands and buttons to your portal. If the bot also runs its own commands from other code, those stop working until you turn this off.
+
+If your portal was set up before slash commands existed, update it first: open your fork on GitHub and press **Sync fork**, then wait for Render to finish deploying.
+
 ## Good to know
 
-- **Free plan sleeps.** Render's free plan sleeps after 15 minutes without traffic, and the first request after that takes about a minute. Upgrade the service to a paid instance if you want it always awake.
+- **Free plan sleeps.** Render's free plan sleeps after 15 minutes without traffic, and the first request after that takes about a minute. Discord only waits 3 seconds for a slash command, so the first command after a quiet spell fails with "The application did not respond". To keep the portal awake, point a free uptime monitor at `<your portal>/health` every 10 minutes (the free plan's 750 hours a month cover one service running all month), or upgrade the service to a paid instance.
 - **Signing everyone out.** Sessions last 7 days. To sign everyone out at once, change `SESSION_SECRET` in Render and redeploy.
 - **Your token.** The bot token only lives in Render's environment settings. It is not in the repo or the app.
 - **Mod privacy.** The portal only learns a mod's Discord ID, name and avatar (the `identify` scope).
