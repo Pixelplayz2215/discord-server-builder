@@ -105,6 +105,27 @@ const store = {
   deleteTemplate(id) {
     writeJson('templates.json', readJson('templates.json', []).filter((t) => t.id !== id));
   },
+
+  // Per-server settings for one bot (or signed-in moderator): lockdown, auto backups, server logs.
+  getGuildConfig(botId, guildId) {
+    return readJson('servers.json', {})[`${botId}:${guildId}`] || {};
+  },
+
+  setGuildConfig(botId, guildId, patch) {
+    const all = readJson('servers.json', {});
+    const key = `${botId}:${guildId}`;
+    all[key] = { ...all[key], ...patch };
+    writeJson('servers.json', all);
+    return all[key];
+  },
+
+  // Every server with saved settings, as [{ botId, guildId, config }].
+  listGuildConfigs() {
+    return Object.entries(readJson('servers.json', {})).map(([key, config]) => {
+      const [botId, guildId] = key.split(':');
+      return { botId, guildId, config };
+    });
+  },
 };
 
 module.exports = store;

@@ -11,6 +11,8 @@ bots.json
 settings.json
 !.vscode/settings.json
 templates.json
+servers.json
+backups/
 userdata/
 *.token
 .env

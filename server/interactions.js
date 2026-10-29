@@ -6,7 +6,7 @@ const crypto = require('crypto');
 const { purgeMessages, setChannelLock } = require('../src/main/builder');
 const { DURATIONS, DELETE_WINDOWS, SLOWMODES, labelFor } = require('../src/main/commands');
 const { auditReason, P } = require('./guard');
-const { createCases, TYPES, escapeMarkdown } = require('./cases');
+const { createCases, notifyUser, warnMember, TYPES, escapeMarkdown } = require('../src/main/cases');
 
 const INTERACTION = { PING: 1, COMMAND: 2 };
 const RESPONSE = { PONG: 1, MESSAGE: 4, DEFERRED: 5 };
@@ -47,13 +47,12 @@ const once = (fn) => {
 
 const reply = (content) => ({ status: 200, body: { type: RESPONSE.MESSAGE, data: { content, flags: EPHEMERAL, allowed_mentions: { parse: [] } } } });
 
-function createInteractions({ rest, guard }) {
+// caseLog: the portal's shared case log (one is made if it isn't passed).
+function createInteractions({ rest, guard, caseLog = createCases(rest, { botId: once(async () => (await rest.request('GET', '/users/@me')).id) }) }) {
   const application = once(async () => {
     const app = await rest.request('GET', '/applications/@me');
     return { id: app.id, key: publicKey(app.verify_key) };
   });
-  const botId = once(async () => (await rest.request('GET', '/users/@me')).id);
-  const caseLog = createCases(rest, { botId });
 
   function contextFor(interaction) {
     const u = interaction.member.user;
@@ -93,15 +92,7 @@ function createInteractions({ rest, guard }) {
     return { actor, target };
   }
 
-  async function notify(userId, content) {
-    try {
-      const dm = await rest.request('POST', '/users/@me/channels', { body: { recipient_id: userId } });
-      await rest.request('POST', `/channels/${dm.id}/messages`, { body: { content: content.slice(0, 2000), allowed_mentions: { parse: [] } } });
-      return true;
-    } catch {
-      return false;
-    }
-  }
+  const notify = (userId, content) => notifyUser(rest, userId, content);
 
   // Records a case after an action that already happened, so a logging problem is reported, not thrown.
   async function logCase(actor, ctx, entry) {
@@ -131,9 +122,7 @@ function createInteractions({ rest, guard }) {
     async warn(ctx) {
       const { actor, target } = await memberTarget(ctx);
       if (target.bot) throw fail("Bots can't be warned.");
-      const { number } = await caseLog.record(actor.guild, actor.roles, { type: 'warn', member: target, moderator: ctx.user, reason: ctx.options.reason });
-      const warnings = (await caseLog.list(actor.guild, target.id)).filter((c) => c.type === 'warn').length;
-      const told = await notify(target.id, `⚠️ You were warned in **${escapeMarkdown(actor.guild.name)}**.${reasonLine(ctx)}`);
+      const { number, warnings, told } = await warnMember(rest, caseLog, { guild: actor.guild, roles: actor.roles, member: target, moderator: ctx.user, reason: ctx.options.reason });
       return lines(`⚠️ Warned <@${target.id}> (case ${number}). They have ${plural(warnings, 'warning')} now.`, told ? null : DMS_CLOSED);
     },
 
@@ -262,4 +251,4 @@ function createInteractions({ rest, guard }) {
   return { receive };
 }
 
-module.exports = { createInteractions, verifySignature, publicKey };
+module.exports = { createInteractions, verifySignature, publicKey, once };

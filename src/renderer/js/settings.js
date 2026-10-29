@@ -29,6 +29,7 @@ const SettingsPage = {
         SettingsPage.brandCard(),
         SettingsPage.sizeCard(),
         SettingsPage.styleCard(),
+        SettingsPage.trayCard(),
         SettingsPage.updatesCard(),
       ),
     );
@@ -223,6 +224,23 @@ const SettingsPage = {
           { class: 'stack', style: { gap: '14px', paddingTop: '26px' } },
           switchEl(s.pixelLabels, (v) => SettingsPage.update({ pixelLabels: v }), 'Pixel-style labels'),
           switchEl(s.effects, (v) => SettingsPage.update({ effects: v }), 'Animations & background glow'),
+        ),
+      ),
+    );
+  },
+
+  trayCard() {
+    return SettingsPage.card(
+      'Running in the background',
+      'power',
+      h(
+        'div',
+        { class: 'stack', style: { gap: '14px' } },
+        switchEl(Theme.settings.closeToTray, (v) => SettingsPage.update({ closeToTray: v }), 'Close button keeps the app running in the tray'),
+        h(
+          'p',
+          { class: 'subtle', style: { fontSize: 'calc(12rem / 14)' } },
+          'Your bots stay online, and server logs and automatic backups keep running, until you quit. Click the tray icon to open the app again, or right-click it and choose Quit.',
         ),
       ),
     );

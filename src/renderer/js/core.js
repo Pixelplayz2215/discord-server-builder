@@ -85,6 +85,9 @@ const ICON_PATHS = {
   circle: '<circle cx="12" cy="12" r="9"/>',
   square: '<rect x="4" y="4" width="16" height="16" rx="2" transform="rotate(12 12 12)"/>',
   cross: '<path d="M5 5l14 14M19 5 5 19"/>',
+  siren: '<path d="M7 18v-6a5 5 0 1 1 10 0v6"/><path d="M5 21a1 1 0 0 1-1-1v-1a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v1a1 1 0 0 1-1 1z"/><path d="M21 12h1M18.5 4.5 18 5M2 12h1M12 2v1M4.93 4.93l.71.71"/>',
+  archive: '<rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M10 12h4"/>',
+  pause: '<rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>',
 };
 
 function icon(name, cls) {

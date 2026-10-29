@@ -79,6 +79,7 @@
     pixelLabels: true,
     effects: true,
     checkUpdates: true,
+    closeToTray: true,
   };
 
   const HEX = /^#[0-9a-f]{6}$/i;
@@ -107,6 +108,7 @@
       pixelLabels: s.pixelLabels !== false,
       effects: s.effects !== false,
       checkUpdates: s.checkUpdates !== false,
+      closeToTray: s.closeToTray !== false,
     };
   }
 

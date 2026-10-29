@@ -17,6 +17,9 @@ The portal checks every request against the mod's **own Discord permissions** in
 | Manage Nicknames | Change nicknames |
 | Manage Roles | Add / remove roles below their own highest role |
 | View Audit Log | Audit log tab |
+| Any of the above | Warn members and see their case history; the Raid tab's recent joins list |
+
+Bulk actions in the Raid tab need the same permission as one at a time (ban, kick or timeout), and the lockdown needs Manage Channels. Bans, kicks, timeouts and warnings mods make in the app are recorded in `#mod-cases` with their name, like the slash commands' ones. AutoMod, Backups and server logs are owner-only.
 
 These rules always apply:
 

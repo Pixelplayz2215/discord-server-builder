@@ -5,6 +5,10 @@ const INVOKE = new Set([
   'bots:list', 'bots:add', 'bots:refresh', 'bots:update', 'bots:remove', 'bots:reorder',
   'mod:signIn', 'mod:cancelSignIn', 'mod:checkPortal',
   'commands:status', 'commands:enable', 'commands:disable',
+  'cases:list', 'cases:warn',
+  'servers:config', 'raid:saveLockdown', 'raid:ban',
+  'backups:list', 'backups:create', 'backups:delete', 'backups:setAuto', 'backups:plan', 'backups:restore', 'backups:export', 'backups:import',
+  'logs:get', 'logs:set', 'logs:createChannel', 'logs:test',
   'presence:set', 'rest', 'members:all', 'channel:purge', 'channel:lock',
   'builder:run', 'builder:clone',
   'templates:list', 'templates:save', 'templates:delete', 'templates:export', 'templates:import',
@@ -12,7 +16,7 @@ const INVOKE = new Set([
   'update:check', 'update:install',
   'open:external', 'app:info',
 ]);
-const EVENTS = new Set(['presence:state', 'builder:event', 'update:progress']);
+const EVENTS = new Set(['presence:state', 'builder:event', 'update:progress', 'cases:error', 'raid:progress', 'backup:event', 'backups:changed']);
 
 contextBridge.exposeInMainWorld('bridge', {
   // Read synchronously so theme.js can style the page before its first paint.

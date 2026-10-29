@@ -1,6 +1,9 @@
-// Keeps a bot "online" in Discord with an optional custom status.
-// No intents are requested: this connection exists only for presence.
+// Keeps a bot "online" in Discord with an optional custom status, and (when server logs are on)
+// receives the server events those logs need. Without logs no intents are requested.
 const WebSocket = require('ws');
+
+// Intents Discord only allows when they're switched on in the Developer Portal.
+const PRIVILEGED = (1 << 1) | (1 << 8) | (1 << 15);
 
 const GATEWAY_URL = 'wss://gateway.discord.gg/?v=10&encoding=json';
 const FATAL_CODES = {
@@ -13,9 +16,12 @@ const FATAL_CODES = {
 };
 
 class PresenceConnection {
-  constructor(token, onState) {
+  // onEvent(type, data) receives every dispatched gateway event.
+  constructor(token, onState, onEvent = null) {
     this.token = token;
     this.onState = onState;
+    this.onEvent = onEvent;
+    this.intents = 0;
     this.enabled = false;
     this.ws = null;
     this.heartbeat = null;
@@ -42,6 +48,13 @@ class PresenceConnection {
   update(presence) {
     this.presence = { ...this.presence, ...presence };
     if (this.ready) this.sendPresence();
+  }
+
+  // Changing intents needs a fresh connection.
+  setIntents(intents) {
+    if (intents === this.intents) return;
+    this.intents = intents;
+    if (this.enabled) this.connect();
   }
 
   presencePayload() {
@@ -78,6 +91,13 @@ class PresenceConnection {
     ws.on('close', (code) => {
       if (this.ws !== ws) return;
       this.teardown();
+      // A privileged intent was switched off in the Developer Portal: keep going without them.
+      if (code === 4014 && this.intents & PRIVILEGED) {
+        this.intents &= ~PRIVILEGED;
+        this.onState('connecting', 'Server Members or Message Content Intent is off; reconnecting without it.');
+        this.connect();
+        return;
+      }
       if (FATAL_CODES[code]) {
         this.enabled = false;
         this.onState('error', FATAL_CODES[code]);
@@ -102,7 +122,7 @@ class PresenceConnection {
           op: 2,
           d: {
             token: this.token,
-            intents: 0,
+            intents: this.intents,
             properties: { os: 'windows', browser: 'DiscordServerBuilder', device: 'DiscordServerBuilder' },
             presence: this.presencePayload(),
           },
@@ -123,6 +143,13 @@ class PresenceConnection {
         if (packet.t === 'READY') {
           this.ready = true;
           this.onState('online');
+        }
+        if (this.onEvent) {
+          try {
+            this.onEvent(packet.t, packet.d);
+          } catch {
+            // a logging problem must never drop the connection
+          }
         }
         break;
       default:
@@ -158,4 +185,4 @@ class PresenceConnection {
   }
 }
 
-module.exports = { PresenceConnection };
+module.exports = { PresenceConnection, PRIVILEGED };

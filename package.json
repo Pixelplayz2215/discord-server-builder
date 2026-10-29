@@ -21,6 +21,7 @@
     "dist:mod": "node scripts/build-mod-view.js",
     "release": "node scripts/release.js",
     "portal": "node server/index.js",
+    "test": "node --test server/portal.test.js server/interactions.test.js test/features.test.js",
     "test:portal": "node --test server/portal.test.js server/interactions.test.js"
   },
   "dependencies": {
@@ -35,7 +36,7 @@
   "build": {
     "appId": "org.pixelplayz.discordserverbuilder",
     "productName": "Discord Server Builder",
-    "copyright": "Copyright Â© 2026 Pixelplayz2215",
+    "copyright": "Copyright Ã‚Â© 2026 Pixelplayz2215",
     "directories": {
       "output": "dist",
       "buildResources": "build"

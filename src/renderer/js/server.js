@@ -1,13 +1,19 @@
-// Server page: header, tabs and the Overview / Members / Moderation / Channels / Audit log tabs.
+// Server page: header, tabs and the Overview / Members / Moderation / Channels / Logs tabs.
+// The Raid, AutoMod and Backups tabs live in raid.js, automod.js and backups.js.
 
 const SERVER_TABS = [
   ['overview', 'Overview', 'server'],
   ['members', 'Members', 'users'],
   ['moderation', 'Moderation', 'shield'],
+  ['raid', 'Raid', 'siren'],
+  ['automod', 'AutoMod', 'bot'],
   ['channels', 'Channels', 'hash'],
   ['builder', 'Builder', 'hammer'],
-  ['audit', 'Audit log', 'list'],
+  ['backups', 'Backups', 'archive'],
+  ['audit', 'Logs', 'list'],
 ];
+// Tabs that need the bot token itself; moderators signed in through a portal don't see them.
+const OWNER_TABS = new Set(['builder', 'automod', 'backups']);
 
 const TIMEOUT_OPTIONS = [
   ['60', '60 seconds'],
@@ -104,8 +110,8 @@ const ServerPage = {
       el.append(h('div', { class: 'loading-block' }, [1, 2, 3, 4].map(() => h('div', { class: 'skeleton' }))));
       return;
     }
-    const tabs = { overview: OverviewTab, members: MembersTab, moderation: ModerationTab, channels: ChannelsTab, builder: Builder, audit: AuditTab };
-    if (ctx.mod && view.tab === 'builder') view.tab = 'overview';
+    const tabs = { overview: OverviewTab, members: MembersTab, moderation: ModerationTab, raid: RaidTab, automod: AutoModTab, channels: ChannelsTab, builder: Builder, backups: BackupsTab, audit: AuditTab };
+    if (ctx.mod && OWNER_TABS.has(view.tab)) view.tab = 'overview';
     (tabs[view.tab] || OverviewTab).render(ctx, el);
   },
 
@@ -153,7 +159,7 @@ const ServerPage = {
       h(
         'div',
         { class: 'tabs' },
-        SERVER_TABS.filter(([id]) => !(ctx.mod && id === 'builder')).map(([id, label, ic]) =>
+        SERVER_TABS.filter(([id]) => !(ctx.mod && OWNER_TABS.has(id))).map(([id, label, ic]) =>
           h('button', { class: `tab ${view.tab === id ? 'active' : ''}`, onclick: () => { view.tab = id; App.renderMain(); } }, icon(ic), label),
         ),
       ),
@@ -571,6 +577,32 @@ const Mod = {
     });
   },
 
+  async warn(ctx, userId, label) {
+    const reason = h('input', { class: 'input', placeholder: 'What they did (they will see this)', maxlength: 400 });
+    return openModal({
+      title: `Warn ${label}`,
+      body: [h('p', null, 'They get the reason in a DM, and the warning is recorded as a case in the private #mod-cases channel.'), field('Reason', reason)],
+      actions: [
+        { label: 'Cancel', kind: 'ghost' },
+        {
+          label: 'Warn',
+          kind: 'primary',
+          icon: 'alert',
+          onClick: async () => {
+            if (!reason.value.trim()) {
+              toast('Give a reason for the warning.', 'error');
+              return false;
+            }
+            const res = await api('cases:warn', ctx.botId, ctx.guildId, userId, reason.value.trim());
+            toast(`Warned ${label} (case ${res.number}). ${res.warnings} warning${res.warnings === 1 ? '' : 's'} now.${res.told ? '' : " Their DMs are closed, so they weren't told."}`);
+            if (ctx.srv.cases) delete ctx.srv.cases[userId];
+            ctx.rerender();
+          },
+        },
+      ],
+    });
+  },
+
   async toggleRole(ctx, member, role) {
     const has = member.roles.includes(role.id);
     try {
@@ -582,6 +614,98 @@ const Mod = {
     }
   },
 };
+
+/* ======================= Cases (#mod-cases) ======================= */
+const CASE_STYLES = { warn: 'gold', timeout: 'peri', untimeout: 'teal', kick: 'coral', ban: 'coral', unban: 'teal' };
+const CASE_LABELS = { warn: 'Warn', timeout: 'Timeout', untimeout: 'Timeout ended', kick: 'Kick', ban: 'Ban', unban: 'Unban' };
+
+const Cases = {
+  // ctx.srv.cases[userId] = { list } | { error } | { loading: true }
+  async load(ctx, userId) {
+    const srv = ctx.srv;
+    srv.cases = srv.cases || {};
+    srv.cases[userId] = { loading: true };
+    try {
+      srv.cases[userId] = { list: await api('cases:list', ctx.botId, ctx.guildId, userId) };
+    } catch (err) {
+      srv.cases[userId] = { error: err.message };
+    }
+    ctx.rerender();
+  },
+
+  // Owners' app actions are recorded with the bot as the moderator.
+  moderatorName(ctx, id) {
+    const botId = ctx.mod ? ctx.bot.portalBot?.id : ctx.botId;
+    if (id === botId) return ctx.mod ? 'the bot' : 'this app';
+    const m = ctx.srv.members?.find((x) => x.user.id === id);
+    return m ? MembersTab.memberName(m) : `user ${id}`;
+  },
+
+  row(ctx, c) {
+    return h(
+      'div',
+      { class: 'case-row' },
+      h(
+        'div',
+        { class: 'row wrap', style: { gap: '6px' } },
+        h('span', { class: `badge ${CASE_STYLES[c.type] || ''}` }, `#${c.number} ${CASE_LABELS[c.type] || c.type}`),
+        c.duration ? h('span', { class: 'badge' }, c.duration) : null,
+        h('span', { class: 'subtle', title: fmtDate(c.at) }, `${fmtRelative(c.at)} · by ${Cases.moderatorName(ctx, c.moderatorId)}`),
+      ),
+      h('div', { class: 'case-reason' }, c.reason || 'No reason given'),
+    );
+  },
+
+  summary(list) {
+    const counts = {};
+    for (const c of list) counts[c.type] = (counts[c.type] || 0) + 1;
+    return Object.entries(counts).map(([type, n]) => `${n} ${CASE_LABELS[type] || type}`).join(' · ');
+  },
+
+  // Shown in the member panel: the newest cases and a way to see them all.
+  section(ctx, userId, label) {
+    const state = ctx.srv.cases?.[userId];
+    if (!state) Cases.load(ctx, userId);
+    const head = h(
+      'div',
+      { class: 'row', style: { marginBottom: '8px' } },
+      h('div', { class: 'label grow' }, 'Cases', state?.list?.length ? h('span', { class: 'subtle', style: { fontWeight: 400 } }, ` — ${Cases.summary(state.list)}`) : null),
+      h('button', { class: 'icon-btn', title: 'Reload cases', onclick: () => Cases.load(ctx, userId) }, icon('refresh')),
+    );
+    let body;
+    if (!state || state.loading) body = h('div', { class: 'skeleton' });
+    else if (state.error) body = h('div', { class: 'subtle' }, state.error);
+    else if (!state.list.length) body = h('div', { class: 'subtle' }, 'No warnings or moderation cases.');
+    else {
+      body = h(
+        'div',
+        { class: 'case-list' },
+        state.list.slice(0, 3).map((c) => Cases.row(ctx, c)),
+        state.list.length > 3 ? h('button', { class: 'btn sm ghost', onclick: () => Cases.showAll(ctx, userId, label) }, `All ${state.list.length} cases`) : null,
+      );
+    }
+    return h('div', null, head, body);
+  },
+
+  async showAll(ctx, userId, label) {
+    let list;
+    try {
+      list = await api('cases:list', ctx.botId, ctx.guildId, userId);
+    } catch (err) {
+      return toastError(err);
+    }
+    return openModal({
+      title: `Cases for ${label}`,
+      wide: true,
+      body: list.length
+        ? [h('p', { class: 'muted' }, Cases.summary(list)), h('div', { class: 'case-list' }, list.map((c) => Cases.row(ctx, c)))]
+        : h('div', { class: 'empty' }, icon('shield'), h('h3', null, 'No cases'), h('p', null, 'Warnings, timeouts, kicks and bans show up here once they are recorded in #mod-cases.')),
+      actions: [{ label: 'Close', kind: 'ghost' }],
+    });
+  },
+};
+
+onEvent('cases:error', ({ message }) => toast(`The action worked, but it couldn't be recorded in #mod-cases: ${message}`, 'error'));
 
 /* ======================= Members ======================= */
 const MembersTab = {
@@ -784,9 +908,11 @@ const MembersTab = {
             !assignable.length && !locked.length ? h('span', { class: 'subtle' }, 'No roles the bot can assign.') : null,
           ),
         ),
+        m.user.bot ? null : Cases.section(ctx, m.user.id, name),
         h(
           'div',
           { class: 'action-grid' },
+          m.user.bot ? null : h('button', { class: 'btn', onclick: () => Mod.warn(ctx, m.user.id, name) }, icon('alert'), 'Warn'),
           timedOut
             ? h('button', { class: 'btn', onclick: () => Mod.removeTimeout(ctx, m.user.id, name) }, icon('clock'), 'End timeout')
             : h('button', { class: 'btn', onclick: () => Mod.timeout(ctx, m.user.id, name) }, icon('clock'), 'Timeout'),
@@ -935,7 +1061,7 @@ const ModerationTab = {
       h(
         'div',
         { class: 'stack' },
-        h('p', { class: 'muted', style: { fontSize: 'calc(13rem / 14)' } }, 'Works even for people who already left (ban) or when the members list is unavailable.'),
+        h('p', { class: 'muted', style: { fontSize: 'calc(13rem / 14)' } }, 'Works even for people who already left (ban) or when the members list is unavailable. Bans, kicks, timeouts and warnings are recorded as cases in #mod-cases.'),
         input,
         h(
           'div',
@@ -944,6 +1070,8 @@ const ModerationTab = {
           h('button', { class: 'btn danger', onclick: withId((id) => Mod.kick(ctx, id, id)) }, icon('kick'), 'Kick'),
           h('button', { class: 'btn', onclick: withId((id) => Mod.timeout(ctx, id, id)) }, icon('clock'), 'Timeout'),
           h('button', { class: 'btn', onclick: withId((id) => Mod.unban(ctx, id, id)) }, icon('unlock'), 'Unban'),
+          h('button', { class: 'btn', onclick: withId((id) => Mod.warn(ctx, id, id)) }, icon('alert'), 'Warn'),
+          h('button', { class: 'btn', onclick: withId((id) => Cases.showAll(ctx, id, id)) }, icon('list'), 'Cases'),
         ),
       ),
     );
@@ -1308,7 +1436,9 @@ const AuditTab = {
       AuditTab.load(ctx);
       ctx.rerender();
     });
+    if (!ctx.mod) el.append(ServerLogs.card(ctx));
     el.append(
+      h('div', { class: 'section-title', style: { marginTop: 0 } }, h('h2', null, 'Audit log'), h('span', { class: 'subtle' }, "Discord's own record of changes")),
       h(
         'div',
         { class: 'toolbar' },

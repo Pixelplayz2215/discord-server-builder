@@ -8,7 +8,8 @@ const { fetchAllMembers, purgeMessages, setChannelLock } = require('../src/main/
 const { loadConfig } = require('./config');
 const { createAuth } = require('./auth');
 const { createGuard, auditReason } = require('./guard');
-const { createInteractions } = require('./interactions');
+const { createInteractions, once } = require('./interactions');
+const { createCases, caseFromCall, warnMember } = require('../src/main/cases');
 
 const MAX_BODY = 64 * 1024;
 const MAX_INTERACTION_BODY = 1024 * 1024;
@@ -77,10 +78,33 @@ function createLimiter(limit, windowMs) {
 }
 
 // interactions is optional: without it the portal doesn't answer slash commands.
-function createPortal({ config, rest, auth, guard, interactions }) {
+function createPortal({ config, rest, auth, guard, interactions, caseLog = createCases(rest, { botId: once(async () => (await rest.request('GET', '/users/@me')).id) }) }) {
   const limitUser = createLimiter(120, 60000);
   const limitIp = createLimiter(30, 60000);
   let botUser = null;
+
+  const userLabel = async (id) => {
+    const u = await rest.request('GET', `/users/${id}`).catch(() => null);
+    return u ? u.global_name || u.username : id;
+  };
+  const snowflake = (value, what) => {
+    if (!/^\d{15,21}$/.test(String(value))) throw httpError(400, `Invalid ${what}.`);
+    return String(value);
+  };
+
+  // A ban, kick, timeout or unban a mod made in the app becomes a case, like the slash commands' ones.
+  async function recordCall(user, call, reason) {
+    const found = caseFromCall(call.method, call.path, call.body);
+    if (!found) return;
+    const actor = await guard.actorIn(found.guildId, user);
+    await caseLog.record(actor.guild, actor.roles, {
+      type: found.type,
+      member: { id: found.memberId, label: await userLabel(found.memberId) },
+      moderator: user,
+      reason,
+      duration: found.duration,
+    });
+  }
 
   const sessionUser = (req) => {
     const header = req.headers.authorization || '';
@@ -106,9 +130,40 @@ function createPortal({ config, rest, auth, guard, interactions }) {
 
     'POST /api/discord': async (req) => {
       const user = sessionUser(req);
-      const call = await guard.authorize(user, await readJson(req));
+      const request = await readJson(req);
+      const call = await guard.authorize(user, request);
       if (call.special === 'guilds') return guard.modGuilds(user);
-      return rest.request(call.method, call.path, { query: call.query, body: call.body, reason: call.reason });
+      const result = await rest.request(call.method, call.path, { query: call.query, body: call.body, reason: call.reason });
+      // Recorded in the background so the app isn't kept waiting; bulk raid actions opt out.
+      if (!request.noCase) recordCall(user, call, typeof request.reason === 'string' ? request.reason.slice(0, 400) : '').catch((err) => console.error('Recording a case failed:', err.message));
+      return result;
+    },
+
+    'POST /api/cases': async (req) => {
+      const user = sessionUser(req);
+      const { guildId, userId } = await readJson(req);
+      await guard.actorIn(snowflake(guildId, 'server'), user);
+      return caseLog.list({ id: String(guildId) }, snowflake(userId, 'user'));
+    },
+
+    'POST /api/warn': async (req) => {
+      const user = sessionUser(req);
+      const { guildId, userId, reason } = await readJson(req);
+      const actor = await guard.actorIn(snowflake(guildId, 'server'), user);
+      const memberId = snowflake(userId, 'user');
+      await guard.requireTarget(actor, memberId);
+      const member = await rest.request('GET', `/guilds/${actor.guild.id}/members/${memberId}`).catch(() => null);
+      if (!member) throw httpError(400, "They aren't in this server.");
+      if (member.user.bot) throw httpError(400, "Bots can't be warned.");
+      const text = String(reason || '').trim().slice(0, 400);
+      if (!text) throw httpError(400, 'Give a reason for the warning.');
+      return warnMember(rest, caseLog, {
+        guild: actor.guild,
+        roles: actor.roles,
+        member: { id: memberId, label: member.nick || member.user.global_name || member.user.username },
+        moderator: user,
+        reason: text,
+      });
     },
 
     'POST /api/members-all': async (req) => {
@@ -214,7 +269,8 @@ if (require.main === module) {
   const config = loadConfig();
   const rest = new DiscordRest(config.botToken);
   const guard = createGuard(rest);
-  const server = createPortal({ config, rest, auth: createAuth(config), guard, interactions: createInteractions({ rest, guard }) });
+  const caseLog = createCases(rest, { botId: once(async () => (await rest.request('GET', '/users/@me')).id) });
+  const server = createPortal({ config, rest, auth: createAuth(config), guard, caseLog, interactions: createInteractions({ rest, guard, caseLog }) });
   server.listen(config.port, () => console.log(`Mod portal listening on port ${config.port} (${config.publicUrl})`));
 }
 

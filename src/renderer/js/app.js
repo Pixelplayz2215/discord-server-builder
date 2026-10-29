@@ -79,6 +79,7 @@ const App = {
     if (this.isMod(botId)) return 'mod';
     const p = this.presence[botId] || { state: 'offline' };
     if (p.state === 'online') return this.bot(botId)?.presence?.status || 'online';
+    if (p.state === 'invisible') return 'offline';
     return p.state;
   },
 
@@ -90,6 +91,7 @@ const App = {
     const p = this.presence[botId] || { state: 'offline' };
     const labels = { online: 'Online', idle: 'Idle', dnd: 'Do Not Disturb', connecting: 'Connecting…', error: 'Error', offline: 'Offline' };
     if (p.state === 'error') return p.detail || 'Error';
+    if (p.state === 'invisible') return 'Invisible · logging servers';
     return labels[this.presenceClass(botId)] || 'Offline';
   },
 

@@ -6,7 +6,13 @@ A Windows desktop app (Electron) in the Pixelplayz2215 theme for running Discord
 - **Bot dashboard.** Shows online presence (status plus custom status), whether privileged intents are on, an invite-link generator and the bot's servers.
 - **Server details.** Overview with stats, owner, boosts, features and the bot's permissions. Also has a roles list, rename and leave.
 - **Members.** Searchable list with a role filter. Click a member to toggle roles, change their nickname, send a DM, time them out, kick or ban.
-- **Moderation.** Ban list with unban, quick ban / kick / timeout / unban by user ID, and prune of inactive members.
+- **Moderation.** Ban list with unban, quick ban / kick / timeout / unban / warn by user ID, and prune of inactive members.
+- **Warnings and case history.** Warn a member (they get the reason in a DM), and see everyone's history in their member panel. Warnings, timeouts, kicks, bans and unbans made in the app or with the slash commands are recorded as numbered cases in a private `#mod-cases` channel, so every mod sees the same history.
+- **Raid tools.** Lock down every public channel at once (ending the lockdown only unlocks what it locked), pause invites and DMs with Discord's own raid switches, and list recent joins with new accounts flagged, then ban, kick or time them out in bulk.
+- **AutoMod.** Add and edit Discord's built-in AutoMod rules: blocked words, common bad words, spam and mass mentions, with block, alert and timeout actions and exempt roles and channels. Discord enforces them itself, even when the app is closed.
+- **Backups.** Save an exact copy of a server's roles, channels, permissions and settings to your PC, by hand or automatically every day. Restoring recreates what was deleted and puts permissions, layout and (optionally) settings back, without deleting anything. Preview the changes first, and export or import backups as files.
+- **Server logs.** The bot posts joins (new accounts flagged), leaves, bans, timeouts, role and nickname changes, deleted and edited messages, and channel and role changes to a log channel while the app runs.
+- **Keeps running in the tray.** The close button hides the app to the tray so bots stay online and logs and backups keep going. Quit from the tray icon. This can be turned off in Settings.
 - **Channels.** Send a message as the bot, purge up to 1000 recent messages, lock or unlock, set slowmode, rename, delete, or create channels.
 - **Audit log.** Recent actions, with filters.
 - **Builder.** Start from a template (Content Creator, Gaming, Study, Dev Team, Blank) or clone an existing server. Edit roles (colour, permission preset, hoist, mentionable), categories and channels (type, topic, private-to-roles, read-only, welcome channel). You can optionally wipe existing channels and roles first, then build with a live progress log. Templates can be saved and exported or imported as JSON.
@@ -21,7 +27,7 @@ A Windows desktop app (Electron) in the Pixelplayz2215 theme for running Discord
 
 ## Your data stays on your PC
 
-Bots, settings and saved templates are stored only in `%APPDATA%\Discord Server Builder` (`bots.json`, `settings.json`, `templates.json`). Bot tokens are encrypted with Windows DPAPI (Electron `safeStorage`). None of this is in the project folder, the GitHub repo or the built .exe, so every copy of the app starts empty. `.gitignore` also blocks those file names in case one gets copied into the project. The UI never sees a token, and every Discord call runs in the main process.
+Bots, settings, saved templates, per-server settings and backups are stored only in `%APPDATA%\Discord Server Builder` (`bots.json`, `settings.json`, `templates.json`, `servers.json` and the `backups` folder). Bot tokens are encrypted with Windows DPAPI (Electron `safeStorage`). None of this is in the project folder, the GitHub repo or the built .exe, so every copy of the app starts empty. `.gitignore` also blocks those file names in case one gets copied into the project. The UI never sees a token, and every Discord call runs in the main process.
 
 ## Run it
 
@@ -83,7 +89,7 @@ The installer's own pages (credit to Pixelplayz2215, the official-download warni
 
 `npm run dist:mod` (and every `npm run release`) then also builds `mod-view.exe`. That's the same app with your portal address already filled in on the sign-in box. It only goes into your local `releases\` folder, never to GitHub, so share it with your mods yourself. `mod-view.json` is ignored by git, so your address stays out of the repo. The public download leaves the box empty.
 
-`npm run test:portal` runs the portal's permission and slash command tests.
+`npm test` runs all the tests (portal permissions, slash commands, cases, backups and server logs, each against a fake Discord). `npm run test:portal` runs only the portal's.
 
 ## Bot setup
 
@@ -102,9 +108,12 @@ Notes:
 
 ```
 src/main/       Electron main process
-  main.js         window + IPC handlers
+  main.js         window, tray + IPC handlers
   discord.js      REST client with rate-limit handling
-  gateway.js      presence-only gateway connection (keeps bots "online")
+  gateway.js      gateway connection (keeps bots "online", receives events for server logs)
+  logs.js         server logs: gateway events → batched embeds in a log channel
+  backup.js       server snapshots and restore
+  cases.js        #mod-cases case log, warnings (shared with server/)
   builder.js      template → server builder, clone, purge, lock, member paging
   updater.js      GitHub release check, download, restart into the new .exe
   portal.js       "Sign in with Discord" client for moderators (talks to server/)
@@ -120,7 +129,11 @@ src/renderer/   UI (plain HTML/CSS/JS, no bundler)
   js/core.js      element helper, icons, modals, toasts
   js/home.js      Home page / connect a bot
   js/bot.js       per-bot page + dashboard
-  js/server.js    server header and Overview/Members/Moderation/Channels/Audit tabs
+  js/server.js    server header and Overview/Members/Moderation/Channels/Logs tabs, cases
+  js/raid.js      Raid tab (lockdown, pause invites/DMs, recent joins)
+  js/automod.js   AutoMod tab
+  js/backups.js   Backups tab
+  js/serverlogs.js server logs settings (Logs tab)
   js/builder.js   Builder tab
   js/templates.js built-in server templates
 scripts/        make-icon.js (draws the logo → build/icon.png/.ico), copy-fonts.js, release.js
@@ -129,9 +142,9 @@ server/         mod portal (not part of the .exe)
   auth.js         Discord OAuth sign-in + signed sessions
   guard.js        per-request permission and role-hierarchy checks
   interactions.js signed slash command endpoint and the command handlers
-  cases.js        case log kept in each server's private #mod-cases channel
   portal.test.js  tests with a fake Discord
   interactions.test.js  slash command tests with a fake Discord
+test/features.test.js  cases, backups and server logs tests (not packaged)
 docs/MOD-PORTAL.md  how to deploy the portal and give mods access
 render.yaml     Render blueprint for the portal
 ```
