@@ -146,18 +146,61 @@ function swapScript(newFile, target) {
   ].join('\r\n');
 }
 
+// Passed to the relaunched app so it knows an update just finished.
+const AFTER_UPDATE_FLAG = '--after-update';
+
+// A small batch file for installed copies: runs the new installer silently into *this* copy's
+// folder (/D), waits for it, then starts this same exe again and cleans up.
+// The installer's own --force-run isn't used: it relaunches through the Start menu shortcut, which
+// keeps its old target during updates, so a PC with a second install (or a stale shortcut) would
+// open the wrong copy. /D likewise stops the installer picking a folder from its saved settings.
+// It's quoted because electron-builder re-reads /D with a parser that stops at the first space,
+// which would turn "E:\Discord Server Builder" into "E:\Discord".
+function installerScript(setup, exe) {
+  const q = (p) => p.replace(/%/g, '%%');
+  return [
+    '@echo off',
+    'chcp 65001 >nul',
+    `start "" /wait "${q(setup)}" /S --updated /D="${q(path.dirname(exe))}"`,
+    `start "" "${q(exe)}" ${AFTER_UPDATE_FLAG}`,
+    `del "${q(setup)}" >nul 2>&1`,
+    '(goto) 2>nul & del "%~f0"',
+    '',
+  ].join('\r\n');
+}
+
 function restartInto(newFile) {
   app.releaseSingleInstanceLock();
-  if (isInstalled()) {
-    // Silent update: the installer waits for this copy to close, installs over it in the same
-    // folder (keeping shortcuts) and starts the app again.
-    spawn(newFile, ['/S', '--updated', '--force-run'], { detached: true, stdio: 'ignore' }).unref();
-  } else {
-    const script = path.join(os.tmpdir(), `discord-server-builder-update-${process.pid}.cmd`);
-    fs.writeFileSync(script, swapScript(newFile, portableExe()), 'utf8');
-    spawn('cmd.exe', ['/d', '/c', script], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
-  }
+  const script = path.join(os.tmpdir(), `discord-server-builder-update-${process.pid}.cmd`);
+  const contents = isInstalled() ? installerScript(newFile, process.execPath) : swapScript(newFile, portableExe());
+  fs.writeFileSync(script, contents, 'utf8');
+  spawn('cmd.exe', ['/d', '/c', script], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
   app.quit();
 }
 
-module.exports = { checkForUpdate, installUpdate, restartInto, downloadFile, swapScript, isNewer, RELEASES_PAGE };
+// After an installed update, point this app's Start menu and desktop shortcuts at this copy if they
+// lead somewhere else (for example an older install in another folder).
+function repairShortcuts() {
+  if (!process.argv.includes(AFTER_UPDATE_FLAG) || !isInstalled()) return [];
+  const { shell } = require('electron');
+  const name = `${app.getName()}.lnk`;
+  const links = [
+    path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', name),
+    path.join(app.getPath('desktop'), name),
+  ];
+  const fixed = [];
+  for (const link of links) {
+    try {
+      if (!fs.existsSync(link)) continue;
+      const current = shell.readShortcutLink(link);
+      if (path.resolve(current.target).toLowerCase() === process.execPath.toLowerCase()) continue;
+      shell.writeShortcutLink(link, 'update', { target: process.execPath, cwd: path.dirname(process.execPath), icon: process.execPath, iconIndex: 0 });
+      fixed.push(link);
+    } catch {
+      // a shortcut we can't read or write is left alone
+    }
+  }
+  return fixed;
+}
+
+module.exports = { checkForUpdate, installUpdate, restartInto, repairShortcuts, downloadFile, swapScript, installerScript, isNewer, RELEASES_PAGE };

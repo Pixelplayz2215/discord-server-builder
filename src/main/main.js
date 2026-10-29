@@ -285,6 +285,7 @@ ipcMain.on('settings:initial', (event) => {
 });
 
 function createWindow() {
+  updater.repairShortcuts();
   settings = Appearance.normalize(store.getSettings());
   win = new BrowserWindow({
     width: 1360,
