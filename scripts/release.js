@@ -1,19 +1,22 @@
-// Publishes the app to its one permanent GitHub release (tag "latest"), replacing the files there.
-//   1. If package.json's version is already published, bumps the patch number and commits + pushes it
-//      (the app's update check compares versions, so every publish needs a new one).
+// Publishes a new version of the app as its own GitHub release, with its changes from CHANGELOG.md.
+//   1. Moves the lines under "## Unreleased" in CHANGELOG.md into a new section for this version (it
+//      stops if there are none) and, if package.json's version is already published, bumps the patch
+//      number. Both are committed as "Release x.y.z" and pushed.
 //   2. Builds DiscordServerBuilder-setup.exe (installer) and DiscordServerBuilder-portable.exe, plus
 //      your private mod-view.exe when mod-view.json exists.
-//   3. Uploads the installer and portable exe with version.json (replacing the old files), moves the
-//      "latest" tag to this commit, refreshes the notes from RELEASE_NOTES.md, and keeps copies in releases/.
-//      mod-view.exe is only copied to releases/; it is never uploaded.
+//   3. Creates the release "vx.y.z" with both exes and version.json, notes made from the version's
+//      changes plus RELEASE_NOTES.md, and marks it latest so the app's update check finds it. Copies
+//      go to releases/. mod-view.exe is only copied to releases/; it is never uploaded.
+// If a release run stops partway (say the build fails), run it again: it picks up the same version.
 // Run: npm run release   (needs the GitHub CLI signed in with push access to updateRepo)
 const fs = require('fs');
 const path = require('path');
 const { execSync, spawnSync } = require('child_process');
+const { versionEntries, promoteUnreleased, releaseNotes } = require('./changelog');
 
 const root = path.join(__dirname, '..');
-const TAG = 'latest';
 const pkgPath = path.join(root, 'package.json');
+const changelogPath = path.join(root, 'CHANGELOG.md');
 const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
 const repo = pkg.updateRepo;
 
@@ -31,6 +34,20 @@ const isNewer = (a, b) => {
   for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i];
   return false;
 };
+const today = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+// The version the update check currently sees: the latest release's version.json (or its tag).
+function latestPublished() {
+  const res = gh('api', `repos/${repo}/releases/latest`);
+  if (res.status !== 0) return null;
+  const release = JSON.parse(res.stdout);
+  const manifest = gh('release', 'download', release.tag_name, '--repo', repo, '--pattern', 'version.json', '--output', '-');
+  if (manifest.status === 0) return JSON.parse(manifest.stdout).version;
+  return String(release.tag_name).replace(/^v/i, '');
+}
 
 // The release has to match the pushed code, so start from a clean, pushed main.
 if (output('git status --porcelain').trim()) fail('You have uncommitted changes. Commit and push them first.');
@@ -38,25 +55,43 @@ output('git fetch --quiet');
 if (/ahead \d+/.test(output('git status -sb').split('\n')[0])) fail('Your branch has commits that are not on GitHub yet. Push them first.');
 if (gh('--version').error) fail('The GitHub CLI (gh) was not found. Install it from https://cli.github.com and run "gh auth login".');
 
-const releaseExists = gh('release', 'view', TAG, '--repo', repo).status === 0;
-let published = null;
-if (releaseExists) {
-  const manifest = gh('release', 'download', TAG, '--repo', repo, '--pattern', 'version.json', '--output', '-');
-  if (manifest.status === 0) published = JSON.parse(manifest.stdout).version;
-}
-
-if (published && !isNewer(pkg.version, published)) {
+const published = latestPublished();
+let version = pkg.version;
+if (published && !isNewer(version, published)) {
   const [major, minor, patch] = parse(published);
-  pkg.version = `${major}.${minor}.${patch + 1}`;
-  console.log(`Version ${published} is already published; bumping to ${pkg.version}.`);
+  version = `${major}.${minor}.${patch + 1}`;
+}
+const tag = `v${version}`;
+
+// The changes for this version: new ones from "Unreleased", or the section a stopped run already made.
+let changelog = fs.readFileSync(changelogPath, 'utf8');
+let changes = versionEntries(changelog, Infinity).find((e) => e.version === version)?.changes;
+const files = [];
+if (!changes) {
+  try {
+    const promoted = promoteUnreleased(changelog, version, today());
+    changelog = promoted.text;
+    changes = promoted.changes;
+  } catch (err) {
+    fail(err.message);
+  }
+  fs.writeFileSync(changelogPath, changelog);
+  files.push('CHANGELOG.md');
+}
+if (version !== pkg.version) {
+  console.log(`Version ${published} is already published; releasing ${version}.`);
+  pkg.version = version;
   fs.writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
   const lockPath = path.join(root, 'package-lock.json');
   const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
-  lock.version = pkg.version;
-  if (lock.packages?.['']) lock.packages[''].version = pkg.version;
+  lock.version = version;
+  if (lock.packages?.['']) lock.packages[''].version = version;
   fs.writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
-  run('git add package.json package-lock.json');
-  run(`git commit -m "Release ${pkg.version}"`);
+  files.push('package.json', 'package-lock.json');
+}
+if (files.length) {
+  run(`git add ${files.join(' ')}`);
+  run(`git commit -m "Release ${version}"`);
   run('git push');
 }
 
@@ -69,34 +104,33 @@ if (fs.existsSync(path.join(root, 'mod-view.json'))) {
 }
 for (const file of [...assets, ...localOnly]) if (!fs.existsSync(path.join(root, file))) fail(`Build output not found: ${file}`);
 
+// version.json tells the app which version this is, and what changed lately for its update popup.
 const commit = output('git rev-parse HEAD').trim();
 const manifestPath = path.join('dist', 'version.json');
-fs.writeFileSync(path.join(root, manifestPath), JSON.stringify({ version: pkg.version, commit, publishedAt: new Date().toISOString() }, null, 2));
-
+fs.writeFileSync(path.join(root, manifestPath), JSON.stringify({ version, commit, publishedAt: new Date().toISOString(), changelog: versionEntries(changelog) }, null, 2));
 const notesPath = path.join('dist', 'release-notes.md');
-const notes = fs.existsSync(path.join(root, 'RELEASE_NOTES.md')) ? fs.readFileSync(path.join(root, 'RELEASE_NOTES.md'), 'utf8').trim() : '';
-const updated = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-fs.writeFileSync(path.join(root, notesPath), `${notes}\n\n---\n*Last updated ${updated}.*\n`);
+fs.writeFileSync(path.join(root, notesPath), releaseNotes({ version, changes, template: fs.readFileSync(path.join(root, 'RELEASE_NOTES.md'), 'utf8'), repo }));
 
-// Point the release's tag at the code these files were built from.
-run(`git tag -f ${TAG} ${commit}`);
-run(`git push -f origin refs/tags/${TAG}`);
+// Each version gets its own tag; a stopped run may already have made it.
+const existingTag = spawnSync('git', ['rev-parse', '--verify', '--quiet', `refs/tags/${tag}`], { cwd: root, encoding: 'utf8' }).stdout.trim();
+if (existingTag && existingTag !== commit) fail(`The tag ${tag} already exists on another commit. Check what it is before releasing.`);
+if (!existingTag) run(`git tag ${tag} ${commit}`);
+run(`git push origin refs/tags/${tag}`);
 
-const files = [...assets, manifestPath];
-const title = 'Discord Server Builder';
-const result = releaseExists
-  ? gh('release', 'upload', TAG, ...files, '--repo', repo, '--clobber')
-  : gh('release', 'create', TAG, ...files, '--repo', repo, '--title', title, '--notes-file', notesPath, '--latest');
+const title = `Discord Server Builder ${tag}`;
+const upload = [...assets, manifestPath];
+const result =
+  gh('release', 'view', tag, '--repo', repo).status === 0
+    ? gh('release', 'upload', tag, ...upload, '--repo', repo, '--clobber')
+    : gh('release', 'create', tag, ...upload, '--repo', repo, '--title', title, '--notes-file', notesPath, '--latest', '--verify-tag');
 if (result.status !== 0) fail(`Uploading to GitHub failed:\n${result.stderr}`);
-if (releaseExists) {
-  const edited = gh('release', 'edit', TAG, '--repo', repo, '--title', title, '--notes-file', notesPath, '--latest');
-  if (edited.status !== 0) fail(`Updating the release notes failed:\n${edited.stderr}`);
-}
+const edited = gh('release', 'edit', tag, '--repo', repo, '--title', title, '--notes-file', notesPath, '--latest');
+if (edited.status !== 0) fail(`Updating the release notes failed:\n${edited.stderr}`);
 
 const releasesDir = path.join(root, 'releases');
 fs.mkdirSync(releasesDir, { recursive: true });
 for (const file of [...assets, ...localOnly]) fs.copyFileSync(path.join(root, file), path.join(releasesDir, path.basename(file)));
 
-console.log(`\nPublished version ${pkg.version} to https://github.com/${repo}/releases/tag/${TAG} (copies in releases/).`);
+console.log(`\nPublished ${tag} at https://github.com/${repo}/releases/tag/${tag} (copies in releases/).`);
 if (localOnly.length) console.log('mod-view.exe was built into releases/ only. Share it with your mods privately.');
 console.log('Apps checking for updates will now offer it.');

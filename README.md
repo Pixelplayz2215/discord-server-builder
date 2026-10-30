@@ -55,24 +55,24 @@ npm install
 npm start          # run the app
 npm run dev        # run with DevTools open
 npm run dist       # portable .exe in dist/
-npm run release    # build + replace the files on the GitHub release (see below)
+npm run release    # build + publish a new GitHub release (see below)
 ```
 
 ## Publishing an update
 
-There is **one permanent release** (tag `latest`). Every update replaces its files, so download links never change. The app's update check reads that release from the repository named in `package.json` → `updateRepo`, which must be public. A small `version.json` attached to the release tells the app which version the files are.
+Every version gets **its own GitHub release** (tag `v1.0.7` and so on), whose page starts with that version's changes from [CHANGELOG.md](CHANGELOG.md). The newest one is marked latest, so the `releases/latest` links and download links always give the newest build. The app's update check reads the latest release from the repository named in `package.json` → `updateRepo`, which must be public. Its `version.json` tells the app which version the files are and what changed lately, which the "New version found" popup lists.
 
-1. Commit and push your changes. If you like, update the **What's new** part of `RELEASE_NOTES.md` first, because that file becomes the release's description.
+1. Add what changed as `- ` lines under **Unreleased** in `CHANGELOG.md`. Commit and push.
 2. Run `npm run release`, or in VS Code: Terminal → Run Task → **Publish GitHub release**.
 
 The script:
-- bumps the patch version in `package.json` if the current one is already published, then commits and pushes the bump
+- stops if there are uncommitted or unpushed changes, or nothing under **Unreleased**
+- bumps the patch version in `package.json` if the current one is already published, moves the **Unreleased** lines into that version's section, and commits and pushes both as "Release x.y.z"
 - builds `DiscordServerBuilder-setup.exe` (installer) and `DiscordServerBuilder-portable.exe`, plus a private `mod-view.exe` when you have a `mod-view.json` (see below)
-- uploads the installer and the portable exe, along with `version.json`, replacing the old files
-- moves the `latest` tag to your newest commit and refreshes the release notes
+- tags the commit `vx.y.z` and creates its release with the installer, the portable exe and `version.json`. The notes are the version's changes followed by `RELEASE_NOTES.md`, the standing description.
 - keeps copies in `releases\`
 
-It stops if there are uncommitted or unpushed changes.
+If a run stops partway (for example the build fails), run it again: it carries on with the same version.
 
 Running copies of the app show the "New version found" popup the next time they check. **Reload to update** then updates them in place.
 
@@ -147,7 +147,8 @@ src/renderer/   UI (plain HTML/CSS/JS, no bundler)
   js/social.js    Social alerts page
   js/builder.js   Builder tab
   js/templates.js built-in server templates
-scripts/        make-icon.js (draws the logo → build/icon.png/.ico), copy-fonts.js, release.js
+scripts/        make-icon.js (draws the logo → build/icon.png/.ico), copy-fonts.js, release.js + changelog.js
+CHANGELOG.md    what changed in each version (feeds the release pages and the update popup)
 server/         mod portal (not part of the .exe)
   index.js        HTTP server: sign-in, moderation-only API, /interactions
   auth.js         Discord OAuth sign-in + signed sessions

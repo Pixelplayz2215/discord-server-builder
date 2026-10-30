@@ -3,6 +3,14 @@
 const Updater = {
   prompting: false,
 
+  // **bold** and `code` from the changelog, as elements (never as HTML).
+  inline(text) {
+    return String(text)
+      .split(/(\*\*[^*]+\*\*|`[^`]+`)/)
+      .filter(Boolean)
+      .map((part) => (part.startsWith('**') ? h('b', null, part.slice(2, -2)) : part.startsWith('`') ? h('code', { class: 'mono' }, part.slice(1, -1)) : part));
+  },
+
   async check({ silent = false } = {}) {
     try {
       const info = await api('update:check');
@@ -56,11 +64,22 @@ const Updater = {
       ? 'This copy isn\'t the installed app or the portable .exe, so it can\'t update itself. Download the new version from GitHub instead.'
       : 'This release doesn\'t have a matching download attached. Download it from GitHub instead.';
 
+    // What changed since this version, from the release's version.json; older releases only have notes.
+    const changes = info.changes?.length
+      ? h(
+          'div',
+          { class: 'release-notes changes' },
+          info.changes.map((entry) => [h('div', { class: 'label' }, `What's new in ${entry.version}`), h('ul', null, entry.changes.map((c) => h('li', null, Updater.inline(c))))]),
+        )
+      : info.notes
+        ? h('div', { class: 'release-notes' }, info.notes)
+        : null;
+
     openModal({
       title: 'New version found',
       body: [
         h('p', null, `Version ${info.latest} is available (you have ${info.current}). Reload to update.`),
-        info.notes ? h('div', { class: 'release-notes' }, info.notes) : null,
+        changes,
         info.canInstall ? null : h('p', { class: 'subtle', style: { fontSize: 'calc(12rem / 14)' } }, cannotInstall),
         progress,
         status,

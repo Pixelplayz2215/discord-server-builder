@@ -685,6 +685,10 @@ input[type='range'] { width: 100%; accent-color: var(--accent); cursor: pointer;
 .logo-preview { width: 112px; height: 112px; flex-shrink: 0; border-radius: 50%; background: var(--grad-logo); border: 2px solid var(--border-strong); display: grid; place-items: center; box-shadow: 0 20px 50px -24px color-mix(in srgb, var(--glow-1) 70%, transparent); }
 .logo-preview img { width: 50%; height: 50%; object-fit: contain; }
 .release-notes { max-height: 180px; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; font-size: calc(12rem / 14); color: var(--muted); }
+.release-notes.changes { max-height: 260px; white-space: normal; }
+.release-notes.changes ul { margin: 6px 0 12px; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
+.release-notes.changes ul:last-child { margin-bottom: 0; }
+.release-notes.changes b { color: var(--text); }
 .locked { display: inline-flex; align-items: center; gap: 6px; font-size: calc(12rem / 14); color: var(--subtle); }
 .locked svg { width: 13px; height: 13px; }
 

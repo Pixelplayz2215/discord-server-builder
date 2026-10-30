@@ -1,6 +1,6 @@
-// Checks the app's GitHub release for a newer build. There is one permanent release (tag "latest")
-// whose files are replaced on every update; the version.json attached to it says which version
-// they are. In the portable .exe the app can download the new exe and swap it in place of itself.
+// Checks the app's latest GitHub release for a newer build. Each version has its own release; the
+// version.json attached to it says which version the files are and what changed lately. The portable
+// .exe downloads the new exe and swaps it in place of itself; the installed app runs the new installer.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -59,24 +59,34 @@ async function fetchRelease() {
   const exe = assets.find((a) => (isInstalled() ? SETUP_ASSET : PORTABLE_ASSET).test(a.name)) || null;
 
   let version = String(release.tag_name || '').replace(/^v/i, '');
+  let changelog = [];
   const manifest = assets.find((a) => a.name === 'version.json');
   if (manifest) {
     const m = await fetch(manifest.browser_download_url, { headers: { 'User-Agent': HEADERS['User-Agent'] } });
     const data = m.ok ? await m.json().catch(() => null) : null;
     if (data?.version) version = String(data.version);
+    if (Array.isArray(data?.changelog)) changelog = data.changelog;
   }
-  return { release, version, exe };
+  return { release, version, exe, changelog };
 }
+
+// What changed in each version newer than this one (version.json lists the latest few).
+const changesSince = (changelog, current) =>
+  changelog
+    .filter((e) => e && isNewer(e.version, current) && Array.isArray(e.changes))
+    .slice(0, 10)
+    .map((e) => ({ version: String(e.version), changes: e.changes.map((c) => String(c).slice(0, 600)).slice(0, 20) }));
 
 async function checkForUpdate() {
   const current = app.getVersion();
   const found = await fetchRelease();
   if (!found) return { current, available: false, url: RELEASES_PAGE, message: 'No release found on GitHub yet.' };
-  const { release, version, exe } = found;
+  const { release, version, exe, changelog } = found;
   return {
     current,
     latest: version,
     available: isNewer(version, current),
+    changes: changesSince(changelog, current),
     notes: String(release.body || '').slice(0, 2000),
     url: release.html_url || RELEASES_PAGE,
     asset: exe ? { name: exe.name, size: exe.size } : null,
