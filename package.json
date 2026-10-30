@@ -9,6 +9,7 @@
   "private": true,
   "updateRepo": "Pixelplayz2215/discord-server-builder",
   "modPortalUrl": "",
+  "twitchClientId": "",
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
@@ -21,7 +22,7 @@
     "dist:mod": "node scripts/build-mod-view.js",
     "release": "node scripts/release.js",
     "portal": "node server/index.js",
-    "test": "node --test server/portal.test.js server/interactions.test.js test/features.test.js",
+    "test": "node --test server/portal.test.js server/interactions.test.js test/features.test.js test/social.test.js",
     "test:portal": "node --test server/portal.test.js server/interactions.test.js"
   },
   "dependencies": {
@@ -36,7 +37,7 @@
   "build": {
     "appId": "org.pixelplayz.discordserverbuilder",
     "productName": "Discord Server Builder",
-    "copyright": "Copyright Ã‚Â© 2026 Pixelplayz2215",
+    "copyright": "Copyright ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â© 2026 Pixelplayz2215",
     "directories": {
       "output": "dist",
       "buildResources": "build"

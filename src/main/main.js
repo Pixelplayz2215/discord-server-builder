@@ -1,5 +1,6 @@
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const { app, BrowserWindow, ipcMain, shell, dialog, Menu, Tray, nativeImage } = require('electron');
 const { DiscordRest } = require('./discord');
 const { PresenceConnection } = require('./gateway');
@@ -12,6 +13,7 @@ const commands = require('./commands');
 const { createCases, caseFromCall, warnMember, privateChannel } = require('./cases');
 const backups = require('./backup');
 const { createServerLogger, intentsFor: logIntents, normalizeConfig: normalizeLogConfig } = require('./logs');
+const social = require('./social');
 const pkg = require('../../package.json');
 
 const DEV = process.argv.includes('--dev');
@@ -144,6 +146,61 @@ async function runAutoBackups() {
   }
 }
 
+/* ---------- Social alerts (YouTube uploads, Twitch going live) ---------- */
+// A Twitch Client ID built into this copy (package.json), or one the owner pasted in the app.
+const twitchClientId = () => pkg.twitchClientId || store.getSocial().clientId || '';
+let twitchClient = null; // { clientId, api }
+let twitchLogin = null; // the "Log in with Twitch" in progress
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function getTwitch() {
+  const clientId = twitchClientId();
+  if (!clientId || !store.getTwitchTokens()) return null;
+  if (twitchClient?.clientId !== clientId) {
+    twitchClient = {
+      clientId,
+      api: social.createTwitchClient({ clientId, getTokens: () => store.getTwitchTokens(), saveTokens: (tokens) => store.setTwitchTokens(tokens), fetchImpl: fetch }),
+    };
+  }
+  return twitchClient.api;
+}
+
+function updateAlert(id, patch) {
+  const { alerts } = store.getSocial();
+  store.saveSocial({ alerts: alerts.map((a) => (a.id === id ? { ...a, ...patch } : a)) });
+}
+
+async function postAlert(alert, message) {
+  const bot = store.getBot(alert.botId);
+  if (!bot || bot.type === 'mod') throw new Error('That bot is no longer in the app.');
+  await restFor(alert.botId).request('POST', `/channels/${alert.channelId}/messages`, { body: message });
+}
+
+const socialWatcher = social.createSocialWatcher({
+  getAlerts: () => store.getSocial().alerts,
+  updateState: (id, state) => updateAlert(id, { state }),
+  post: postAlert,
+  getTwitch,
+  fetchImpl: fetch,
+});
+
+function socialStatus() {
+  const data = store.getSocial();
+  return {
+    alerts: data.alerts,
+    defaults: social.DEFAULT_MESSAGES,
+    twitch: { builtInClientId: !!pkg.twitchClientId, clientId: pkg.twitchClientId ? '' : data.clientId, account: data.account, loggedIn: !!store.getTwitchTokens() },
+  };
+}
+
+// A twitch.tv link or a channel name.
+const twitchLoginName = (input) => {
+  const text = String(input || '').trim();
+  const name = (text.match(/twitch\.tv\/([A-Za-z0-9_]{3,25})/i)?.[1] || text).replace(/^@/, '');
+  if (!/^[A-Za-z0-9_]{3,25}$/.test(name)) throw new Error('Enter a Twitch channel name or link, like twitch.tv/name.');
+  return name.toLowerCase();
+};
+
 async function guildAndRoles(rest, guildId) {
   const [guild, roles] = await Promise.all([rest.request('GET', `/guilds/${guildId}`), rest.request('GET', `/guilds/${guildId}/roles`)]);
   return { guild, roles };
@@ -262,7 +319,7 @@ async function describeBot(rest) {
   };
 }
 
-const SAFE_HOSTS = ['discord.com', 'support.discord.com', 'discord.dev', 'pixelplayz.org', 'github.com', 'render.com'];
+const SAFE_HOSTS = ['discord.com', 'support.discord.com', 'discord.dev', 'pixelplayz.org', 'github.com', 'render.com', 'twitch.tv', 'youtube.com'];
 const isSafeUrl = (url) => {
   try {
     const u = new URL(url);
@@ -451,6 +508,133 @@ const handlers = {
   },
 
   'servers:config': (botId, guildId) => store.getGuildConfig(botId, snowflake(guildId, 'server')),
+
+  'social:get': () => socialStatus(),
+
+  'social:setClientId': (clientId) => {
+    const id = String(clientId || '').trim();
+    if (id && !/^[a-z0-9]{10,64}$/i.test(id)) throw new Error("That doesn't look like a Twitch Client ID (letters and numbers only).");
+    if (id !== store.getSocial().clientId) {
+      store.saveSocial({ clientId: id, account: null });
+      store.setTwitchTokens(null); // a login belongs to the Client ID it was made with
+      twitchClient = null;
+    }
+    return socialStatus();
+  },
+
+  // "Log in with Twitch": Twitch shows a code the user confirms in their browser.
+  'social:twitchLoginStart': async () => {
+    const clientId = twitchClientId();
+    if (!clientId) throw new Error('Add your Twitch Client ID first.');
+    if (twitchLogin) twitchLogin.cancelled = true;
+    const login = await social.twitchStartLogin(clientId, fetch);
+    twitchLogin = { clientId, login, cancelled: false };
+    return { userCode: login.userCode, verificationUri: login.verificationUri, expiresAt: login.expiresAt };
+  },
+
+  'social:twitchLoginWait': async () => {
+    const attempt = twitchLogin;
+    if (!attempt) throw new Error('Start the Twitch login first.');
+    try {
+      const tokens = await social.twitchFinishLogin(attempt.clientId, attempt.login, fetch, { sleep, cancelled: () => attempt.cancelled });
+      store.setTwitchTokens(tokens);
+      twitchClient = null;
+      const me = await getTwitch().me();
+      store.saveSocial({ account: { id: me.id, login: me.login, name: me.display_name, avatar: me.profile_image_url || null } });
+      return socialStatus();
+    } finally {
+      if (twitchLogin === attempt) twitchLogin = null;
+    }
+  },
+
+  'social:twitchLoginCancel': () => {
+    if (twitchLogin) twitchLogin.cancelled = true;
+  },
+
+  'social:twitchLogout': async () => {
+    const tokens = store.getTwitchTokens();
+    const clientId = twitchClientId();
+    // Tell Twitch to forget the token too; the local logout happens either way.
+    if (tokens?.access && clientId) await fetch('https://id.twitch.tv/oauth2/revoke', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ client_id: clientId, token: tokens.access }).toString() }).catch(() => {});
+    store.setTwitchTokens(null);
+    store.saveSocial({ account: null });
+    twitchClient = null;
+    return socialStatus();
+  },
+
+  // Turns what the owner typed (a link, @handle or channel name) into the channel to watch.
+  'social:resolve': async (platform, input) => {
+    if (platform === 'youtube') return social.resolveYouTubeChannel(input, fetch);
+    if (platform !== 'twitch') throw new Error('Unknown platform.');
+    const twitch = getTwitch();
+    if (!twitch) throw new Error('Log in with Twitch first.');
+    const [user] = await twitch.users([twitchLoginName(input)]);
+    if (!user) throw new Error("There's no Twitch channel with that name.");
+    return { id: user.id, login: user.login, name: user.display_name, url: `https://www.twitch.tv/${user.login}`, avatar: user.profile_image_url || null };
+  },
+
+  'social:saveAlert': (input) => {
+    const a = input || {};
+    if (!['youtube', 'twitch'].includes(a.platform)) throw new Error('Pick YouTube or Twitch.');
+    const bot = store.getBot(String(a.botId));
+    if (!bot || bot.type === 'mod') throw new Error('Pick one of your bots.');
+    const sourceOk = a.platform === 'youtube' ? /^UC[\w-]{22}$/.test(a.source?.id || '') : /^\d{1,20}$/.test(a.source?.id || '');
+    if (!sourceOk) throw new Error('Check the channel first.');
+    const mention = ['none', 'everyone', 'here'].includes(a.mention) || /^\d{15,21}$/.test(String(a.mention)) ? String(a.mention) : 'none';
+    const { alerts } = store.getSocial();
+    const existing = alerts.find((x) => x.id === a.id);
+    const alert = {
+      id: existing?.id || crypto.randomUUID(),
+      platform: a.platform,
+      botId: bot.id,
+      guildId: snowflake(a.guildId, 'server'),
+      guildName: String(a.guildName || '').slice(0, 100),
+      channelId: snowflake(a.channelId, 'channel'),
+      channelName: String(a.channelName || '').slice(0, 100),
+      source: { id: a.source.id, name: String(a.source.name || a.source.id).slice(0, 100), login: a.source.login || null, url: String(a.source.url || '').slice(0, 200), avatar: a.source.avatar || null },
+      message: String(a.message || '').slice(0, 1000),
+      mention,
+      mentionName: /^\d/.test(mention) ? String(a.mentionName || '').slice(0, 100) : '',
+      shorts: a.shorts !== false,
+      enabled: a.enabled !== false,
+      createdAt: existing?.createdAt || Date.now(),
+      // A different channel to watch starts fresh, so its old videos or a stream in progress aren't posted.
+      state: existing && existing.source.id === a.source.id && existing.platform === a.platform ? existing.state : {},
+    };
+    if (!existing || existing.source.id !== alert.source.id) alert.createdAt = Date.now();
+    store.saveSocial({ alerts: existing ? alerts.map((x) => (x.id === alert.id ? alert : x)) : [...alerts, alert] });
+    setTimeout(() => socialWatcher.tick().catch(() => {}), 2000);
+    return socialStatus();
+  },
+
+  'social:setEnabled': (id, enabled) => {
+    updateAlert(String(id), { enabled: !!enabled });
+    return socialStatus();
+  },
+
+  'social:removeAlert': (id) => {
+    store.saveSocial({ alerts: store.getSocial().alerts.filter((a) => a.id !== id) });
+    return socialStatus();
+  },
+
+  // Posts what an alert looks like, with the latest video or the stream, without pinging anyone.
+  'social:test': async (id) => {
+    const alert = store.getSocial().alerts.find((a) => a.id === id);
+    if (!alert) throw new Error('That alert no longer exists.');
+    let message;
+    if (alert.platform === 'youtube') {
+      const feed = await social.fetchYouTubeFeed(alert.source.id, fetch);
+      const video = feed.videos.find((v) => alert.shorts !== false || !v.isShort);
+      if (!video) throw new Error('This channel has no videos to show in a test yet.');
+      message = social.youtubeMessage(alert, feed.name || alert.source.name, video);
+    } else {
+      const twitch = getTwitch();
+      if (!twitch) throw new Error('Log in with Twitch first.');
+      const [stream] = await twitch.streams([alert.source.id]);
+      message = social.twitchMessage(alert, stream || { user_login: alert.source.login, user_name: alert.source.name, title: 'Test alert: this is how it looks when they go live', game_name: 'Just Chatting', viewer_count: null, thumbnail_url: null });
+    }
+    await postAlert(alert, { ...message, content: `🧪 **Test alert** (nobody was pinged)\n${message.content}`.slice(0, 2000), allowed_mentions: { parse: [] } });
+  },
 
   'backups:list': (guildId) => backups.listBackups(backupsRoot(), snowflake(guildId, 'server')),
 
@@ -759,6 +943,10 @@ if (!app.requestSingleInstanceLock()) {
     createWindow();
     setTimeout(runAutoBackups, 60 * 1000);
     setInterval(runAutoBackups, 30 * 60 * 1000);
+    // Social alerts: YouTube channels are checked every 5 minutes and Twitch every minute (the watcher paces itself).
+    const checkSocial = () => socialWatcher.tick().then(() => send('social:changed', {}), (err) => console.error('Social alerts:', err.message));
+    setTimeout(checkSocial, 15 * 1000);
+    setInterval(checkSocial, 60 * 1000);
   });
   app.on('window-all-closed', () => {
     for (const conn of presences.values()) conn.stop();

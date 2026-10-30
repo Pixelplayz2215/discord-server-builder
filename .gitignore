@@ -12,6 +12,7 @@ settings.json
 !.vscode/settings.json
 templates.json
 servers.json
+social.json
 backups/
 userdata/
 *.token

@@ -119,6 +119,34 @@ const store = {
     return all[key];
   },
 
+  // Social alerts and the Twitch account. The Twitch tokens are encrypted like bot tokens and never
+  // leave the main process.
+  getSocial() {
+    const { twitchTokens, ...social } = readJson('social.json', {});
+    return { clientId: '', account: null, alerts: [], ...social };
+  },
+
+  saveSocial(patch) {
+    writeJson('social.json', { ...readJson('social.json', {}), ...patch });
+  },
+
+  getTwitchTokens() {
+    const record = readJson('social.json', {}).twitchTokens;
+    if (!record) return null;
+    try {
+      return JSON.parse(decrypt(record));
+    } catch {
+      return null;
+    }
+  },
+
+  setTwitchTokens(tokens) {
+    const all = readJson('social.json', {});
+    if (tokens) all.twitchTokens = encrypt(JSON.stringify(tokens));
+    else delete all.twitchTokens;
+    writeJson('social.json', all);
+  },
+
   // Every server with saved settings, as [{ botId, guildId, config }].
   listGuildConfigs() {
     return Object.entries(readJson('servers.json', {})).map(([key, config]) => {

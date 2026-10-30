@@ -12,6 +12,7 @@ A Windows desktop app (Electron) in the Pixelplayz2215 theme for running Discord
 - **AutoMod.** Add and edit Discord's built-in AutoMod rules: blocked words, common bad words, spam and mass mentions, with block, alert and timeout actions and exempt roles and channels. Discord enforces them itself, even when the app is closed.
 - **Backups.** Save an exact copy of a server's roles, channels, permissions and settings to your PC, by hand or automatically every day. Restoring recreates what was deleted and puts permissions, layout and (optionally) settings back, without deleting anything. Preview the changes first, and export or import backups as files.
 - **Server logs.** The bot posts joins (new accounts flagged), leaves, bans, timeouts, role and nickname changes, deleted and edited messages, and channel and role changes to a log channel while the app runs.
+- **Social alerts** (megaphone in the left rail). Post in a channel of your choice when a YouTube channel uploads (or starts a stream) or a Twitch channel goes live, with an optional @everyone, @here or role ping and your own message. YouTube needs no login: paste any channel's link. Twitch uses **Log in with Twitch**. Checks run while the app is open or in the tray (YouTube every 5 minutes, Twitch every minute). X / Twitter isn't supported, because X charges for every API read since February 2026.
 - **Keeps running in the tray.** The close button hides the app to the tray so bots stay online and logs and backups keep going. Quit from the tray icon. This can be turned off in Settings.
 - **Channels.** Send a message as the bot, purge up to 1000 recent messages, lock or unlock, set slowmode, rename, delete, or create channels.
 - **Audit log.** Recent actions, with filters.
@@ -27,7 +28,7 @@ A Windows desktop app (Electron) in the Pixelplayz2215 theme for running Discord
 
 ## Your data stays on your PC
 
-Bots, settings, saved templates, per-server settings and backups are stored only in `%APPDATA%\Discord Server Builder` (`bots.json`, `settings.json`, `templates.json`, `servers.json` and the `backups` folder). Bot tokens are encrypted with Windows DPAPI (Electron `safeStorage`). None of this is in the project folder, the GitHub repo or the built .exe, so every copy of the app starts empty. `.gitignore` also blocks those file names in case one gets copied into the project. The UI never sees a token, and every Discord call runs in the main process.
+Bots, settings, saved templates, per-server settings, social alerts and backups are stored only in `%APPDATA%\Discord Server Builder` (`bots.json`, `settings.json`, `templates.json`, `servers.json`, `social.json` and the `backups` folder). The Twitch login is encrypted the same way as bot tokens. Bot tokens are encrypted with Windows DPAPI (Electron `safeStorage`). None of this is in the project folder, the GitHub repo or the built .exe, so every copy of the app starts empty. `.gitignore` also blocks those file names in case one gets copied into the project. The UI never sees a token, and every Discord call runs in the main process.
 
 ## Run it
 
@@ -89,7 +90,15 @@ The installer's own pages (credit to Pixelplayz2215, the official-download warni
 
 `npm run dist:mod` (and every `npm run release`) then also builds `mod-view.exe`. That's the same app with your portal address already filled in on the sign-in box. It only goes into your local `releases\` folder, never to GitHub, so share it with your mods yourself. `mod-view.json` is ignored by git, so your address stays out of the repo. The public download leaves the box empty.
 
-`npm test` runs all the tests (portal permissions, slash commands, cases, backups and server logs, each against a fake Discord). `npm run test:portal` runs only the portal's.
+`npm test` runs all the tests (portal permissions, slash commands, cases, backups, server logs and social alerts, against a fake Discord, YouTube and Twitch). `npm run test:portal` runs only the portal's.
+
+## Twitch Client ID
+
+"Log in with Twitch" needs a Twitch app's Client ID. Without one built in, each owner pastes their own on the Social page (the page walks them through it). To build one into the app instead:
+
+1. Open the [Twitch developer console](https://dev.twitch.tv/console/apps) (Twitch requires two-factor authentication).
+2. **Register Your Application**: any name, OAuth Redirect URL `http://localhost`, category **Application Integration**, Client Type **Public**.
+3. Copy the Client ID into `"twitchClientId"` in `package.json` and run `npm run release`. A public client has no secret, so the ID is safe to ship.
 
 ## Bot setup
 
@@ -112,6 +121,7 @@ src/main/       Electron main process
   discord.js      REST client with rate-limit handling
   gateway.js      gateway connection (keeps bots "online", receives events for server logs)
   logs.js         server logs: gateway events → batched embeds in a log channel
+  social.js       social alerts: YouTube feeds, Log in with Twitch, the watcher
   backup.js       server snapshots and restore
   cases.js        #mod-cases case log, warnings (shared with server/)
   builder.js      template → server builder, clone, purge, lock, member paging
@@ -134,6 +144,7 @@ src/renderer/   UI (plain HTML/CSS/JS, no bundler)
   js/automod.js   AutoMod tab
   js/backups.js   Backups tab
   js/serverlogs.js server logs settings (Logs tab)
+  js/social.js    Social alerts page
   js/builder.js   Builder tab
   js/templates.js built-in server templates
 scripts/        make-icon.js (draws the logo → build/icon.png/.ico), copy-fonts.js, release.js
@@ -145,6 +156,7 @@ server/         mod portal (not part of the .exe)
   portal.test.js  tests with a fake Discord
   interactions.test.js  slash command tests with a fake Discord
 test/features.test.js  cases, backups and server logs tests (not packaged)
+test/social.test.js    social alerts tests (not packaged)
 docs/MOD-PORTAL.md  how to deploy the portal and give mods access
 render.yaml     Render blueprint for the portal
 ```

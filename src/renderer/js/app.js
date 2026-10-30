@@ -43,6 +43,7 @@ const App = {
     let content;
     if (bot) content = BotPage.render(bot);
     else if (this.route.page === 'settings') content = SettingsPage.render();
+    else if (this.route.page === 'social') content = SocialPage.render();
     else content = HomePage.render();
     document.getElementById('page').replaceChildren(content);
     this.renderCrumb();
@@ -63,6 +64,7 @@ const App = {
     const crumb = document.getElementById('crumb');
     crumb.replaceChildren();
     if (this.route.page === 'settings') return crumb.append(h('b', null, 'Settings'));
+    if (this.route.page === 'social') return crumb.append(h('b', null, 'Social alerts'));
     if (this.route.page !== 'bot') return;
     const bot = this.bot(this.route.botId);
     const view = this.view(bot.id);
@@ -137,6 +139,7 @@ const App = {
 
     rail.replaceChildren(
       item('rail-home', 'Home', h('button', { class: 'rail-btn', onclick: () => this.go({ page: 'home' }) }, icon('home')), isHome),
+      item('rail-social', 'Social alerts', h('button', { class: 'rail-btn', onclick: () => this.go({ page: 'social' }) }, icon('megaphone')), this.route.page === 'social'),
       h('div', { class: 'rail-sep' }),
       ...botItems,
       item(
