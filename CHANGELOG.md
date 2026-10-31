@@ -6,8 +6,11 @@ To release: add your changes as `- ` lines under **Unreleased**, then run `npm r
 
 ## Unreleased
 
+## 1.1.1 (2026-10-30)
+
 - **Kicks show up.** Safety → Moderation now has **Bans** and **Kicks**: kicks come from Discord's audit log (kept for 45 days) with who kicked them (the real moderator, also for `/kick` and the mod portal), the reason, when, and a button to ban them if they come back.
 - **Kicks in server logs.** A kick is now logged as **Member kicked** with who did it and why, instead of "Member left". **Member banned** shows who banned and why too, and a ban is no longer also logged as a leave.
+
 ## 1.1.0 (2026-10-30)
 
 - **Server stats.** A new Server stats page (on the Community page) shows live counts as channels at the top of your server: members, users, bots, channels and roles. Name each counter however you like (put {count} where the number goes), show numbers in full or short (1.2K), and turn counters on or off. They're voice channels members can see but not join, and the bot updates them about every 5 minutes while the app is open or in the tray, which is as often as Discord lets a bot rename a channel. Users and Bots need the Server Members Intent.
