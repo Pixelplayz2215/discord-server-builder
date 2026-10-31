@@ -6,6 +6,8 @@ To release: add your changes as `- ` lines under **Unreleased**, then run `npm r
 
 ## Unreleased
 
+## 1.2.0 (2026-10-31)
+
 - **Safer connection library.** The library the bot uses to stay connected to Discord (ws) is updated to fix two security advisories.
 - **Run 24/7.** Your mod portal can now run welcome & goodbye cards, auto roles, reaction roles, polls, server logs, server stats, scheduled announcements and YouTube alerts around the clock, so they keep going when your PC is off. Turn it on from the Home page (**Run 24/7**, under slash commands) in one click; there's nothing new to set up on Render beyond **Sync fork**. Each server gets a private #bot-settings channel where the app keeps the settings for the portal, encrypted with your bot token. While 24/7 is on, the portal keeps itself awake on Render's free plan (one service fits in the free hours), and the app shows what it did: votes, posts sent and any problems. Twitch alerts and automatic backups still run in the app.
 - **Auto roles.** A new Auto roles page (on the Community page) gives roles to everyone who joins, right away or after a wait you pick (1 minute to 1 hour), with separate roles for bots if you like. If your server uses Discord's rules screening, the roles wait until the member accepts the rules. **Give to existing members** hands the roles to everyone who joined before. Needs the Server Members Intent; works while the app is open or in the tray.
