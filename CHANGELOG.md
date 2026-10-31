@@ -6,6 +6,8 @@ To release: add your changes as `- ` lines under **Unreleased**, then run `npm r
 
 ## Unreleased
 
+## 1.0.9 (2026-10-30)
+
 - **Locks are announced.** `/lock`, `/unlock` and the Lock button on the Channels tab now post a card in the channel saying it's locked (or open again) and why, so everyone knows. Raid lockdowns stay quiet.
 - **Locks in the logs.** Server logs post when a channel is locked or unlocked, with the moderator, the command and the reason. In the Audit log tab, a lock now reads "Pixel locked #channel" instead of "changed permissions", and actions from slash commands and the mod portal show the moderator who did them, the command as a badge, and the reason on its own line.
 
