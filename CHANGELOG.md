@@ -6,6 +6,8 @@ To release: add your changes as `- ` lines under **Unreleased**, then run `npm r
 
 ## Unreleased
 
+## 1.0.10 (2026-10-30)
+
 - **Tickets.** A new Tickets page posts a panel with your own text and an "open a ticket" button. Pressing it gives the member a private channel that only they, your support roles and admins can see, with your own message asking what they need. Staff press **Claim** to take the ticket, and **Close** asks for a reason, saves the whole conversation (images included) as a transcript in a private ticket log channel with a **View transcript** link, and deletes the channel. Open tickets and every transcript are listed in the app too. With slash commands on, your mod portal answers the buttons around the clock (update it first with **Sync fork**); otherwise the app does while it runs.
 - **A tidier app.** Welcome & goodbye, Reaction roles, Tickets, Polls and Social alerts now share one **Community** button in the left rail, with a menu inside. A server's tabs are grouped so they fit without scrolling: **Safety** holds Moderation, Raid tools and AutoMod, and **Build** holds Builder and Backups.
 - **YouTube alerts say what's wrong.** When YouTube's free feeds are down, the Social alerts page now says so at the top of your alerts, with a button to set up the API key, and the error badge is short enough to read.
