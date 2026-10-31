@@ -69,8 +69,6 @@ npm run dist       # portable .exe in dist/
 
 `npm run dist:mod` (and every `npm run release`) then also builds `mod-view.exe`. That's the same app with your portal address already filled in on the sign-in box. It only goes into your local `releases\` folder, never to GitHub, so share it with your mods yourself. `mod-view.json` is ignored by git, so your address stays out of the repo. The public download leaves the box empty.
 
-`npm test` runs all the tests (portal permissions, slash commands, cases, backups, server logs and social alerts, against a fake Discord, YouTube and Twitch). `npm run test:portal` runs only the portal's.
-
 ## Twitch Client ID
 
 "Log in with Twitch" needs a Twitch app's Client ID. Without one built in, each owner pastes their own on the Social page (the page walks them through it). To build one into the app instead:
