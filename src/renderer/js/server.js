@@ -136,7 +136,7 @@ const ServerPage = {
     const bits = srv.guild ? ServerPage.perms(ctx) : null;
     const refresh = h('button', { class: 'btn sm', title: 'Reload server data' }, icon('refresh'), 'Refresh');
     refresh.addEventListener('click', () => {
-      for (const key of ['members', 'membersError', 'bans', 'bansError', 'audit', 'auditError', 'owner']) delete srv[key];
+      for (const key of ['members', 'membersError', 'bans', 'bansError', 'kicks', 'kicksError', 'audit', 'auditError', 'owner']) delete srv[key];
       srv.guild = null;
       ServerPage.loadCore(ctx.botId, ctx.guildId);
       App.renderMain();
@@ -511,6 +511,7 @@ const Mod = {
           onClick: async () => {
             await rest(ctx.botId, 'DELETE', `/guilds/${ctx.guildId}/members/${userId}`, { reason: reason.value });
             Mod.dropMember(ctx, userId);
+            delete ctx.srv.kicks; // read again, with this one
             toast(`Kicked ${label}`);
             ctx.rerender();
           },
@@ -1024,46 +1025,95 @@ const ModerationTab = {
     ctx.rerender();
   },
 
-  render(ctx, el) {
+  // Kicks aren't kept anywhere but the audit log (for 45 days), so they're read from there.
+  async loadKicks(ctx) {
     const { srv } = ctx;
-    if (!srv.bans && !srv.bansLoading && !srv.bansError) ModerationTab.loadBans(ctx);
-    el.append(h('div', { class: 'split', style: { gridTemplateColumns: 'minmax(0,1fr) 380px' } }, ModerationTab.bansCard(ctx), h('div', { class: 'stack', style: { gap: '16px' } }, ModerationTab.quickCard(ctx), ctx.mod ? null : ModerationTab.pruneCard(ctx))));
+    srv.kicksLoading = true;
+    try {
+      const res = await rest(ctx.botId, 'GET', `/guilds/${ctx.guildId}/audit-logs`, { query: { action_type: 20, limit: 100 } });
+      const users = Object.fromEntries((res.users || []).map((u) => [u.id, u]));
+      srv.kicks = (res.audit_log_entries || [])
+        .filter((e) => e.action_type === 20)
+        .map((e) => ({ id: e.id, user: users[e.target_id] || { id: e.target_id, username: 'unknown' }, executor: users[e.user_id] || null, reason: e.reason || '' }));
+      srv.kicksError = null;
+    } catch (err) {
+      srv.kicksError = `${err.message} Reading kicks needs the View Audit Log permission.`;
+    }
+    srv.kicksLoading = false;
+    ctx.rerender();
   },
 
-  bansCard(ctx) {
+  render(ctx, el) {
     const { srv } = ctx;
+    srv.modList ??= 'bans';
+    if (srv.modList === 'bans' && !srv.bans && !srv.bansLoading && !srv.bansError) ModerationTab.loadBans(ctx);
+    if (srv.modList === 'kicks' && !srv.kicks && !srv.kicksLoading && !srv.kicksError) ModerationTab.loadKicks(ctx);
+    el.append(h('div', { class: 'split', style: { gridTemplateColumns: 'minmax(0,1fr) 380px' } }, ModerationTab.removedCard(ctx), h('div', { class: 'stack', style: { gap: '16px' } }, ModerationTab.quickCard(ctx), ctx.mod ? null : ModerationTab.pruneCard(ctx))));
+  },
+
+  // Bans (from Discord's ban list) and kicks (from the audit log), with a switch between them.
+  removedCard(ctx) {
+    const { srv } = ctx;
+    const kicks = srv.modList === 'kicks';
     const listHost = h('div', { class: 'list' });
     let query = '';
+    const matches = (q, ...values) => !q || values.some((v) => v && String(v).toLowerCase().includes(q));
     const draw = () => {
-      if (srv.bansError) return listHost.replaceChildren(h('div', { class: 'callout warn', style: { margin: '14px' } }, icon('alert'), h('div', null, srv.bansError)));
-      if (!srv.bans) return listHost.replaceChildren(h('div', { class: 'loading-block', style: { padding: '14px' } }, h('div', { class: 'skeleton' }), h('div', { class: 'skeleton' })));
+      const error = kicks ? srv.kicksError : srv.bansError;
+      const list = kicks ? srv.kicks : srv.bans;
+      if (error) return listHost.replaceChildren(h('div', { class: 'callout warn', style: { margin: '14px' } }, icon('alert'), h('div', null, error)));
+      if (!list) return listHost.replaceChildren(h('div', { class: 'loading-block', style: { padding: '14px' } }, h('div', { class: 'skeleton' }), h('div', { class: 'skeleton' })));
       const q = query.toLowerCase();
-      const bans = srv.bans.filter((b) => !q || [b.user.username, b.user.global_name, b.user.id, b.reason].some((v) => v && v.toLowerCase().includes(q)));
-      if (!bans.length) return listHost.replaceChildren(h('div', { class: 'empty' }, icon('shield'), h('h3', null, srv.bans.length ? 'No bans match' : 'No bans'), h('p', null, srv.bans.length ? '' : 'Nobody is banned from this server.')));
+      const shown = kicks ? list.filter((k) => matches(q, k.user.username, k.user.global_name, k.user.id, k.reason)) : list.filter((b) => matches(q, b.user.username, b.user.global_name, b.user.id, b.reason));
+      if (!shown.length) {
+        const none = kicks ? ['No kicks', 'Nobody was kicked in the last 45 days (as far back as Discord keeps them).'] : ['No bans', 'Nobody is banned from this server.'];
+        return listHost.replaceChildren(h('div', { class: 'empty' }, icon('shield'), h('h3', null, list.length ? `No ${kicks ? 'kicks' : 'bans'} match` : none[0]), h('p', null, list.length ? '' : none[1])));
+      }
+      const who = (u) => [h('img', { class: 'avatar', src: userAvatar(u, 64), width: 36, height: 36, alt: '', loading: 'lazy' }), h('div', { class: 'primary ellipsis' }, displayName(u), h('span', { class: 'subtle', style: { fontWeight: 400 } }, `  @${u.username}`))];
       listHost.replaceChildren(
-        ...bans.slice(0, 300).map((b) =>
-          h(
+        ...shown.slice(0, 300).map((item) => {
+          if (!kicks) {
+            const [avatar, name] = who(item.user);
+            return h('div', { class: 'list-row' }, avatar, h('div', { class: 'grow', style: { minWidth: 0 } }, name, h('div', { class: 'secondary ellipsis' }, item.reason ? `Reason: ${item.reason}` : 'No reason given')), h('button', { class: 'btn sm', onclick: () => Mod.unban(ctx, item.user.id, displayName(item.user)) }, icon('unlock'), 'Unban'));
+          }
+          // Through the bot (a slash command, the mod portal), the moderator is named in the reason.
+          const { reason, by, via } = ModLog.parseAuditReason(item.reason);
+          const kicker = by ? by.name : item.executor ? displayName(item.executor) : 'someone';
+          const [avatar, name] = who(item.user);
+          return h(
             'div',
             { class: 'list-row' },
-            h('img', { class: 'avatar', src: userAvatar(b.user, 64), width: 36, height: 36, alt: '', loading: 'lazy' }),
-            h('div', { class: 'grow', style: { minWidth: 0 } }, h('div', { class: 'primary ellipsis' }, displayName(b.user), h('span', { class: 'subtle', style: { fontWeight: 400 } }, `  @${b.user.username}`)), h('div', { class: 'secondary ellipsis' }, b.reason ? `Reason: ${b.reason}` : 'No reason given')),
-            h('button', { class: 'btn sm', onclick: () => Mod.unban(ctx, b.user.id, displayName(b.user)) }, icon('unlock'), 'Unban'),
-          ),
-        ),
+            avatar,
+            h(
+              'div',
+              { class: 'grow', style: { minWidth: 0 } },
+              name,
+              h('div', { class: 'secondary ellipsis' }, `Kicked by ${kicker}${via ? ` via ${via}` : ''} · ${fmtRelative(snowflakeDate(item.id))}`),
+              reason ? h('div', { class: 'audit-reason' }, h('span', { class: 'audit-reason-label' }, 'Reason'), h('span', null, reason)) : null,
+            ),
+            h('button', { class: 'btn sm', title: 'Ban them, for example if they come back', onclick: () => Mod.ban(ctx, item.user.id, displayName(item.user)) }, icon('ban'), 'Ban'),
+          );
+        }),
       );
     };
     draw();
+    const show = (which) => {
+      srv.modList = which;
+      ctx.rerender();
+    };
+    const count = (list) => (list ? ` (${list.length}${list.length === 100 && kicks ? '+' : ''})` : '');
     return h(
       'div',
       { class: 'card flush' },
       h(
         'div',
         { class: 'card-head', style: { padding: '16px 16px 0' } },
-        icon('ban'),
-        h('h3', null, `Bans${srv.bans ? ` (${srv.bans.length})` : ''}`),
-        h('button', { class: 'btn sm', onclick: () => { srv.bans = null; ModerationTab.loadBans(ctx); ctx.rerender(); } }, icon('refresh'), 'Reload'),
+        h('div', { class: 'seg' }, h('button', { type: 'button', class: `seg-btn ${kicks ? '' : 'active'}`, onclick: () => show('bans') }, icon('ban'), `Bans${count(srv.bans)}`), h('button', { type: 'button', class: `seg-btn ${kicks ? 'active' : ''}`, onclick: () => show('kicks') }, icon('kick'), `Kicks${count(srv.kicks)}`)),
+        h('div', { class: 'grow' }),
+        h('button', { class: 'btn sm', onclick: () => { if (kicks) { srv.kicks = null; srv.kicksError = null; ModerationTab.loadKicks(ctx); } else { srv.bans = null; srv.bansError = null; ModerationTab.loadBans(ctx); } ctx.rerender(); } }, icon('refresh'), 'Reload'),
       ),
-      h('div', { style: { padding: '0 16px 12px' } }, searchBox('Search bans…', (q) => { query = q; draw(); })),
+      h('div', { style: { padding: '0 16px 12px' } }, searchBox(kicks ? 'Search kicks…' : 'Search bans…', (q) => { query = q; draw(); })),
+      kicks ? h('p', { class: 'subtle', style: { fontSize: 'calc(12rem / 14)', margin: '-4px 16px 10px' } }, 'From the audit log, which Discord keeps for 45 days.') : null,
       h('div', { style: { borderTop: '1px solid var(--border)' } }, listHost),
     );
   },

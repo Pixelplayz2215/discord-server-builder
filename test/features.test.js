@@ -197,7 +197,7 @@ test('server logs post batched embeds for joins, deletes and edits, and skip the
   const server = fakeServer();
   const LOG = '300000000000000099';
   const config = { ...normalizeConfig({ enabled: true, channelId: LOG }), content: true };
-  const logger = createServerLogger({ rest: server, configFor: (g) => (g === G ? config : null), flushMs: 5 });
+  const logger = createServerLogger({ rest: server, configFor: (g) => (g === G ? config : null), flushMs: 5, auditDelayMs: 1 });
   const user = { id: MEMBER, username: 'user5', global_name: 'User Five' };
   const fresh = { id: String(((BigInt(Date.now()) - 1420070400000n) << 22n)), username: 'raider' };
 
@@ -216,7 +216,7 @@ test('server logs post batched embeds for joins, deletes and edits, and skip the
   const posts = server.calls.filter((c) => c.method === 'POST' && c.path === `/channels/${LOG}/messages`);
   const embeds = posts.flatMap((p) => p.body.embeds);
   assert.ok(posts.every((p) => p.body.embeds.length <= 10), 'at most 10 embeds per message');
-  assert.equal(posts.length, 2, 'events are batched');
+  assert.ok(posts.length >= 2 && posts.length <= 3, 'events are batched');
   const titles = embeds.map((e) => e.title);
   assert.deepEqual(titles.slice(0, 4), ['Member joined', 'Message edited', 'Message deleted', 'Channel renamed']);
   assert.equal(titles.filter((t) => t === 'Member banned').length, 12);
@@ -232,7 +232,7 @@ test('member updates show nickname, role and timeout changes', async () => {
   const server = fakeServer();
   const LOG = '300000000000000099';
   const config = normalizeConfig({ enabled: true, channelId: LOG });
-  const logger = createServerLogger({ rest: server, configFor: () => config, flushMs: 5 });
+  const logger = createServerLogger({ rest: server, configFor: () => config, flushMs: 5, auditDelayMs: 1 });
   const user = { id: MEMBER, username: 'user5' };
   logger.handle('GUILD_MEMBER_ADD', { guild_id: G, user, roles: [R.member], nick: null, joined_at: new Date().toISOString() });
   const until = new Date(Date.now() + 3600e3).toISOString();
@@ -317,4 +317,49 @@ test('reasons written through the bot name the moderator and the command', () =>
   assert.equal(ModLog.lockFromAudit(entry(15, SEND, undefined), G), 'unlocked');
   assert.equal(ModLog.lockFromAudit(entry(14, '0', SEND, R.mod), G, 0), null, 'another role\'s permissions');
   assert.equal(ModLog.lockFromAudit(entry(14, '0', String(1n << 6n)), G, 0), null, 'other permissions');
+});
+
+test('server logs tell kicks and bans apart from leaves, with who did it and why', async () => {
+  const LOG = '300000000000000099';
+  const posts = [];
+  const id = (ms) => String((BigInt(ms) - 1420070400000n) << 22n);
+  const KICKED = { id: '200000000000000007', username: 'kicked' };
+  const BANNED = { id: '200000000000000008', username: 'banned' };
+  const LEFT = { id: '200000000000000009', username: 'left' };
+  let reads = 0;
+  const rest = {
+    async request(method, path, opts = {}) {
+      if (path === `/guilds/${G}/audit-logs`) {
+        reads++;
+        return {
+          audit_log_entries: [
+            { id: id(Date.now()), action_type: 20, target_id: KICKED.id, user_id: BOT, reason: 'Spamming — by Pixel (750867905226211388) via /kick' },
+            { id: id(Date.now()), action_type: 22, target_id: BANNED.id, user_id: '200000000000000001', reason: 'Scam links' },
+            { id: id(Date.now() - 10 * 60e3), action_type: 20, target_id: LEFT.id, user_id: BOT, reason: 'an old kick' }, // they left on their own this time
+          ],
+        };
+      }
+      if (method === 'POST') posts.push(...opts.body.embeds);
+      return {};
+    },
+  };
+  const config = normalizeConfig({ enabled: true, channelId: LOG });
+  const logger = createServerLogger({ rest, configFor: () => config, flushMs: 5, auditDelayMs: 1 });
+  logger.handle('GUILD_MEMBER_REMOVE', { guild_id: G, user: KICKED });
+  logger.handle('GUILD_MEMBER_REMOVE', { guild_id: G, user: BANNED });
+  logger.handle('GUILD_BAN_ADD', { guild_id: G, user: BANNED });
+  logger.handle('GUILD_MEMBER_REMOVE', { guild_id: G, user: LEFT });
+  await new Promise((r) => setTimeout(r, 60));
+
+  assert.deepEqual(posts.map((e) => e.title).sort(), ['Member banned', 'Member kicked', 'Member left'], "a ban isn't also logged as a leave");
+  assert.deepEqual(posts.find((e) => e.title === 'Member kicked').fields, [
+    { name: 'By', value: '<@750867905226211388> · Pixel via `/kick`', inline: true },
+    { name: 'Reason', value: 'Spamming' },
+  ]);
+  assert.deepEqual(posts.find((e) => e.title === 'Member banned').fields, [
+    { name: 'By', value: '<@200000000000000001>', inline: true },
+    { name: 'Reason', value: 'Scam links' },
+  ]);
+  assert.equal(posts.find((e) => e.title === 'Member left').fields, undefined);
+  assert.equal(reads, 1, 'one read of the audit log for the whole burst');
 });

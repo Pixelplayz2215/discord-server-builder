@@ -11,7 +11,9 @@ const NEW_ACCOUNT_MS = 7 * 86400000;
 const FLUSH_MS = 2000;
 const AUDIT_DELAY_MS = 1500; // Discord writes the audit log entry a moment after the change
 const AUDIT_MAX_AGE_MS = 2 * 60000;
-const COLORS = { join: 0x0bbfbc, leave: 0x8a80a3, ban: 0xfc354c, unban: 0x0bbfbc, member: 0x7f8cf0, delete: 0xfc8a35, edit: 0xf5a623, server: 0x5865f2 };
+const COLORS = { join: 0x0bbfbc, leave: 0x8a80a3, kick: 0xfc8a35, ban: 0xfc354c, unban: 0x0bbfbc, member: 0x7f8cf0, delete: 0xfc8a35, edit: 0xf5a623, server: 0x5865f2 };
+const AUDIT = { KICK: 20, BAN: 22, UNBAN: 23 };
+const AUDIT_REUSE_MS = 1000; // one read of the audit log serves a burst of events (a raid's bans)
 
 const snowflakeTime = (id) => Number((BigInt(id) >> 22n) + 1420070400000n);
 const stamp = (ms, style = 'R') => `<t:${Math.floor(ms / 1000)}:${style}>`;
@@ -113,24 +115,49 @@ function createServerLogger({ rest, configFor, onError = () => {}, flushMs = FLU
     return lines;
   }
 
-  // A channel was locked or unlocked: who did it and why come from the audit log (when the bot may
-  // read it). Commands through the bot name the real moderator and the command in the reason.
+  // Who did something and why come from the audit log (when the bot may read it): the newest entry
+  // matching match(entry) from the last two minutes, or null.
+  const auditReads = new Map(); // guild id -> { at, entries }
+  async function recentAudit(guildId, match) {
+    await new Promise((r) => setTimeout(r, auditDelayMs));
+    let read = auditReads.get(guildId);
+    if (!read || Date.now() - read.at > AUDIT_REUSE_MS) {
+      read = { at: Date.now(), entries: rest.request('GET', `/guilds/${guildId}/audit-logs`, { query: { limit: 50 } }).then((log) => log?.audit_log_entries || []).catch(() => []) };
+      auditReads.set(guildId, read);
+    }
+    return (await read.entries).find((e) => Date.now() - snowflakeTime(e.id) < AUDIT_MAX_AGE_MS && match(e)) || null;
+  }
+
+  // Commands through the bot name the real moderator and the command in the reason.
+  function byAndWhy(entry) {
+    if (!entry) return [];
+    const { reason, by, via } = parseAuditReason(entry.reason);
+    return [
+      { name: 'By', value: by ? `<@${by.id}> · ${escape(by.name)} via \`${via}\`` : `<@${entry.user_id}>`, inline: true },
+      { name: 'Reason', value: reason ? clip(reason, 1024) : '*No reason given*' },
+    ];
+  }
+
   async function logLock(guildId, channel, locked) {
-    let found = null;
-    try {
-      await new Promise((r) => setTimeout(r, auditDelayMs));
-      const log = await rest.request('GET', `/guilds/${guildId}/audit-logs`, { query: { limit: 10 } });
-      found = (log.audit_log_entries || []).find((e) => e.target_id === channel.id && Date.now() - snowflakeTime(e.id) < AUDIT_MAX_AGE_MS && lockFromAudit(e, guildId, channel.type) === (locked ? 'locked' : 'unlocked'));
-    } catch {
-      // no View Audit Log permission: log it without who and why
-    }
-    const fields = [];
-    if (found) {
-      const { reason, by, via } = parseAuditReason(found.reason);
-      fields.push({ name: 'By', value: by ? `<@${by.id}> · ${escape(by.name)} via \`${via}\`` : `<@${found.user_id}>`, inline: true });
-      fields.push({ name: 'Reason', value: reason ? clip(reason, 1024) : '*No reason given*' });
-    }
-    post(guildId, { title: locked ? '🔒 Channel locked' : '🔓 Channel unlocked', color: locked ? COLORS.ban : COLORS.unban, description: `<#${channel.id}> · ${escape(channel.name)}`, fields });
+    const found = await recentAudit(guildId, (e) => e.target_id === channel.id && lockFromAudit(e, guildId, channel.type) === (locked ? 'locked' : 'unlocked'));
+    post(guildId, { title: locked ? '🔒 Channel locked' : '🔓 Channel unlocked', color: locked ? COLORS.ban : COLORS.unban, description: `<#${channel.id}> · ${escape(channel.name)}`, fields: byAndWhy(found) });
+  }
+
+  // Discord says "member left" for leaves, kicks and bans alike; the audit log tells them apart.
+  async function logLeave(guildId, user, before, on) {
+    const entry = await recentAudit(guildId, (e) => e.target_id === user.id && (e.action_type === AUDIT.KICK || e.action_type === AUDIT.BAN));
+    if (entry?.action_type === AUDIT.BAN && on.moderation) return; // logged as a ban
+    const lines = [userLine(user)];
+    if (before?.joinedAt) lines.push(`Joined ${stamp(Date.parse(before.joinedAt))}`);
+    if (before?.roles.length) lines.push(`**Roles:** ${before.roles.map((r) => `<@&${r}>`).join(' ')}`);
+    const thumbnail = avatarUrl(user) ? { url: avatarUrl(user) } : undefined;
+    if (entry?.action_type === AUDIT.KICK) post(guildId, { title: 'Member kicked', color: COLORS.kick, description: lines.join('\n'), thumbnail, fields: byAndWhy(entry) });
+    else if (on.members) post(guildId, { title: 'Member left', color: COLORS.leave, description: lines.join('\n'), thumbnail });
+  }
+
+  async function logBan(guildId, user, banned) {
+    const entry = await recentAudit(guildId, (e) => e.target_id === user.id && e.action_type === (banned ? AUDIT.BAN : AUDIT.UNBAN));
+    post(guildId, { title: banned ? 'Member banned' : 'Member unbanned', color: banned ? COLORS.ban : COLORS.unban, description: userLine(user), fields: byAndWhy(entry) });
   }
 
   function handle(type, d) {
@@ -208,11 +235,7 @@ function createServerLogger({ rest, configFor, onError = () => {}, flushMs = FLU
       case 'GUILD_MEMBER_REMOVE': {
         const before = members.get(`${guildId}:${d.user.id}`);
         members.delete(`${guildId}:${d.user.id}`);
-        if (!on.members) break;
-        const lines = [userLine(d.user)];
-        if (before?.joinedAt) lines.push(`Joined ${stamp(Date.parse(before.joinedAt))}`);
-        if (before?.roles.length) lines.push(`**Roles:** ${before.roles.map((r) => `<@&${r}>`).join(' ')}`);
-        post(guildId, { title: 'Member left', color: COLORS.leave, description: lines.join('\n'), thumbnail: avatarUrl(d.user) ? { url: avatarUrl(d.user) } : undefined });
+        if (on.members || on.moderation) logLeave(guildId, d.user, before, on).catch(() => {});
         break;
       }
 
@@ -230,10 +253,7 @@ function createServerLogger({ rest, configFor, onError = () => {}, flushMs = FLU
 
       case 'GUILD_BAN_ADD':
       case 'GUILD_BAN_REMOVE':
-        if (on.moderation) {
-          const ban = type === 'GUILD_BAN_ADD';
-          post(guildId, { title: ban ? 'Member banned' : 'Member unbanned', color: ban ? COLORS.ban : COLORS.unban, description: userLine(d.user) });
-        }
+        if (on.moderation) logBan(guildId, d.user, type === 'GUILD_BAN_ADD').catch(() => {});
         break;
 
       case 'CHANNEL_CREATE':
@@ -243,7 +263,7 @@ function createServerLogger({ rest, configFor, onError = () => {}, flushMs = FLU
         const locked = isLocked(d, guildId);
         if (type === 'CHANNEL_DELETE') channels.delete(d.id);
         else channels.set(d.id, { name: d.name, locked });
-        if (type === 'CHANNEL_UPDATE' && old && old.locked !== locked && on.moderation && d.type !== 4) logLock(guildId, d, locked);
+        if (type === 'CHANNEL_UPDATE' && old && old.locked !== locked && on.moderation && d.type !== 4) logLock(guildId, d, locked).catch(() => {});
         if (!on.server || (d.id === cfg.channelId && type !== 'CHANNEL_DELETE')) break;
         const kind = d.type === 4 ? 'Category' : 'Channel';
         if (type === 'CHANNEL_CREATE') post(guildId, { title: `${kind} created`, color: COLORS.server, description: `<#${d.id}> · ${escape(d.name)}` });

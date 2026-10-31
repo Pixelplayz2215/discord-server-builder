@@ -47,7 +47,7 @@ const POLICY = [
   { method: 'GET', path: /^\/guilds\/(?<g>\d{15,21})\/audit-logs$/, need: P.VIEW_AUDIT_LOG },
   { method: 'PATCH', path: /^\/channels\/(?<c>\d{15,21})$/, need: P.MANAGE_CHANNELS, body: { rate_limit_per_user: P.MANAGE_CHANNELS } },
 ];
-const QUERY_KEYS = new Set(['with_counts', 'limit', 'before', 'after']);
+const QUERY_KEYS = new Set(['with_counts', 'limit', 'before', 'after', 'action_type']);
 
 function createGuard(rest, { ttlMs = 30000 } = {}) {
   const cache = new Map();
