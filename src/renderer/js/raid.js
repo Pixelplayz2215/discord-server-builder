@@ -238,82 +238,17 @@ const RaidTab = {
           selected.size ? h('button', { class: 'btn sm ghost', onclick: () => { selected.clear(); ctx.rerender(); } }, 'Clear') : null,
           h('div', { class: 'grow' }),
           h('span', { class: 'subtle' }, `${selected.size} selected`),
-          action('Timeout', 'clock', PERM.MODERATE_MEMBERS, () => RaidTab.bulk(ctx, 'timeout')),
-          action('Kick', 'kick', PERM.KICK_MEMBERS, () => RaidTab.bulk(ctx, 'kick')),
-          action('Ban', 'ban', PERM.BAN_MEMBERS, () => RaidTab.bulk(ctx, 'ban')),
+          action('Timeout', 'clock', PERM.MODERATE_MEMBERS, () => Mod.bulk(ctx, 'timeout', selected, 'Raid cleanup')),
+          action('Kick', 'kick', PERM.KICK_MEMBERS, () => Mod.bulk(ctx, 'kick', selected, 'Raid cleanup')),
+          action('Ban', 'ban', PERM.BAN_MEMBERS, () => Mod.bulk(ctx, 'ban', selected, 'Raid cleanup')),
         ),
       ),
       h('div', { style: { borderTop: '1px solid var(--border)' } }, rows.length ? h('div', { class: 'list' }, rows) : h('div', { class: 'empty' }, icon('userPlus'), h('h3', null, 'Nobody matches'), h('p', null, 'Pick a longer time or turn a filter off.'))),
     );
   },
-
-  async bulk(ctx, kind) {
-    const { srv } = ctx;
-    const ids = [...srv.raidSelected];
-    const reason = Mod.reasonInput();
-    reason.value = 'Raid cleanup';
-    const extra = kind === 'ban' ? selectEl(BAN_DELETE_OPTIONS, '3600') : kind === 'timeout' ? selectEl(TIMEOUT_OPTIONS, '86400') : null;
-    const verb = { ban: 'Ban', kick: 'Kick', timeout: 'Time out' }[kind];
-    const ok = await openModal({
-      title: `${verb} ${ids.length} member${ids.length === 1 ? '' : 's'}?`,
-      body: [
-        h('p', null, kind === 'ban' ? 'They are removed and cannot rejoin until unbanned.' : kind === 'kick' ? 'They can rejoin with a new invite.' : 'They cannot chat, react or join voice until the timeout ends.'),
-        extra ? field(kind === 'ban' ? 'Message history' : 'Duration', extra) : null,
-        field('Reason', reason),
-      ],
-      actions: [{ label: 'Cancel', kind: 'ghost', value: false }, { label: verb, kind: 'danger', value: true }],
-    });
-    if (!ok) return;
-
-    const progress = h('div', { class: 'progress' }, h('div'));
-    const note = h('div', { class: 'progress-note' }, 'Starting…');
-    const update = (done) => {
-      progress.firstChild.style.width = `${Math.round((done / ids.length) * 100)}%`;
-      note.textContent = `${done} of ${ids.length} done`;
-    };
-    const running = openModal({ title: `${verb}ing ${ids.length} member${ids.length === 1 ? '' : 's'}…`, dismissable: false, body: [progress, note] });
-    const modal = document.querySelector('#modal-root .modal-backdrop:last-child .modal');
-
-    let done = [];
-    let failed = 0;
-    try {
-      if (kind === 'ban') {
-        RaidTab.progress = { botId: ctx.botId, guildId: ctx.guildId, update };
-        const result = await api('raid:ban', ctx.botId, ctx.guildId, ids, Number(extra.value), reason.value);
-        done = result.banned;
-        failed = result.failed.length;
-      } else {
-        for (const [i, id] of ids.entries()) {
-          try {
-            if (kind === 'kick') await rest(ctx.botId, 'DELETE', `/guilds/${ctx.guildId}/members/${id}`, { reason: reason.value, noCase: true });
-            else await rest(ctx.botId, 'PATCH', `/guilds/${ctx.guildId}/members/${id}`, { body: { communication_disabled_until: new Date(Date.now() + Number(extra.value) * 1000).toISOString() }, reason: reason.value, noCase: true });
-            done.push(id);
-          } catch {
-            failed++;
-          }
-          update(i + 1);
-        }
-      }
-    } catch (err) {
-      toastError(err);
-    } finally {
-      RaidTab.progress = null;
-      modal?.closeModal();
-      await running;
-    }
-    for (const id of done) {
-      if (kind === 'timeout') Mod.updateMember(ctx, id, { communication_disabled_until: new Date(Date.now() + Number(extra.value) * 1000).toISOString() });
-      else Mod.dropMember(ctx, id);
-      srv.raidSelected.delete(id);
-    }
-    if (kind === 'ban') delete srv.bans;
-    const past = { ban: 'Banned', kick: 'Kicked', timeout: 'Timed out' }[kind];
-    if (done.length || failed) toast(`${past} ${done.length}${failed ? `, ${failed} failed (they may rank above the bot${ctx.mod ? ' or you' : ''})` : ''}`, failed ? 'error' : 'ok');
-    ctx.rerender();
-  },
 };
 
 onEvent('raid:progress', ({ botId, guildId, done }) => {
-  const p = RaidTab.progress;
+  const p = Mod.progress;
   if (p && p.botId === botId && p.guildId === guildId) p.update(done);
 });

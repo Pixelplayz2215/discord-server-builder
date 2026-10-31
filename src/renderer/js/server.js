@@ -219,6 +219,9 @@ const ServerPage = {
 
 const roleChip = (role) => h('span', { class: 'chip', title: role.name }, h('span', { class: 'dot', style: { background: roleColor(role) } }), h('span', null, role.name));
 
+// The Select / Done button that turns picking several at once on and off (picks: a Set while on).
+const pickToggle = (picks, title, toggle) => h('button', { class: `btn sm ${picks ? 'teal' : ''}`, title, onclick: toggle }, icon(picks ? 'check' : 'select'), picks ? 'Done' : 'Select');
+
 /* ======================= Overview ======================= */
 const OverviewTab = {
   render(ctx, el) {
@@ -328,31 +331,99 @@ const OverviewTab = {
     const { srv } = ctx;
     const top = ServerPage.botTopPosition(ctx);
     const roles = srv.roles.filter((r) => r.id !== srv.guild.id).sort((a, b) => b.position - a.position);
+    const manageable = (role) => !role.managed && role.position < top;
+    // Picking several: owners only, and only roles the bot can manage.
+    const picks = ctx.mod ? null : srv.rolePicks;
+    if (picks) for (const id of picks) if (!roles.some((r) => r.id === id && manageable(r))) picks.delete(id);
     const addBtn = ctx.mod ? null : h('button', { class: 'btn sm', onclick: () => OverviewTab.createRole(ctx) }, icon('plus'), 'New role');
+    const pickBtn = ctx.mod ? null : pickToggle(picks, 'Pick several roles to clone or delete at once', () => { srv.rolePicks = picks ? null : new Set(); ctx.rerender(); });
+    const action = (label, ic, danger, run) => {
+      const btn = h('button', { class: `btn sm ${danger ? 'danger' : ''}`, disabled: !picks.size }, icon(ic), label);
+      btn.addEventListener('click', withBusy(btn, run));
+      return btn;
+    };
     return h(
       'div',
       { class: 'card flush' },
-      h('div', { class: 'card-head', style: { padding: '16px 16px 0' } }, icon('tag'), h('h3', null, `Roles (${roles.length})`), addBtn),
+      h('div', { class: 'card-head', style: { padding: '16px 16px 0' } }, icon('tag'), h('h3', null, `Roles (${roles.length})`), pickBtn, addBtn),
+      picks
+        ? Bulk.bar(picks, roles.filter(manageable).map((r) => r.id), ctx.rerender, [
+            action('Clone', 'copy', false, () => OverviewTab.cloneRoles(ctx, picks)),
+            action('Delete', 'trash', true, () => OverviewTab.deleteRoles(ctx, picks)),
+          ])
+        : null,
       h(
         'div',
         { class: 'list', style: { maxHeight: '360px', overflowY: 'auto' } },
         roles.map((role) => {
-          const manageable = !role.managed && role.position < top;
+          const can = manageable(role);
+          const toggle = () => {
+            if (picks.has(role.id)) picks.delete(role.id);
+            else picks.add(role.id);
+            ctx.rerender();
+          };
           return h(
             'div',
-            { class: 'list-row', style: { minHeight: '46px', padding: '6px 16px' } },
+            {
+              class: `list-row ${picks && can ? 'clickable' : ''} ${picks?.has(role.id) ? 'selected' : ''}`,
+              style: { minHeight: '46px', padding: '6px 16px' },
+              title: picks && !can ? 'The bot cannot manage this role' : '',
+              onclick: picks && can ? toggle : null,
+            },
+            picks ? Bulk.box(picks.has(role.id), !can) : null,
             h('span', { class: 'dot', style: { width: '12px', height: '12px', borderRadius: '50%', background: roleColor(role), flexShrink: 0 } }),
             h('span', { class: 'grow ellipsis', style: { fontWeight: 500 } }, role.name),
             role.managed ? h('span', { class: 'badge peri' }, 'Integration') : null,
             BigInt(role.permissions) & PERM.ADMINISTRATOR ? h('span', { class: 'badge coral' }, 'Admin') : null,
             role.hoist ? h('span', { class: 'badge' }, 'Hoisted') : null,
-            ctx.mod
+            ctx.mod || picks
               ? null
-              : h('button', { class: 'icon-btn danger', title: manageable ? 'Delete role' : 'The bot cannot manage this role', disabled: !manageable, onclick: () => OverviewTab.deleteRole(ctx, role) }, icon('trash')),
+              : h('button', { class: 'icon-btn danger', title: can ? 'Delete role' : 'The bot cannot manage this role', disabled: !can, onclick: () => OverviewTab.deleteRole(ctx, role) }, icon('trash')),
           );
         }),
       ),
     );
+  },
+
+  // Copies each picked role (name, colour, permissions and settings) and puts the copy next to it.
+  async cloneRoles(ctx, picks) {
+    const { srv } = ctx;
+    // Bottom to top, so moving each copy up doesn't shift the roles still to do.
+    const roles = srv.roles.filter((r) => picks.has(r.id)).sort((a, b) => a.position - b.position);
+    const icons = srv.guild.features?.includes('ROLE_ICONS');
+    const reason = 'Cloned in Discord Server Builder';
+    const result = await Bulk.run(`Cloning ${roles.length} role${roles.length === 1 ? '' : 's'}…`, roles, async (role) => {
+      const body = { name: role.name, permissions: role.permissions, color: role.color, hoist: role.hoist, mentionable: role.mentionable };
+      if (icons && role.unicode_emoji) body.unicode_emoji = role.unicode_emoji;
+      const made = await rest(ctx.botId, 'POST', `/guilds/${ctx.guildId}/roles`, { body, reason });
+      // New roles start at the bottom: move it just under the original (where the bot is allowed to).
+      const now = (await rest(ctx.botId, 'GET', `/guilds/${ctx.guildId}/roles`)).find((r) => r.id === role.id);
+      if (now) await rest(ctx.botId, 'PATCH', `/guilds/${ctx.guildId}/roles`, { body: [{ id: made.id, position: Math.max(1, now.position - 1) }], reason }).catch(() => {});
+    });
+    srv.roles = await rest(ctx.botId, 'GET', `/guilds/${ctx.guildId}/roles`).catch(() => srv.roles);
+    picks.clear();
+    Bulk.report('Cloned', result);
+    ctx.rerender();
+  },
+
+  async deleteRoles(ctx, picks) {
+    const { srv } = ctx;
+    const roles = srv.roles.filter((r) => picks.has(r.id)).sort((a, b) => b.position - a.position);
+    const many = roles.length >= 5;
+    const ok = await confirmDialog({
+      title: `Delete ${roles.length} role${roles.length === 1 ? '' : 's'}?`,
+      message: `${Bulk.names(roles.map((r) => `@${r.name}`))}. Everyone loses ${roles.length === 1 ? 'this role' : 'these roles'}. This cannot be undone.`,
+      confirmLabel: 'Delete',
+      danger: true,
+      requireText: many ? 'delete' : undefined,
+    });
+    if (!ok) return;
+    const result = await Bulk.run(`Deleting ${roles.length} role${roles.length === 1 ? '' : 's'}…`, roles, (role) => rest(ctx.botId, 'DELETE', `/guilds/${ctx.guildId}/roles/${role.id}`, { reason: 'Deleted in Discord Server Builder' }));
+    const gone = new Set(result.done.map((r) => r.id));
+    srv.roles = srv.roles.filter((r) => !gone.has(r.id));
+    for (const id of gone) picks.delete(id);
+    Bulk.report('Deleted', result);
+    ctx.rerender();
   },
 
   async createRole(ctx) {
@@ -447,6 +518,7 @@ const OverviewTab = {
 
 /* ======================= Moderation actions (shared) ======================= */
 const Mod = {
+  progress: null, // a bulk ban under way: { botId, guildId, update(done) }
   reasonInput: () => h('input', { class: 'input', placeholder: 'Reason (shows in the audit log)', maxlength: 400 }),
 
   updateMember(ctx, userId, patch) {
@@ -635,6 +707,162 @@ const Mod = {
       toastError(err);
     }
   },
+
+  // Bans, kicks or times out the members in `picks` (a Set of user IDs, emptied as each is done).
+  // Not recorded as cases, so a cleanup doesn't flood #mod-cases; the audit log has them.
+  async bulk(ctx, kind, picks, defaultReason = '') {
+    const { srv } = ctx;
+    const ids = [...picks];
+    const reason = Mod.reasonInput();
+    reason.value = defaultReason;
+    const extra = kind === 'ban' ? selectEl(BAN_DELETE_OPTIONS, '3600') : kind === 'timeout' ? selectEl(TIMEOUT_OPTIONS, '86400') : null;
+    const verb = { ban: 'Ban', kick: 'Kick', timeout: 'Time out' }[kind];
+    const ok = await openModal({
+      title: `${verb} ${ids.length} member${ids.length === 1 ? '' : 's'}?`,
+      body: [
+        h('p', null, kind === 'ban' ? 'They are removed and cannot rejoin until unbanned.' : kind === 'kick' ? 'They can rejoin with a new invite.' : 'They cannot chat, react or join voice until the timeout ends.'),
+        extra ? field(kind === 'ban' ? 'Message history' : 'Duration', extra) : null,
+        field('Reason', reason),
+      ],
+      actions: [{ label: 'Cancel', kind: 'ghost', value: false }, { label: verb, kind: 'danger', value: true }],
+    });
+    if (!ok) return;
+
+    const progress = Bulk.progress(`${verb}ing ${ids.length} member${ids.length === 1 ? '' : 's'}…`);
+    let done = [];
+    let failed = 0;
+    try {
+      if (kind === 'ban') {
+        Mod.progress = { botId: ctx.botId, guildId: ctx.guildId, update: (n) => progress.update(n, ids.length) };
+        const result = await api('raid:ban', ctx.botId, ctx.guildId, ids, Number(extra.value), reason.value);
+        done = result.banned;
+        failed = result.failed.length;
+      } else {
+        for (const [i, id] of ids.entries()) {
+          try {
+            if (kind === 'kick') await rest(ctx.botId, 'DELETE', `/guilds/${ctx.guildId}/members/${id}`, { reason: reason.value, noCase: true });
+            else await rest(ctx.botId, 'PATCH', `/guilds/${ctx.guildId}/members/${id}`, { body: { communication_disabled_until: new Date(Date.now() + Number(extra.value) * 1000).toISOString() }, reason: reason.value, noCase: true });
+            done.push(id);
+          } catch {
+            failed++;
+          }
+          progress.update(i + 1, ids.length);
+        }
+      }
+    } catch (err) {
+      toastError(err);
+    } finally {
+      Mod.progress = null;
+      await progress.close();
+    }
+    for (const id of done) {
+      if (kind === 'timeout') Mod.updateMember(ctx, id, { communication_disabled_until: new Date(Date.now() + Number(extra.value) * 1000).toISOString() });
+      else Mod.dropMember(ctx, id);
+      picks.delete(id);
+    }
+    if (kind === 'ban') delete srv.bans;
+    if (kind === 'kick') delete srv.kicks;
+    const past = { ban: 'Banned', kick: 'Kicked', timeout: 'Timed out' }[kind];
+    if (done.length || failed) toast(`${past} ${done.length}${failed ? `, ${failed} failed (they may rank above the bot${ctx.mod ? ' or you' : ''})` : ''}`, failed ? 'error' : 'ok');
+    ctx.rerender();
+  },
+
+  // Gives or takes one role from the members in `picks`.
+  async bulkRole(ctx, picks, roles, give) {
+    const role = selectEl(roles.map((r) => [r.id, r.name]), roles[0]?.id || '');
+    const ids = [...picks];
+    const ok = await openModal({
+      title: `${give ? 'Give a role to' : 'Take a role from'} ${ids.length} member${ids.length === 1 ? '' : 's'}`,
+      body: [field('Role', role)],
+      actions: [{ label: 'Cancel', kind: 'ghost', value: false }, { label: give ? 'Give role' : 'Take role', kind: 'primary', icon: 'tag', value: true }],
+    });
+    if (!ok || !role.value) return;
+    const roleId = role.value;
+    const name = `@${role.selectedOptions[0].textContent}`;
+    const members = ids.map((id) => MembersTab.findMember(ctx, id)).filter((m) => m && m.roles.includes(roleId) !== give);
+    const result = await Bulk.run(`${give ? 'Giving' : 'Taking'} ${name}…`, members, (m) =>
+      rest(ctx.botId, give ? 'PUT' : 'DELETE', `/guilds/${ctx.guildId}/members/${m.user.id}/roles/${roleId}`, { reason: 'Roles changed in Discord Server Builder' }),
+    );
+    for (const m of result.done) Mod.updateMember(ctx, m.user.id, { roles: give ? [...m.roles, roleId] : m.roles.filter((r) => r !== roleId) });
+    const skipped = ids.length - members.length;
+    Bulk.report(give ? `Gave ${name} to` : `Took ${name} from`, result, skipped ? `${skipped} already ${give ? 'had' : "didn't have"} it` : '');
+    ctx.rerender();
+  },
+};
+
+/* ======================= Doing one thing to many at once ======================= */
+const Bulk = {
+  // A progress dialog that can't be dismissed: update(done, total), then await close().
+  progress(title) {
+    const bar = h('div', { class: 'progress' }, h('div'));
+    const note = h('div', { class: 'progress-note' }, 'Starting…');
+    const running = openModal({ title, dismissable: false, body: [bar, note] });
+    const modal = document.querySelector('#modal-root .modal-backdrop:last-child .modal');
+    return {
+      update(done, total) {
+        bar.firstChild.style.width = `${Math.round((done / total) * 100)}%`;
+        note.textContent = `${done} of ${total} done`;
+      },
+      close() {
+        modal?.closeModal();
+        return running;
+      },
+    };
+  },
+
+  // Runs job(item) for each item, one at a time, with a progress dialog.
+  // Resolves to { done: [item], failed: [{ item, error }] }.
+  async run(title, items, job) {
+    const result = { done: [], failed: [] };
+    if (!items.length) return result;
+    const progress = Bulk.progress(title);
+    try {
+      for (const [i, item] of items.entries()) {
+        try {
+          await job(item);
+          result.done.push(item);
+        } catch (error) {
+          result.failed.push({ item, error });
+        }
+        progress.update(i + 1, items.length);
+      }
+    } finally {
+      await progress.close();
+    }
+    return result;
+  },
+
+  // "#a, #b, #c and 2 more"
+  names(list, max = 5) {
+    if (list.length <= max) return list.length > 1 ? `${list.slice(0, -1).join(', ')} and ${list.at(-1)}` : list[0] || '';
+    return `${list.slice(0, max).join(', ')} and ${list.length - max} more`;
+  },
+
+  // "Deleted 3, 1 failed: <why>" as a toast.
+  report(past, { done, failed }, extra = '') {
+    const parts = [`${past} ${done.length}`];
+    if (extra) parts.push(extra);
+    if (failed.length) parts.push(`${failed.length} failed: ${failed[0].error.message}`);
+    toast(parts.join(', '), failed.length ? 'error' : 'ok');
+  },
+
+  // The bar above a list while picking: how many are picked, Select all, Clear, then the actions.
+  bar(picks, all, redraw, actions) {
+    return h(
+      'div',
+      { class: 'bulk-bar' },
+      h('b', null, `${picks.size} selected`),
+      h('button', { class: 'btn sm ghost', disabled: !all.length || all.every((id) => picks.has(id)), onclick: () => { for (const id of all) picks.add(id); redraw(); } }, `Select all${all.length > 1 ? ` ${fmtNum(all.length)}` : ''}`),
+      picks.size ? h('button', { class: 'btn sm ghost', onclick: () => { picks.clear(); redraw(); } }, 'Clear') : null,
+      h('div', { class: 'grow' }),
+      actions,
+    );
+  },
+
+  // A checkbox for a row while picking (the row itself toggles it too).
+  box(checked, disabled = false) {
+    return h('span', { class: 'check-row' }, h('input', { type: 'checkbox', checked, disabled, tabindex: -1, style: { pointerEvents: 'none' } }));
+  },
 };
 
 /* ======================= Cases (#mod-cases) ======================= */
@@ -767,6 +995,11 @@ const MembersTab = {
         searchBox('Search name, nickname or ID…', (q) => { srv.memberQuery = q; srv.memberLimit = 200; draw(); }, srv.memberQuery),
         h('div', { style: { width: '200px' } }, selectEl(roleOptions, srv.memberRole, (v) => { srv.memberRole = v; srv.memberLimit = 200; draw(); })),
         h('div', { class: 'grow' }),
+        pickToggle(srv.memberPicks, 'Pick several members to time out, kick, ban or give a role to at once', () => {
+          srv.memberPicks = srv.memberPicks ? null : new Set();
+          srv.selectedMemberId = null;
+          ctx.rerender();
+        }),
         h('button', { class: 'btn sm', onclick: () => MembersTab.lookup(ctx) }, icon('search'), 'Look up by ID'),
         reload,
       ),
@@ -792,15 +1025,20 @@ const MembersTab = {
 
     const list = MembersTab.filtered(ctx);
     const shown = list.slice(0, srv.memberLimit);
-    const selected = MembersTab.findMember(ctx, srv.selectedMemberId);
+    const picks = srv.memberPicks;
+    const selected = picks ? null : MembersTab.findMember(ctx, srv.selectedMemberId);
     const select = (id) => {
-      srv.selectedMemberId = srv.selectedMemberId === id ? null : id;
+      if (picks) {
+        if (picks.has(id)) picks.delete(id);
+        else picks.add(id);
+      } else srv.selectedMemberId = srv.selectedMemberId === id ? null : id;
       draw();
     };
 
     const listCard = h(
       'div',
       { class: 'card flush' },
+      picks ? MembersTab.bulkBar(ctx, picks, list, draw) : null,
       h(
         'div',
         { class: 'list-head' },
@@ -826,6 +1064,36 @@ const MembersTab = {
     return ctx.srv.members?.find((m) => m.user.id === id) || ctx.srv.lookups?.[id] || null;
   },
 
+  // Roles the bot (or a moderator, below their own highest role) can give and take.
+  assignable(ctx) {
+    const { srv } = ctx;
+    const top = ServerPage.botTopPosition(ctx);
+    // For moderators, `top` is their own highest role; without Manage Roles they can't change any.
+    if (ctx.mod && !ServerPage.can(ServerPage.perms(ctx), PERM.MANAGE_ROLES)) return [];
+    return srv.roles.filter((r) => r.id !== srv.guild.id && !r.managed && r.position < top).sort((a, b) => b.position - a.position);
+  },
+
+  // While picking: what can be done to the picked members.
+  bulkBar(ctx, picks, list, draw) {
+    const { srv } = ctx;
+    const perms = ServerPage.perms(ctx);
+    const assignable = MembersTab.assignable(ctx);
+    // Select all skips the owner and the bot (or the moderator) itself; up to 1,000 at a time.
+    const all = list.filter((m) => m.user.id !== srv.guild.owner_id && m.user.id !== ctx.botId).slice(0, 1000).map((m) => m.user.id);
+    const action = (label, ic, allowed, run, danger) => {
+      const btn = h('button', { class: `btn sm ${danger ? 'danger' : ''}`, disabled: !picks.size || !allowed, title: allowed ? '' : "You don't have the permission for this" }, icon(ic), label);
+      btn.addEventListener('click', withBusy(btn, run));
+      return btn;
+    };
+    return Bulk.bar(picks, all, draw, [
+      assignable.length ? action('Give role', 'tag', true, () => Mod.bulkRole(ctx, picks, assignable, true)) : null,
+      assignable.length ? action('Take role', 'tag', true, () => Mod.bulkRole(ctx, picks, assignable, false)) : null,
+      action('Timeout', 'clock', ServerPage.can(perms, PERM.MODERATE_MEMBERS), () => Mod.bulk(ctx, 'timeout', picks)),
+      action('Kick', 'kick', ServerPage.can(perms, PERM.KICK_MEMBERS), () => Mod.bulk(ctx, 'kick', picks), true),
+      action('Ban', 'ban', ServerPage.can(perms, PERM.BAN_MEMBERS), () => Mod.bulk(ctx, 'ban', picks), true),
+    ]);
+  },
+
   memberName: (m) => m.nick || displayName(m.user),
   timedOut: (m) => m.communication_disabled_until && new Date(m.communication_disabled_until) > new Date(),
 
@@ -837,9 +1105,12 @@ const MembersTab = {
       e.stopPropagation();
       fn();
     };
+    const picks = ctx.srv.memberPicks;
+    const on = picks ? picks.has(m.user.id) : ctx.srv.selectedMemberId === m.user.id;
     return h(
       'div',
-      { class: `list-row clickable ${ctx.srv.selectedMemberId === m.user.id ? 'selected' : ''}`, onclick: () => select(m.user.id) },
+      { class: `list-row clickable ${on ? 'selected' : ''}`, onclick: () => select(m.user.id) },
+      picks ? Bulk.box(on) : null,
       h('img', { class: 'avatar', src: memberAvatar(ctx.guildId, m, 64), width: 36, height: 36, alt: '', loading: 'lazy' }),
       h(
         'div',
@@ -869,10 +1140,7 @@ const MembersTab = {
   panel(ctx, m, close) {
     const { srv } = ctx;
     const name = MembersTab.memberName(m);
-    const top = ServerPage.botTopPosition(ctx);
-    // For moderators, `top` is their own highest role; without Manage Roles they can't change any.
-    const canAssign = !ctx.mod || ServerPage.can(ServerPage.perms(ctx), PERM.MANAGE_ROLES);
-    const assignable = canAssign ? srv.roles.filter((r) => r.id !== srv.guild.id && !r.managed && r.position < top).sort((a, b) => b.position - a.position) : [];
+    const assignable = MembersTab.assignable(ctx);
     const locked = ServerPage.memberRoles(ctx, m).filter((r) => !assignable.includes(r));
     const timedOut = MembersTab.timedOut(m);
 
@@ -1200,9 +1468,24 @@ const ChannelsTab = {
 
   render(ctx, el) {
     const { srv } = ctx;
-    const selected = srv.channels.find((c) => c.id === srv.selectedChannelId);
+    const picks = srv.channelPicks;
+    if (picks) for (const id of picks) if (!srv.channels.some((c) => c.id === id)) picks.delete(id);
+    const selected = picks ? null : srv.channels.find((c) => c.id === srv.selectedChannelId);
+    const isOn = (id) => (picks ? picks.has(id) : srv.selectedChannelId === id);
     const select = (id) => {
-      srv.selectedChannelId = id;
+      if (!picks) srv.selectedChannelId = id;
+      else if (picks.has(id)) picks.delete(id);
+      else picks.add(id);
+      ctx.rerender();
+    };
+    // Picking a category picks (or unpicks) its channels with it.
+    const selectCategory = (cat) => {
+      if (!picks) return select(cat.id);
+      const on = !picks.has(cat.id);
+      for (const c of [cat, ...srv.channels.filter((x) => x.parent_id === cat.id)]) {
+        if (on) picks.add(c.id);
+        else picks.delete(c.id);
+      }
       ctx.rerender();
     };
     const reload = h('button', { class: 'btn sm' }, icon('refresh'), 'Reload');
@@ -1224,8 +1507,8 @@ const ChannelsTab = {
           group.category
             ? h(
                 'div',
-                { class: `channel-group-title ${srv.selectedChannelId === group.category.id ? 'selected' : ''}`, style: { cursor: 'pointer' }, onclick: () => select(group.category.id) },
-                icon('chevronDown'),
+                { class: `channel-group-title ${isOn(group.category.id) ? 'selected' : ''}`, style: { cursor: 'pointer' }, onclick: () => selectCategory(group.category) },
+                picks ? Bulk.box(picks.has(group.category.id)) : icon('chevronDown'),
                 group.category.name,
                 ChannelsTab.isPrivate(ctx, group.category) ? icon('eyeOff') : null,
               )
@@ -1233,7 +1516,8 @@ const ChannelsTab = {
           group.channels.map((ch) =>
             h(
               'div',
-              { class: `channel-row ${srv.selectedChannelId === ch.id ? 'selected' : ''}`, onclick: () => select(ch.id) },
+              { class: `channel-row ${isOn(ch.id) ? 'selected' : ''}`, onclick: () => select(ch.id) },
+              picks ? Bulk.box(picks.has(ch.id)) : null,
               icon(CHANNEL_ICON[ch.type] || 'hash', 'type'),
               h('span', { class: 'ellipsis' }, ch.name),
               h(
@@ -1256,6 +1540,10 @@ const ChannelsTab = {
         { class: 'toolbar' },
         h('span', { class: 'muted' }, `${srv.channels.filter((c) => c.type !== 4).length} channels in ${srv.channels.filter((c) => c.type === 4).length} categories`),
         h('div', { class: 'grow' }),
+        pickToggle(picks, ctx.mod ? 'Pick several channels to lock or set slowmode on at once' : 'Pick several channels to clone, move, lock or delete at once', () => {
+          srv.channelPicks = picks ? null : new Set();
+          ctx.rerender();
+        }),
         ctx.mod ? null : h('button', { class: 'btn sm teal', onclick: () => ChannelsTab.create(ctx) }, icon('plus'), 'New channel'),
         reload,
       ),
@@ -1266,12 +1554,148 @@ const ChannelsTab = {
         h(
           'div',
           { class: 'sticky' },
-          selected
-            ? ChannelsTab.panel(ctx, selected)
-            : h('div', { class: 'card empty' }, icon('hash'), h('h3', null, 'Pick a channel'), h('p', null, 'Send messages, purge, lock, set slowmode, rename or delete.')),
+          picks
+            ? ChannelsTab.bulkPanel(ctx, picks)
+            : selected
+              ? ChannelsTab.panel(ctx, selected)
+              : h('div', { class: 'card empty' }, icon('hash'), h('h3', null, 'Pick a channel'), h('p', null, 'Send messages, purge, lock, set slowmode, rename or delete. To do something to several at once, press Select.')),
         ),
       ),
     );
+  },
+
+  // While picking: what can be done to the picked channels and categories.
+  bulkPanel(ctx, picks) {
+    const { srv } = ctx;
+    const picked = srv.channels.filter((c) => picks.has(c.id));
+    const channels = picked.filter((c) => c.type !== 4);
+    const categories = picked.filter((c) => c.type === 4);
+    const all = srv.channels.map((c) => c.id);
+    const action = (label, ic, cls, run, disabled = false) => {
+      const btn = h('button', { class: `btn sm ${cls}`, disabled }, icon(ic), label);
+      btn.addEventListener('click', withBusy(btn, run));
+      return btn;
+    };
+    const sections = [];
+    const section = (label, hint, ...controls) => h('div', { class: 'stack', style: { gap: '8px' } }, h('div', null, h('div', { class: 'label' }, label), hint ? h('div', { class: 'subtle', style: { fontSize: 'calc(12rem / 14)' } }, hint) : null), h('div', { class: 'row wrap' }, controls));
+
+    sections.push(
+      section(
+        'Lock',
+        'Stops @everyone sending messages (or joining voice). The bot tells members in each channel.',
+        action('Lock', 'lock', '', () => ChannelsTab.bulkLock(ctx, channels, true), !channels.length),
+        action('Unlock', 'unlock', 'teal', () => ChannelsTab.bulkLock(ctx, channels, false), !channels.length),
+      ),
+    );
+    const slowable = channels.filter((c) => [0, 15].includes(c.type));
+    const slow = selectEl(SLOWMODE_OPTIONS, '0');
+    sections.push(section('Slowmode', slowable.length ? `For the ${slowable.length} text and forum channel${slowable.length === 1 ? '' : 's'} picked.` : 'Pick text or forum channels.', h('div', { style: { width: '120px' } }, slow), action('Set', 'clock', '', () => ChannelsTab.bulkSlowmode(ctx, slowable, Number(slow.value)), !slowable.length)));
+
+    if (!ctx.mod) {
+      const others = srv.channels.filter((c) => c.type === 4 && !picks.has(c.id)).sort((a, b) => a.position - b.position);
+      const parent = selectEl([['', 'No category'], ...others.map((c) => [c.id, c.name])], '');
+      sections.push(section('Move', 'Into a category, keeping their permissions.', h('div', { class: 'grow', style: { minWidth: '140px' } }, parent), action('Move', 'folder', '', () => ChannelsTab.bulkMove(ctx, channels, parent.value), !channels.length)));
+      sections.push(section('Clone', 'Copies each one with its settings and permissions. A picked category is copied with the picked channels in it.', action('Clone', 'copy', '', () => ChannelsTab.bulkClone(ctx, picks), !picked.length)));
+      sections.push(h('div', { class: 'row', style: { justifyContent: 'flex-end' } }, action(`Delete ${picked.length || ''}`.trim(), 'trash', 'danger', () => ChannelsTab.bulkDelete(ctx, picks), !picked.length)));
+    }
+
+    return h(
+      'div',
+      { class: 'card' },
+      h('div', { class: 'card-head' }, icon('select'), h('h3', { class: 'grow' }, picked.length ? `${ChannelsTab.count(picked)} picked` : 'Pick channels')),
+      h(
+        'div',
+        { class: 'row wrap', style: { marginTop: '-6px', marginBottom: '14px' } },
+        h('span', { class: 'subtle grow', style: { fontSize: 'calc(12rem / 14)' } }, 'Click channels on the left to pick them. Picking a category picks its channels too.'),
+        h('button', { class: 'btn sm ghost', disabled: all.every((id) => picks.has(id)), onclick: () => { for (const id of all) picks.add(id); ctx.rerender(); } }, 'Select all'),
+        picks.size ? h('button', { class: 'btn sm ghost', onclick: () => { picks.clear(); ctx.rerender(); } }, 'Clear') : null,
+      ),
+      h('div', { class: 'stack', style: { gap: '18px' } }, sections.flatMap((s, i) => (i ? [h('div', { style: { height: '1px', background: 'var(--border)' } }), s] : [s]))),
+    );
+  },
+
+  // "2 channels and 1 category"
+  count(list) {
+    const channels = list.filter((c) => c.type !== 4).length;
+    const categories = list.length - channels;
+    return [channels && `${channels} channel${channels === 1 ? '' : 's'}`, categories && `${categories} categor${categories === 1 ? 'y' : 'ies'}`].filter(Boolean).join(' and ');
+  },
+
+  async bulkLock(ctx, channels, lock) {
+    const todo = channels.filter((c) => ChannelsTab.isLocked(ctx, c) !== lock);
+    const result = await Bulk.run(`${lock ? 'Locking' : 'Unlocking'} ${todo.length} channel${todo.length === 1 ? '' : 's'}…`, todo, async (ch) => {
+      ChannelsTab.replaceChannel(ctx, await api('channel:lock', ctx.botId, ctx.guildId, ch.id, lock, 'Discord Server Builder', true));
+    });
+    const skipped = channels.length - todo.length;
+    Bulk.report(lock ? 'Locked' : 'Unlocked', result, skipped ? `${skipped} already ${lock ? 'locked' : 'unlocked'}` : '');
+    ctx.rerender();
+  },
+
+  async bulkSlowmode(ctx, channels, seconds) {
+    const result = await Bulk.run(`Setting slowmode on ${channels.length} channel${channels.length === 1 ? '' : 's'}…`, channels, async (ch) => {
+      ChannelsTab.replaceChannel(ctx, await rest(ctx.botId, 'PATCH', `/channels/${ch.id}`, { body: { rate_limit_per_user: seconds }, reason: 'Discord Server Builder' }));
+    });
+    Bulk.report(seconds ? 'Slowmode set on' : 'Slowmode turned off on', result);
+    ctx.rerender();
+  },
+
+  async bulkMove(ctx, channels, parentId) {
+    const todo = channels.filter((c) => (c.parent_id || '') !== parentId);
+    const result = await Bulk.run(`Moving ${todo.length} channel${todo.length === 1 ? '' : 's'}…`, todo, async (ch) => {
+      ChannelsTab.replaceChannel(ctx, await rest(ctx.botId, 'PATCH', `/channels/${ch.id}`, { body: { parent_id: parentId || null }, reason: 'Discord Server Builder' }));
+    });
+    Bulk.report('Moved', result);
+    ctx.rerender();
+  },
+
+  // What to send to make a copy of a channel: its settings and permission overwrites, next to it.
+  copyOf(ch, parentId) {
+    const keys = ['name', 'type', 'position', 'topic', 'nsfw', 'rate_limit_per_user', 'bitrate', 'user_limit', 'rtc_region', 'video_quality_mode', 'default_auto_archive_duration', 'default_thread_rate_limit_per_user', 'default_reaction_emoji', 'default_sort_order', 'default_forum_layout'];
+    const body = {};
+    for (const key of keys) if (ch[key] != null) body[key] = ch[key];
+    body.permission_overwrites = (ch.permission_overwrites || []).map(({ id, type, allow, deny }) => ({ id, type, allow, deny }));
+    if (ch.available_tags?.length) body.available_tags = ch.available_tags.map(({ name, moderated, emoji_id, emoji_name }) => ({ name, moderated, emoji_id, emoji_name }));
+    if (ch.type !== 4 && parentId) body.parent_id = parentId;
+    return body;
+  },
+
+  async bulkClone(ctx, picks) {
+    const { srv } = ctx;
+    const order = (a, b) => isVoice(a.type) - isVoice(b.type) || a.position - b.position;
+    const picked = srv.channels.filter((c) => picks.has(c.id));
+    const categories = picked.filter((c) => c.type === 4).sort((a, b) => a.position - b.position);
+    const copied = new Set(categories.map((c) => c.id));
+    // Each picked category followed by its picked channels, then the other picked channels.
+    const jobs = [...categories.flatMap((cat) => [cat, ...picked.filter((c) => c.parent_id === cat.id).sort(order)]), ...picked.filter((c) => c.type !== 4 && !copied.has(c.parent_id)).sort(order)];
+    const copies = new Map(); // category id -> its copy's id
+    const result = await Bulk.run(`Cloning ${jobs.length}…`, jobs, async (ch) => {
+      const parent = copies.get(ch.parent_id) || ch.parent_id;
+      const made = await rest(ctx.botId, 'POST', `/guilds/${ctx.guildId}/channels`, { body: ChannelsTab.copyOf(ch, parent), reason: 'Cloned in Discord Server Builder' });
+      if (ch.type === 4) copies.set(ch.id, made.id);
+    });
+    srv.channels = await rest(ctx.botId, 'GET', `/guilds/${ctx.guildId}/channels`).catch(() => srv.channels);
+    picks.clear();
+    Bulk.report('Cloned', result);
+    ctx.rerender();
+  },
+
+  async bulkDelete(ctx, picks) {
+    const { srv } = ctx;
+    // Channels first, then the categories they were in.
+    const picked = srv.channels.filter((c) => picks.has(c.id)).sort((a, b) => (a.type === 4) - (b.type === 4));
+    const left = picked.filter((c) => c.type === 4).reduce((n, cat) => n + srv.channels.filter((c) => c.parent_id === cat.id && !picks.has(c.id)).length, 0);
+    const ok = await confirmDialog({
+      title: `Delete ${ChannelsTab.count(picked)}?`,
+      message: `${Bulk.names(picked.map((c) => (c.type === 4 ? c.name.toUpperCase() : `#${c.name}`)))}. ${left ? `${left} channel${left === 1 ? '' : 's'} not picked stay, outside any category. ` : ''}This cannot be undone.`,
+      confirmLabel: 'Delete',
+      danger: true,
+      requireText: picked.length >= 5 ? 'delete' : undefined,
+    });
+    if (!ok) return;
+    const result = await Bulk.run(`Deleting ${ChannelsTab.count(picked)}…`, picked, (ch) => rest(ctx.botId, 'DELETE', `/channels/${ch.id}`, { reason: 'Deleted in Discord Server Builder' }));
+    ChannelsTab.forget(ctx, result.done.map((c) => c.id));
+    Bulk.report('Deleted', result);
+    ctx.rerender();
   },
 
   replaceChannel(ctx, channel) {
@@ -1344,6 +1768,11 @@ const ChannelsTab = {
 
     // Renaming and deleting channels stay with the owner.
     if (!ctx.mod) sections.push(...ChannelsTab.ownerSections(ctx, ch, reason));
+    let deleteBtn = null;
+    if (!ctx.mod) {
+      deleteBtn = h('button', { class: 'btn sm danger', title: `Delete this ${ch.type === 4 ? 'category' : 'channel'}` }, icon('trash'), 'Delete');
+      deleteBtn.addEventListener('click', withBusy(deleteBtn, () => ChannelsTab.remove(ctx, ch)));
+    }
 
     return h(
       'div',
@@ -1354,6 +1783,7 @@ const ChannelsTab = {
         icon(CHANNEL_ICON[ch.type] || 'hash'),
         h('h3', { class: 'ellipsis' }, ch.name),
         h('span', { class: 'badge' }, CHANNEL_LABEL[ch.type] || 'Channel'),
+        deleteBtn,
       ),
       h(
         'div',
@@ -1388,21 +1818,27 @@ const ChannelsTab = {
       }),
     );
     sections.push(h('div', { class: 'stack', style: { gap: '8px' } }, h('div', { class: 'label' }, 'Edit'), nameInput, topicInput, h('div', { class: 'row', style: { justifyContent: 'flex-end' } }, saveBtn)));
-
-    const deleteBtn = h('button', { class: 'btn danger' }, icon('trash'), `Delete ${ch.type === 4 ? 'category' : 'channel'}`);
-    deleteBtn.addEventListener(
-      'click',
-      withBusy(deleteBtn, async () => {
-        if (!(await confirmDialog({ title: `Delete ${ch.name}?`, message: 'This cannot be undone.', confirmLabel: 'Delete', danger: true }))) return;
-        await rest(ctx.botId, 'DELETE', `/channels/${ch.id}`, { reason });
-        ctx.srv.channels = ctx.srv.channels.filter((c) => c.id !== ch.id);
-        ctx.srv.selectedChannelId = null;
-        toast(`Deleted ${ch.name}`);
-        ctx.rerender();
-      }),
-    );
-    sections.push(h('div', { class: 'row', style: { justifyContent: 'flex-end' } }, deleteBtn));
     return sections;
+  },
+
+  async remove(ctx, ch) {
+    const kind = ch.type === 4 ? 'category' : 'channel';
+    const inside = ch.type === 4 ? ctx.srv.channels.filter((c) => c.parent_id === ch.id).length : 0;
+    const message = `${inside ? `Its ${inside} channel${inside === 1 ? '' : 's'} stay, outside any category. ` : ''}This cannot be undone.`;
+    if (!(await confirmDialog({ title: `Delete the ${kind} ${ch.name}?`, message, confirmLabel: 'Delete', danger: true }))) return;
+    await rest(ctx.botId, 'DELETE', `/channels/${ch.id}`, { reason: 'Discord Server Builder' });
+    ChannelsTab.forget(ctx, [ch.id]);
+    toast(`Deleted ${ch.name}`);
+    ctx.rerender();
+  },
+
+  // Drops deleted channels from the list; a deleted category's channels end up outside any category.
+  forget(ctx, ids) {
+    const { srv } = ctx;
+    const gone = new Set(ids);
+    srv.channels = srv.channels.filter((c) => !gone.has(c.id)).map((c) => (gone.has(c.parent_id) ? { ...c, parent_id: null } : c));
+    if (gone.has(srv.selectedChannelId)) srv.selectedChannelId = null;
+    for (const id of gone) srv.channelPicks?.delete(id);
   },
 
   async create(ctx) {
