@@ -6,8 +6,11 @@ To release: add your changes as `- ` lines under **Unreleased**, then run `npm r
 
 ## Unreleased
 
+## 1.1.0 (2026-10-30)
+
 - **Server stats.** A new Server stats page (on the Community page) shows live counts as channels at the top of your server: members, users, bots, channels and roles. Name each counter however you like (put {count} where the number goes), show numbers in full or short (1.2K), and turn counters on or off. They're voice channels members can see but not join, and the bot updates them about every 5 minutes while the app is open or in the tray, which is as often as Discord lets a bot rename a channel. Users and Bots need the Server Members Intent.
 - **New versions are noticed right away.** The app now checks GitHub every few minutes while it runs, in the tray too, instead of only when it starts. A small popup says when a new version is out, and clicking it opens the usual update screen. In the tray, a Windows notification and an **Update to…** item in the tray menu do the same.
+
 ## 1.0.10 (2026-10-30)
 
 - **Tickets.** A new Tickets page posts a panel with your own text and an "open a ticket" button. Pressing it gives the member a private channel that only they, your support roles and admins can see, with your own message asking what they need. Staff press **Claim** to take the ticket, and **Close** asks for a reason, saves the whole conversation (images included) as a transcript in a private ticket log channel with a **View transcript** link, and deletes the channel. Open tickets and every transcript are listed in the app too. With slash commands on, your mod portal answers the buttons around the clock (update it first with **Sync fork**); otherwise the app does while it runs.
