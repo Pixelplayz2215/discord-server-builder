@@ -284,6 +284,7 @@ function presenceFor(botId) {
       pollsFor(botId).handle(type, data)?.catch?.(() => {});
       welcomerFor(botId).handle(type, data);
       autoRolesFor(botId).handle(type, data)?.catch?.(() => {});
+      statsFor(botId).handle(type, data);
       // Ticket buttons come here only when the bot has no interactions endpoint (no mod portal).
       if (type === 'INTERACTION_CREATE') answerInteraction(botId, data).catch(() => {});
       // Reconnected: hand out roles for reactions made while the bot was away, and redraw polls.
@@ -692,6 +693,8 @@ const statsEngines = new Map(); // botId -> stats engine
 const statsState = new Map(); // `${botId}:${guildId}` -> { counts, updatedAt, problem }
 
 const statsServers = (botId) => store.listGuildConfigs().filter(({ botId: b, config }) => b === botId && config.stats).map(({ guildId, config }) => ({ guildId, settings: config.stats }));
+// Bots and Users counters follow members joining and leaving.
+const countsMembers = (botId) => statsServers(botId).some(({ settings }) => stats.needsMembers(settings));
 
 function statsFor(botId) {
   if (!statsEngines.has(botId)) {
@@ -759,6 +762,7 @@ const alwaysTimers = new Map(); // botId -> pending save
 const alwaysSaves = new Map(); // botId -> the save running now
 const alwaysStatus = new Map(); // botId -> { status, error, checkedAt }
 const alwaysShown = new Map(); // botId -> the presence last shown for it
+const alwaysAway = new Map(); // botId -> { from, to, servers: { guildId: counts } }: what the portal did while the app was closed
 
 function alwaysOn(botId) {
   const bot = store.getBot(botId);
@@ -897,11 +901,26 @@ function mergeAlways(botId, status) {
   if (alertsChanged) send('social:changed', {});
 }
 
+// What the portal did while the app was closed: its running totals at the first answer after the
+// app starts, against the last ones the app saw (kept in bots.json as always.seen).
+function noteActivity(botId, status) {
+  const seen = store.getBot(botId).always?.seen || null;
+  const totals = {};
+  for (const [guildId, s] of Object.entries(status.servers || {})) if (s.on && s.state?.activity) totals[guildId] = s.state.activity;
+  if (!alwaysAway.has(botId)) {
+    const servers = {};
+    for (const [guildId, now] of Object.entries(totals)) if (seen?.totals?.[guildId]) servers[guildId] = always.activitySince(seen.totals[guildId], now);
+    alwaysAway.set(botId, seen ? { from: seen.at, to: Date.now(), servers } : null);
+  }
+  if (JSON.stringify(totals) !== JSON.stringify(seen?.totals || {})) store.updateBot(botId, { always: { ...store.getBot(botId).always, seen: { at: Date.now(), totals } } });
+}
+
 async function pullAlways(botId) {
   try {
     const status = await callPortal(botId, '/always/status');
     noteAlways(botId, status);
     mergeAlways(botId, status);
+    noteActivity(botId, status);
     return status;
   } catch (err) {
     noteAlways(botId, null, err);
@@ -933,6 +952,7 @@ async function alwaysReport(botId) {
   const s = alwaysStatus.get(botId);
   const names = await guildNames(botId);
   const portalServers = s?.status?.servers || {};
+  const away = alwaysAway.get(botId) || null;
   const servers = Object.entries(bot.always?.saved || {}).map(([guildId, saved]) => {
     const p = portalServers[guildId];
     return {
@@ -944,12 +964,14 @@ async function alwaysReport(botId) {
       loadedAt: p?.loadedAt || null,
       problem: p?.problem || null,
       problems: Object.values(p?.problems || {}).filter(Boolean),
+      away: away?.servers[guildId] || null,
     };
   });
   return {
     on: !!bot.always?.on,
     portalUrl: bot.always?.portalUrl || null,
     since: bot.always?.since || null,
+    away: away ? { from: away.from, to: away.to } : null,
     checkedAt: s?.checkedAt || null,
     error: s?.error || null,
     portal: s?.status ? { running: s.status.running, gateway: s.status.gateway, startedAt: s.status.startedAt, loadedAt: s.status.loadedAt, cards: s.status.cards } : null,
@@ -958,7 +980,7 @@ async function alwaysReport(botId) {
 }
 
 // Whether a bot needs its gateway connection for server logs, reaction roles, polls or welcome cards.
-const needsGateway = (botId) => activeLogs(botId).length > 0 || watchesReactions(botId) || greetingsOn(botId) || autoRolesOn(botId) || answersTickets(botId);
+const needsGateway = (botId) => activeLogs(botId).length > 0 || watchesReactions(botId) || greetingsOn(botId) || autoRolesOn(botId) || countsMembers(botId) || answersTickets(botId);
 
 // One gateway connection per bot: it keeps the bot online (when presence is on) and receives the
 // events for server logs, reaction roles and polls. With those on but presence off, it connects invisibly.
@@ -972,8 +994,8 @@ function syncConnection(botId) {
   }
   const logs = activeLogs(botId);
   const reactions = watchesReactions(botId);
-  // Welcome cards and auto roles both follow members joining.
-  const greetings = greetingsOn(botId) || autoRolesOn(botId);
+  // Welcome cards, auto roles and the Bots and Users counters all follow members joining.
+  const greetings = greetingsOn(botId) || autoRolesOn(botId) || countsMembers(botId);
   const ticketButtons = answersTickets(botId); // button presses arrive whatever the intents
   const conn = presenceFor(botId);
   loggerFor(botId);
@@ -1163,6 +1185,7 @@ const handlers = {
     await callPortal(botId, '/always/status'); // proves the portal runs this bot's token
     store.updateBot(botId, { always: { ...store.getBot(botId).always, on: true, since: Date.now() } });
     alwaysShown.delete(botId);
+    alwaysAway.set(botId, null); // the app is open: nothing happened "while it was closed"
     syncConnection(botId);
     await saveAlways(botId, { force: true });
     await pullAlways(botId);
@@ -1606,6 +1629,7 @@ const handlers = {
       }
     }
     store.setGuildConfig(botId, s.guildId, { stats: s });
+    syncConnection(botId);
     // Fills in bots and users (they need the member list) and any changed names.
     await statsFor(botId).refresh(s.guildId, s, { force: true }).catch(() => {});
     return handlers['stats:list']();
@@ -1623,6 +1647,7 @@ const handlers = {
     store.setGuildConfig(botId, id, { stats: null });
     statsFor(botId).forget(id);
     statsState.delete(`${botId}:${id}`);
+    syncConnection(botId);
     return handlers['stats:list']();
   },
 
@@ -2202,6 +2227,10 @@ if (!app.requestSingleInstanceLock()) {
   });
   app.on('before-quit', () => {
     quitting = true;
+    // 24/7: the app saw the portal's totals until now (the start of "while the app was closed").
+    for (const bot of store.listBots()) {
+      if (bot.always?.on && bot.always.seen) store.updateBot(bot.id, { always: { ...bot.always, seen: { ...bot.always.seen, at: Date.now() } } });
+    }
   });
   Menu.setApplicationMenu(null);
   app.whenReady().then(() => {
@@ -2210,9 +2239,9 @@ if (!app.requestSingleInstanceLock()) {
     // Server stats: each server is refreshed every 5 minutes (the engine paces itself).
     setTimeout(tickStats, 30 * 1000);
     setInterval(tickStats, 60 * 1000);
-    // Scheduled announcements go out within half a minute of their time.
+    // Scheduled announcements go out within a few seconds of their time.
     setTimeout(() => announcer.tick().catch(() => {}), 10 * 1000);
-    setInterval(() => announcer.tick().catch(() => {}), 30 * 1000);
+    setInterval(() => announcer.tick().catch(() => {}), 5 * 1000);
     setTimeout(runAutoBackups, 60 * 1000);
     setInterval(runAutoBackups, 30 * 60 * 1000);
     // Social alerts: YouTube channels are checked every 5 minutes and Twitch every minute (the watcher paces itself).

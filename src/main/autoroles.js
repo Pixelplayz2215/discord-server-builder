@@ -95,7 +95,8 @@ async function giveRoles(rest, guildId, userId, roles, reason) {
 
 // settingsFor(guildId): the server's normalized settings, or null.
 // report(guildId, problem): the latest problem (null once roles are given fine).
-function createAutoRoles({ rest, settingsFor, report = () => {}, setTimer = setTimeout, clearTimer = clearTimeout }) {
+// gave(guildId, user): a new member got their roles.
+function createAutoRoles({ rest, settingsFor, report = () => {}, gave = () => {}, setTimer = setTimeout, clearTimer = clearTimeout }) {
   const waiting = new Map(); // `${guild}:${user}` -> timer, or 'screening' while they haven't accepted the rules
 
   function give(guildId, user, delay) {
@@ -108,6 +109,7 @@ function createAutoRoles({ rest, settingsFor, report = () => {}, setTimer = setT
       if (!roles.length) return;
       const problem = await giveRoles(rest, guildId, user.id, roles, 'Auto role for new members');
       if (problem !== 'left') report(guildId, problem);
+      if (!problem) gave(guildId, user);
     };
     if (!delay) return run();
     waiting.set(key, setTimer(run, delay * 1000));

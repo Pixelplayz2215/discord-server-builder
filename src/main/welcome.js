@@ -36,7 +36,8 @@ async function greetingMessage(kind, settings, vars, user, render) {
 
 // settingsFor(guildId): that server's { welcome, goodbye } (normalized), or null.
 // report(guildId, kind, problem): the latest problem (null when posting works).
-function createWelcomer({ rest, settingsFor, render, report = () => {} }) {
+// posted(guildId, kind): a welcome or goodbye went out.
+function createWelcomer({ rest, settingsFor, render, report = () => {}, posted = () => {} }) {
   const guilds = new Map(); // guild id -> { name, count }
   const queues = new Map(); // guild id -> { waiting, running, skipped }
 
@@ -65,6 +66,7 @@ function createWelcomer({ rest, settingsFor, render, report = () => {} }) {
     try {
       await rest.request('POST', `/channels/${settings.channelId}/messages`, { body, files });
       report(guildId, kind, problem);
+      posted(guildId, kind);
     } catch (err) {
       report(guildId, kind, err.code === 50013 || err.code === 50001 ? `The bot can't post in #${settings.channelName || 'that channel'}. Give it View Channel, Send Messages and Attach Files there.` : err.message);
     }

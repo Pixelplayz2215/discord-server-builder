@@ -149,12 +149,12 @@ With slash commands on, your portal can also run your community features around 
 
 1. **Update first.** If your portal was set up before 24/7 existed, open your fork on GitHub, press **Sync fork**, and wait for Render to finish deploying. Nothing else changes on Render.
 2. **Turn it on.** In the app, go to the Home page → **Run 24/7** and press **Turn on 24/7**. The app checks your portal is up to date and runs this bot, saves each server's settings for it, and stops running those features itself.
-3. **Keep setting things up in the app.** Changes you make are saved for the portal within a few seconds. The Home page shows whether the portal is running, when each server's settings were saved, and any problems.
+3. **Keep setting things up in the app.** Changes you make are saved for the portal within a few seconds. The Home page shows whether the portal is running, when each server's settings were saved, any problems, and what the portal did for each server while the app was closed.
 
 How it works:
 
 - **#bot-settings.** Each server with something set up gets a private #bot-settings channel. Only the bot can see it (server admins can see it exists). The settings and pictures there are what the portal reads, and the settings are encrypted with a key made from your bot token, so nobody else can read them. Please leave the channel there; the bot needs Manage Channels to make it.
-- **What it did.** The portal saves back what it did there too (votes, posts sent, videos seen), so a restart or deploy picks up where it left off. The app reads it every minute and shows it on its pages.
+- **What it did.** The portal saves back what it did there too (votes, posts sent, videos seen, and running totals of the welcomes, roles, votes, announcements, YouTube posts and log entries it handled), so a restart or deploy picks up where it left off. The app reads it every minute and shows it on its pages, and the Home page sums up what happened while the app was closed.
 - **Staying awake.** While 24/7 is on, the portal visits its own `/health` page every 10 minutes so Render's free plan doesn't put it to sleep. That uses Render's free instance hours: 750 a month, enough for one service running all month. Other free services in the same Render workspace share those hours; if they run out, Render pauses your free services until the next month.
 - **Still in the app.** Twitch alerts and automatic backups need the app running. **Send now**, **Give to existing members** and setting things up all work from the app as before.
 - **Welcome cards.** The portal draws cards with the same code as the app. Fonts only Windows has (Segoe UI, Arial Black, Georgia, Impact, Comic Sans, Consolas) are drawn with Poppins there.

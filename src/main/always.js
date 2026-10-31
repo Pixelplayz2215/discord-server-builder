@@ -160,6 +160,21 @@ function mergeAlerts(alerts, botId, servers = {}) {
   return { alerts: next, changed };
 }
 
+// What the portal counts for each server, as running totals in its saved state (state.activity).
+const ACTIVITY = ['welcome', 'goodbye', 'autoroles', 'reactionRoles', 'votes', 'announcements', 'youtube', 'logs'];
+
+// What the portal did between two of its running totals. A total that went down started again
+// from 0 (its saved state was lost), so all of it is new.
+function activitySince(before = {}, after = {}) {
+  const out = {};
+  for (const key of ACTIVITY) {
+    const was = Number(before?.[key]) || 0;
+    const now = Number(after?.[key]) || 0;
+    out[key] = now >= was ? now - was : now;
+  }
+  return out;
+}
+
 /* ---------- The #bot-settings channel ---------- */
 async function findChannel(rest, guildId) {
   const list = await rest.request('GET', `/guilds/${guildId}/channels`);
@@ -286,6 +301,8 @@ module.exports = {
   announceKey,
   mergeServer,
   mergeAlerts,
+  ACTIVITY,
+  activitySince,
   findChannel,
   ensureChannel,
   readChannel,

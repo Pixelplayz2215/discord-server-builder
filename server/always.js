@@ -2,8 +2,8 @@
 // settings from its #bot-settings channel (src/main/always.js), connects the bot to Discord's gateway
 // and runs the same engines the app does: welcome and goodbye cards, auto roles, reaction roles, poll
 // bars, server logs, server stats, scheduled announcements and YouTube alerts. What it did (votes,
-// announcements sent, videos seen) is saved back to the channel, and the app reads it with a signed
-// request. While it runs it calls its own /health every 10 minutes, so Render's free plan doesn't put
+// announcements sent, videos seen, and running totals of everything it posted or gave) is saved back
+// to the channel, and the app reads it with a signed request. While it runs it calls its own /health every 10 minutes, so Render's free plan doesn't put
 // it to sleep. With 24/7 off it does none of this and only answers slash commands and buttons.
 const crypto = require('crypto');
 const { PresenceConnection } = require('../src/main/gateway');
@@ -18,16 +18,17 @@ const announce = require('../src/main/announce');
 const social = require('../src/main/social');
 const WelcomeCard = require('../src/shared/welcomecard');
 
-const EVERY = { announce: 30 * 1000, stats: 60 * 1000, social: 60 * 1000, reload: 10 * 60 * 1000, ping: 10 * 60 * 1000 };
+const EVERY = { announce: 5 * 1000, stats: 60 * 1000, social: 60 * 1000, reload: 10 * 60 * 1000, ping: 10 * 60 * 1000 };
 const SAVE_DELAY_MS = 30 * 1000;
+const ACTIVITY_SAVE_DELAY_MS = 5 * 60 * 1000; // the running totals alone change often (every log entry) and can wait
 const CATCH_UP_DELAY_MS = 5000;
 const MAX_FOUND_POLLS = 50;
 
-const emptyState = () => ({ announcements: {}, polls: { found: [], counts: {}, forgotten: [] }, alerts: {} });
+const emptyState = () => ({ announcements: {}, polls: { found: [], counts: {}, forgotten: [] }, alerts: {}, activity: {} });
 const withDefaults = (s) => ({ ...emptyState(), ...s, polls: { ...emptyState().polls, ...s?.polls } });
 
 // connect(onState, onEvent): the gateway connection (tests pass a fake).
-function createAlways({ rest, token, publicUrl = '', cards = null, fetchImpl = fetch, now = Date.now, connect = null, saveDelayMs = SAVE_DELAY_MS, catchUpDelayMs = CATCH_UP_DELAY_MS, every = EVERY, log = console }) {
+function createAlways({ rest, token, publicUrl = '', cards = null, fetchImpl = fetch, now = Date.now, connect = null, saveDelayMs = SAVE_DELAY_MS, activitySaveDelayMs = ACTIVITY_SAVE_DELAY_MS, catchUpDelayMs = CATCH_UP_DELAY_MS, every = EVERY, log = console }) {
   const servers = new Map(); // guildId -> { channelId, bundle, state, stateMessage, files, loadedAt, problem, dirty }
   const problems = new Map(); // `${guildId}:${what}` -> latest problem
   const statsState = new Map(); // guildId -> { counts, updatedAt, problem }
@@ -41,6 +42,7 @@ function createAlways({ rest, token, publicUrl = '', cards = null, fetchImpl = f
   let loading = Promise.resolve();
   let timers = [];
   let saveTimer = null;
+  let saveDue = 0;
   let index = { panels: new Map(), polls: new Map() };
 
   const active = () => [...servers.entries()].filter(([, s]) => s.bundle?.on && s.bundle.used);
@@ -55,17 +57,27 @@ function createAlways({ rest, token, publicUrl = '', cards = null, fetchImpl = f
   };
 
   /* ---------- Saving what the portal did ---------- */
-  function markDirty(guildId) {
+  // Saves within `delay`, or sooner if a save is already planned sooner.
+  function markDirty(guildId, delay = saveDelayMs) {
     const s = servers.get(guildId);
     if (!s) return;
     s.dirty = true;
-    if (!saveTimer) {
-      saveTimer = setTimeout(() => {
-        saveTimer = null;
-        flush().catch(() => {});
-      }, saveDelayMs);
-      saveTimer.unref?.();
-    }
+    if (saveTimer && saveDue <= now() + delay) return;
+    clearTimeout(saveTimer);
+    saveDue = now() + delay;
+    saveTimer = setTimeout(() => {
+      saveTimer = null;
+      flush().catch(() => {});
+    }, delay);
+    saveTimer.unref?.();
+  }
+
+  // Adds to a server's running totals of what the portal did (Always.ACTIVITY), which the app shows.
+  function count(guildId, what, n = 1) {
+    const s = servers.get(guildId);
+    if (!s || !n) return;
+    s.state.activity[what] = (s.state.activity[what] || 0) + n;
+    markDirty(guildId, activitySaveDelayMs);
   }
 
   async function flush() {
@@ -137,6 +149,9 @@ function createAlways({ rest, token, publicUrl = '', cards = null, fetchImpl = f
     if (JSON.stringify(before) === JSON.stringify(next)) return;
     s.state.polls.counts[poll.id] = next;
     markDirty(poll.guildId);
+    // New votes (someone changing their vote adds none).
+    const total = (list) => (list || []).reduce((sum, n) => sum + (Number(n) || 0), 0);
+    count(poll.guildId, 'votes', Math.max(0, total(counts) - total(before?.counts || poll.counts)));
   }
 
   function forgetPoll(poll) {
@@ -195,7 +210,9 @@ function createAlways({ rest, token, publicUrl = '', cards = null, fetchImpl = f
       if (data) image = { name: a.embed.imageFile, data, type: Always.FILE_TYPES[name.split('.').pop()] || 'image/png' };
     }
     const { body, files } = announce.buildMessage(a, image);
-    return rest.request('POST', `/channels/${a.channelId}/messages`, { body, files });
+    const message = await rest.request('POST', `/channels/${a.channelId}/messages`, { body, files });
+    count(a.guildId, 'announcements');
+    return message;
   }
 
   function youtubeAlerts() {
@@ -224,8 +241,15 @@ function createAlways({ rest, token, publicUrl = '', cards = null, fetchImpl = f
           return c?.enabled && c.channelId ? { ...c, content: !!b.bot.intents?.content } : null;
         },
         onError: (guildId, err) => setProblem(`${guildId}:logs`, err.message),
+        posted: (guildId, n) => count(guildId, 'logs', n),
       }),
-      reactions: reactionRoles.createReactionRoles({ rest, botId, panelFor: (id) => index.panels.get(id) || null, report: (panel, p) => setProblem(`${panel.guildId}:panel:${panel.id}`, p) }),
+      reactions: reactionRoles.createReactionRoles({
+        rest,
+        botId,
+        panelFor: (id) => index.panels.get(id) || null,
+        report: (panel, p) => setProblem(`${panel.guildId}:panel:${panel.id}`, p),
+        gave: (panel) => count(panel.guildId, 'reactionRoles'),
+      }),
       polls: polls.createPolls({
         rest,
         botId,
@@ -243,8 +267,14 @@ function createAlways({ rest, token, publicUrl = '', cards = null, fetchImpl = f
           return cards.render(card, vars, user);
         },
         report: (guildId, kind, p) => setProblem(`${guildId}:${kind}`, p),
+        posted: (guildId, kind) => count(guildId, kind),
       }),
-      autoRoles: autoRoles.createAutoRoles({ rest, settingsFor: (guildId) => bundleOf(guildId)?.autoroles || null, report: (guildId, p) => setProblem(`${guildId}:autoroles`, p) }),
+      autoRoles: autoRoles.createAutoRoles({
+        rest,
+        settingsFor: (guildId) => bundleOf(guildId)?.autoroles || null,
+        report: (guildId, p) => setProblem(`${guildId}:autoroles`, p),
+        gave: (guildId) => count(guildId, 'autoroles'),
+      }),
       stats: stats.createStats({
         rest,
         settingsFor: () => active().filter(([, s]) => s.bundle.stats).map(([guildId, s]) => ({ guildId, settings: s.bundle.stats })),
@@ -254,7 +284,11 @@ function createAlways({ rest, token, publicUrl = '', cards = null, fetchImpl = f
       social: social.createSocialWatcher({
         getAlerts: youtubeAlerts,
         updateState: updateAlert,
-        post: (alert, message) => rest.request('POST', `/channels/${alert.channelId}/messages`, { body: message }),
+        post: async (alert, message) => {
+          const sent = await rest.request('POST', `/channels/${alert.channelId}/messages`, { body: message });
+          count(alert.guildId, 'youtube');
+          return sent;
+        },
         getTwitch: () => null, // Twitch alerts stay with the app
         fetchImpl,
         now,
@@ -271,6 +305,7 @@ function createAlways({ rest, token, publicUrl = '', cards = null, fetchImpl = f
     engines.polls.handle(type, d)?.catch?.(() => {});
     engines.welcomer.handle(type, d);
     engines.autoRoles.handle(type, d)?.catch?.(() => {});
+    engines.stats.handle(type, d);
     // Connected: hand out roles for reactions made while it was away, and redraw polls.
     if (type === 'READY') setTimeout(() => catchUp().catch(() => {}), catchUpDelayMs);
   }
@@ -320,7 +355,7 @@ function createAlways({ rest, token, publicUrl = '', cards = null, fetchImpl = f
     const botIntents = newest.bot.intents || {};
     const logs = on.map(([, s]) => (s.bundle.logs ? normalizeLogConfig(s.bundle.logs) : null)).filter((c) => c?.enabled && c.channelId);
     const reactions = index.panels.size > 0 || [...index.polls.values()].some((p) => !p.ended) || on.some(([, s]) => s.bundle.bot.slashCommands);
-    const members = on.some(([, s]) => s.bundle.greetings?.welcome?.enabled || s.bundle.greetings?.goodbye?.enabled || s.bundle.autoroles?.enabled);
+    const members = on.some(([, s]) => s.bundle.greetings?.welcome?.enabled || s.bundle.greetings?.goodbye?.enabled || s.bundle.autoroles?.enabled || stats.needsMembers(s.bundle.stats));
     const intents =
       welcome.WELCOME_INTENTS.GUILDS |
       (logs.length ? logIntents(logs, botIntents) : 0) |
@@ -423,6 +458,7 @@ function createAlways({ rest, token, publicUrl = '', cards = null, fetchImpl = f
   async function close() {
     clearTimeout(saveTimer);
     saveTimer = null;
+    saveDue = 0;
     stopTimers();
     if (conn) conn.stop();
     conn = null;

@@ -290,6 +290,7 @@ const HomePage = {
       if (s.portal && !s.portal.cards) alwaysServers.append(h('div', { class: 'callout warn' }, icon('alert'), h('div', null, "Your portal can't draw welcome cards, so welcomes go without them. On Render, choose Manual Deploy → Clear build cache & deploy.")));
       for (const srv of s.servers) {
         const problems = [srv.saveProblem && `Couldn't save its settings: ${srv.saveProblem}`, srv.problem, ...srv.problems].filter(Boolean);
+        const away = srv.away && s.away ? HomePage.awayText(srv.away, s.away) : null;
         alwaysServers.append(
           h(
             'div',
@@ -297,6 +298,7 @@ const HomePage = {
             h('span', { class: `badge ${problems.length ? 'coral' : 'teal'}` }, problems.length ? 'Check' : srv.on ? '24/7' : 'Off'),
             h('b', null, srv.name),
             h('span', { class: 'subtle' }, problems.length ? problems.join(' ') : srv.on ? `Settings saved ${srv.savedAt ? fmtRelative(srv.savedAt) : ''}` : 'Nothing to run here'),
+            away ? h('div', { class: 'always-away' }, away) : null,
           ),
         );
       }
@@ -484,6 +486,29 @@ const HomePage = {
 
   step(title, text, action) {
     return h('div', { class: 'card step' }, h('h3', null, title), h('p', null, text), action ? h('div', { style: { marginTop: '12px' } }, action) : null);
+  },
+
+  // What the portal did for one server while the app was closed, in words, or null when there's
+  // nothing worth saying (a quick restart).
+  awayText(counts, away) {
+    const words = [
+      ['welcome', 'welcome', 'welcomes'],
+      ['goodbye', 'goodbye', 'goodbyes'],
+      ['autoroles', 'member given auto roles', 'members given auto roles'],
+      ['reactionRoles', 'reaction role', 'reaction roles'],
+      ['votes', 'vote', 'votes'],
+      ['announcements', 'announcement', 'announcements'],
+      ['youtube', 'YouTube post', 'YouTube posts'],
+      ['logs', 'log entry', 'log entries'],
+    ];
+    const parts = words.filter(([key]) => counts[key] > 0).map(([key, one, many]) => `${fmtNum(counts[key])} ${counts[key] === 1 ? one : many}`);
+    const secs = (away.to - away.from) / 1000;
+    if (!parts.length && secs < 30 * 60) return null;
+    const [unit, size] = RELATIVE_STEPS.find(([, step]) => secs >= step && step >= 60) || ['minute', 60];
+    const n = Math.max(1, Math.round(secs / size));
+    const closed = `While the app was closed (${n} ${unit}${n === 1 ? '' : 's'})`;
+    if (!parts.length) return `${closed}: nothing happened.`;
+    return `${closed}: ${parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}` : parts[0]}.`;
   },
 };
 

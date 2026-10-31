@@ -1,8 +1,9 @@
 // Server stats: voice channels whose names show live counts (members, users, bots, channels, roles),
 // renamed as the numbers change while the app is open or in the tray. Members can see them but not
-// join. Counts come from Discord's API every few minutes; bots and users need the member list, which
-// needs the Server Members Intent. Discord lets a bot rename a channel only twice every 10 minutes,
-// so each channel is renamed at most once every 5 minutes. No Electron here.
+// join. Counts come from Discord's API every few minutes, and soon after someone joins or leaves; bots
+// and users need the member list, which needs the Server Members Intent. Discord lets a bot rename a
+// channel only twice every 10 minutes, so each channel is renamed at most once every 5 minutes. No
+// Electron here.
 const { fetchAllMembers } = require('./builder');
 
 // [key, label, default name, what it counts]
@@ -14,6 +15,9 @@ const COUNTERS = [
   ['roles', 'Roles', '🏷️ Roles: {count}', 'Roles, not counting @everyone'],
 ];
 const NEEDS_MEMBER_LIST = new Set(['users', 'bots']);
+
+// Whether a server's counters need the member list (and so follow members joining and leaving).
+const needsMembers = (settings) => COUNTERS.some(([key]) => NEEDS_MEMBER_LIST.has(key) && settings?.counters?.[key]?.on);
 const REFRESH_EVERY_MS = 5 * 60 * 1000;
 const RENAME_EVERY_MS = 5 * 60 * 1000 + 15 * 1000; // a little over half of Discord's 10-minute window
 const SCAN_EVERY_MS = 30 * 60 * 1000; // the member list (for bots) is read less often: it's slow on big servers
@@ -72,9 +76,9 @@ async function countBasics(rest, guildId) {
 // settingsFor(): the servers with stats, as [{ guildId, settings }].
 // report(guildId, { counts, updatedAt, problem }): the latest counts and any problem, for the app.
 function createStats({ rest, settingsFor, report = () => {}, now = Date.now, refreshEveryMs = REFRESH_EVERY_MS, renameEveryMs = RENAME_EVERY_MS, scanEveryMs = SCAN_EVERY_MS, maxScan = MAX_SCAN }) {
-  const servers = new Map(); // guildId -> { refreshedAt, running, bots, scannedAt, renamedAt: {}, renaming: Set }
+  const servers = new Map(); // guildId -> { refreshedAt, running, again, bots, scannedAt, renamedAt: {}, renaming: Set }
   const serverOf = (id) => {
-    if (!servers.has(id)) servers.set(id, { refreshedAt: 0, running: false, bots: null, scannedAt: 0, renamedAt: {}, renaming: new Set() });
+    if (!servers.has(id)) servers.set(id, { refreshedAt: 0, running: false, again: false, bots: null, scannedAt: 0, renamedAt: {}, renaming: new Set() });
     return servers.get(id);
   };
 
@@ -128,7 +132,9 @@ function createStats({ rest, settingsFor, report = () => {}, now = Date.now, ref
       problems.push(err.code === 50001 || err.code === 50013 ? "The bot can't see this server's channels or roles." : err.message);
     } finally {
       s.running = false;
-      s.refreshedAt = now();
+      // Someone joined or left while this ran: go again at the next tick.
+      s.refreshedAt = s.again ? 0 : now();
+      s.again = false;
     }
     const state = { counts, updatedAt: now(), problem: problems.join(' ') || null };
     report(guildId, state);
@@ -142,7 +148,18 @@ function createStats({ rest, settingsFor, report = () => {}, now = Date.now, ref
     }
   }
 
-  return { refresh, tick, forget: (guildId) => servers.delete(guildId) };
+  // Someone joined or left (gateway events, with the Server Members Intent): a bot changes the bot
+  // count right away rather than at the next read of the member list, and the server is refreshed
+  // at the next tick.
+  function handle(type, d) {
+    if ((type !== 'GUILD_MEMBER_ADD' && type !== 'GUILD_MEMBER_REMOVE') || !servers.has(d?.guild_id)) return;
+    const s = servers.get(d.guild_id);
+    if (d.user?.bot && s.bots != null) s.bots = Math.max(0, s.bots + (type === 'GUILD_MEMBER_ADD' ? 1 : -1));
+    if (s.running) s.again = true;
+    else s.refreshedAt = 0;
+  }
+
+  return { refresh, tick, handle, forget: (guildId) => servers.delete(guildId) };
 }
 
-module.exports = { createStats, normalizeSettings, countBasics, channelName, formatCount, COUNTERS, NEEDS_MEMBER_LIST, CONNECT, MEMBER_INTENT_HELP };
+module.exports = { createStats, normalizeSettings, countBasics, channelName, formatCount, needsMembers, COUNTERS, NEEDS_MEMBER_LIST, CONNECT, MEMBER_INTENT_HELP };

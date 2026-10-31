@@ -50,7 +50,8 @@ function normalizeConfig(input) {
 
 // configFor(guildId): that server's log settings when logging is on (with a channel), else null.
 // It may include content: false when Message Content Intent is off.
-function createServerLogger({ rest, configFor, onError = () => {}, flushMs = FLUSH_MS, auditDelayMs = AUDIT_DELAY_MS }) {
+// posted(guildId, n): n log entries went out.
+function createServerLogger({ rest, configFor, onError = () => {}, posted = () => {}, flushMs = FLUSH_MS, auditDelayMs = AUDIT_DELAY_MS }) {
   const messages = new Map(); // message id -> { guildId, channelId, author, content, attachments }
   const members = new Map(); // guild:user -> { nick, roles, until, joinedAt, user }
   const channels = new Map(); // channel id -> { name, locked }
@@ -86,6 +87,7 @@ function createServerLogger({ rest, configFor, onError = () => {}, flushMs = FLU
         if (!cfg) continue;
         try {
           await rest.request('POST', `/channels/${cfg.channelId}/messages`, { body: { embeds: batch, allowed_mentions: { parse: [] } } });
+          posted(guildId, batch.length);
         } catch (err) {
           onError(guildId, err);
         }

@@ -716,9 +716,10 @@ input[type='range'] { width: 100%; accent-color: var(--accent); cursor: pointer;
 .community-nav .eyebrow { padding: 0 10px 8px; }
 .community-note { margin: auto 0 0; padding: 14px 10px 0; font-size: calc(12rem / 14); line-height: 1.45; }
 .community-note b { color: var(--text); font-weight: 600; }
-.always-servers { gap: 6px; }
+.always-servers { gap: 10px; }
 .always-server { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; font-size: calc(13rem / 14); }
 .always-server .subtle { font-size: calc(12rem / 14); }
+.always-away { flex-basis: 100%; padding-left: 2px; color: var(--muted); font-size: calc(12rem / 14); line-height: 1.45; }
 .community-link { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 10px; border: 1px solid transparent; border-radius: var(--radius-sm); background: none; color: var(--muted); font: inherit; text-align: left; cursor: pointer; }
 .community-link svg { width: 18px; height: 18px; flex-shrink: 0; }
 .community-link b { display: block; color: var(--text); font-size: calc(13.5rem / 14); font-weight: 600; }

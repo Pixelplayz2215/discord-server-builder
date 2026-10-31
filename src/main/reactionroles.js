@@ -77,12 +77,14 @@ const publishPanel = (rest, panel, previous) =>
   );
 
 // Handles one bot's reaction events. panelFor(messageId) finds a published panel; report(panel,
-// problem) records the latest problem (or null when things work) so the app can show it.
-function createReactionRoles({ rest, botId, panelFor, report = () => {} }) {
+// problem) records the latest problem (or null when things work) so the app can show it;
+// gave(panel) is called for each role handed out.
+function createReactionRoles({ rest, botId, panelFor, report = () => {}, gave = () => {} }) {
   const reason = (panel) => `Reaction role${panel.title ? ` (${panel.title.slice(0, 60)})` : ''}`;
 
   async function addRole(panel, userId, roleId) {
     await rest.request('PUT', `/guilds/${panel.guildId}/members/${userId}/roles/${roleId}`, { reason: reason(panel) });
+    gave(panel);
   }
   async function removeRole(panel, userId, roleId) {
     await rest.request('DELETE', `/guilds/${panel.guildId}/members/${userId}/roles/${roleId}`, { reason: reason(panel) });
