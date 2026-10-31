@@ -53,3 +53,28 @@ test('release pages lead with the version\'s changes', () => {
   assert.match(notes, /\[CHANGELOG\.md\]\(https:\/\/github\.com\/me\/app\/blob\/main\/CHANGELOG\.md\)/);
   assert.ok(notes.trimEnd().endsWith('**App** text.'));
 });
+
+test('the release watcher notices a new version once, asking GitHub cheaply while nothing changes', async () => {
+  const { createReleaseWatcher } = require('../src/main/updater');
+  const seen = [];
+  const answers = [
+    { status: 200, etag: 'W/"a"', tag: 'v1.0.10' }, // the version already installed
+    { status: 304 },
+    { status: 200, etag: 'W/"b"', tag: 'v1.1.0' },
+    { status: 200, etag: 'W/"c"', tag: 'v1.1.0' }, // the same release again (notes edited)
+    { status: 200, etag: 'W/"d"', tag: 'v1.0.9' }, // an older tag
+  ];
+  const sent = [];
+  const fetchImpl = async (url, opts) => {
+    sent.push(opts.headers['If-None-Match'] || null);
+    const a = answers.shift();
+    return { ok: a.status === 200, status: a.status, headers: { get: (k) => (k === 'etag' ? a.etag : null) }, json: async () => ({ tag_name: a.tag }) };
+  };
+  const watcher = createReleaseWatcher({ onNewVersion: (v) => seen.push(v), current: () => '1.0.10', fetchImpl });
+  for (let i = 0; i < 5; i++) await watcher.look();
+  assert.deepEqual(seen, ['1.1.0']);
+  assert.deepEqual(sent, [null, 'W/"a"', 'W/"a"', 'W/"b"', 'W/"c"'], 'each look sends the last answer\'s ETag');
+
+  const offline = createReleaseWatcher({ onNewVersion: () => assert.fail('nothing to tell'), current: () => '1.0.10', fetchImpl: async () => { throw new Error('offline'); } });
+  await offline.look();
+});

@@ -27,6 +27,7 @@ Windows may show a SmartScreen warning the first time because the app isn't code
 - **Social alerts.** Post when a YouTube channel uploads or a Twitch channel goes live.
 - **Reaction roles.** Members react to a message to give themselves roles, with your server's own emojis or standard ones.
 - **Tickets.** Members open a private support channel with one button. Staff claim and close it, and every closed ticket is saved as a transcript, images included.
+- **Server stats.** Live member, user, bot, channel and role counts as channels at the top of your server, named however you like.
 - **Welcome & goodbye cards.** Greet new members with a card made for them, and say goodbye when someone leaves. Design the background, font, colours and text yourself, for free.
 - **Polls.** Members vote by reacting, and each answer gets a bar in its emoji's colour, like Discord's own polls. Post them from the app or with `/poll` in Discord.
 - **Settings.** 8 themes (including light ones), custom colours, your own logo and app name, UI scale, text size, corner roundness and fonts. The app can keep running in the tray.

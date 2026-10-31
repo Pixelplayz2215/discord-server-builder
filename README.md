@@ -17,6 +17,7 @@ A Windows desktop app (Electron) in the Pixelplayz2215 theme for running Discord
 - **Reaction roles** (Community page). Post a message members react to, to give themselves roles: up to 20 emoji-and-role pairs per message, using the server's own uploaded emojis or standard ones (or any pasted emoji), with your own message as a card or plain text and a live preview. Members can pick any number of roles, only one (picking another swaps it), or add-only for rules and verification. The bot hands roles out while the app is open or in the tray, catches up on reactions it missed when it starts, and puts its reactions back if a mod clears them.
 - **Polls** (Community page). Ask a question with 2 to 4 answers, each with its own emoji (server or standard). Members vote by reacting, and the bot draws a coloured bar under each answer like Discord's own polls, in a colour that matches the emoji (or one you pick), with your own message and card colour. Choose whether members can pick one answer or several, and end a poll to show the final results. Anyone who can post polls in a channel can also use `/poll message emoji1 option1 emoji2 option2 …` in Discord (with the mod portal's slash commands on); its emoji boxes suggest the server's emojis as you type. Bars update while the app is open or in the tray.
 - **Tickets** (Community page). Post a panel with your own text and an "open a ticket" button (your label, emoji and colour). Pressing it gives the member a private channel that only they, your support roles and admins can see, with your own message telling them what to write. Staff press **Claim** to take it, and **Close** asks for a reason, saves the whole conversation as a transcript (images copied in, so they keep working) to a private ticket log channel with a **View transcript** link, then deletes the channel. The Tickets page lists open tickets and closed ones, and shows any transcript in the app. With slash commands on, your mod portal answers the buttons around the clock; otherwise the app does while it runs.
+- **Server stats** (Community page). Live counts as channels at the top of a server: members, users, bots, channels and roles, each with a name you choose (`{count}` marks the number) and full or short numbers (1.2K). They're voice channels members can see but not join, updated about every 5 minutes while the app runs, the most Discord allows. Users and Bots need the Server Members Intent.
 - **Welcome & goodbye cards** (Community page). When someone joins or leaves, the bot posts your message with a card made for them: their avatar and name over a gradient, a colour or your own background image (with a darken slider). Every part is yours to change: the layout, the font (8 to pick from, including a pixel font), three lines of text with their own words, colour and size, the avatar ring and the text shadow, or start from a quick style. Placeholders like {user}, {server} and {count} fill in, the welcome can ping the new member, and a live preview and **Send a test** show exactly what members will see. Free, with no premium tier. Needs the Server Members Intent; posts while the app is open or in the tray.
 - **Keeps running in the tray.** The close button hides the app to the tray so bots stay online and logs and backups keep going. Quit from the tray icon. This can be turned off in Settings.
 - **Channels.** Send a message as the bot, purge up to 1000 recent messages, lock or unlock, set slowmode, rename, delete, or create channels.
@@ -25,7 +26,7 @@ A Windows desktop app (Electron) in the Pixelplayz2215 theme for running Discord
 
 - **Settings** (gear icon at the bottom left). Includes 8 themes, some of them light. You can also edit the colours, upload your own logo (it also becomes the window and taskbar icon), rename the app, and set the UI scale, text size, corner roundness and font. Pixel-style labels and the animations and background glow can be switched off. The "by Pixelplayz2215" credit in the title bar can't be changed. Settings are saved in `settings.json` in the same folder as the bot tokens.
 
-- **Updates.** Settings → **Check for updates** reads the latest GitHub release, and the app also checks on startup (this can be turned off). When a newer version is out, a "New version found" popup appears and **Reload to update** installs it in one click. The installed app runs the new installer silently in the same folder, keeping your shortcuts. The portable .exe swaps the new file in place under the same name. Both then restart.
+- **Updates.** While the app runs (in the tray too), it checks the latest GitHub release every few minutes, sending the last answer's ETag so unchanged answers are cheap and don't count against GitHub's rate limit (this can be turned off). A new version shows a small popup (a Windows notification when the app is in the tray); clicking it opens the "New version found" screen, and **Reload to update** installs it in one click. Settings → **Check for updates** opens that screen straight away. The installed app runs the new installer silently in the same folder, keeping your shortcuts. The portable .exe swaps the new file in place under the same name. Both then restart.
 
 - **Moderator sign-in.** Your mods can use the app without the bot token. They click **Sign in with Discord** and get the servers where they have Kick, Ban or Timeout permission, with moderation tools only. Each action is checked against their own Discord permissions. This needs the small mod portal server in `server/` running on a host. Setup steps are in [docs/MOD-PORTAL.md](docs/MOD-PORTAL.md).
 
@@ -68,7 +69,7 @@ npm run release    # build + publish a new GitHub release (see below)
 Every version gets **its own GitHub release** (tag `v1.0.7` and so on), whose page starts with that version's changes from [CHANGELOG.md](CHANGELOG.md). The newest one is marked latest, so the `releases/latest` links and download links always give the newest build. The app's update check reads the latest release from the repository named in `package.json` → `updateRepo`, which must be public. Its `version.json` tells the app which version the files are and what changed lately, which the "New version found" popup lists.
 
 1. Add what changed as `- ` lines under **Unreleased** in `CHANGELOG.md`. Commit and push.
-2. Run `npm run release`, or in VS Code: Terminal → Run Task → **Publish GitHub release**.
+2. Run `npm run release`, or in VS Code: Terminal → Run Task → **Publish GitHub release**. That raises the last number (1.0.9 → 1.0.10). For a bigger step, run `npm run release -- minor` (1.0.10 → 1.1.0), `npm run release -- major` (→ 2.0.0) or name the version, like `npm run release -- 1.2.0`.
 
 The script:
 - stops if there are uncommitted or unpushed changes, or nothing under **Unreleased**
@@ -79,7 +80,7 @@ The script:
 
 If a run stops partway (for example the build fails), run it again: it carries on with the same version.
 
-Running copies of the app show the "New version found" popup the next time they check. **Reload to update** then updates them in place.
+Running copies of the app notice it within a few minutes and show the "new version available" popup. Clicking it, then **Reload to update**, updates them in place.
 
 The installer's own pages (credit to Pixelplayz2215, the official-download warning, the finish and uninstall text) are in `build/installer.nsh`.
 
@@ -130,6 +131,7 @@ src/main/       Electron main process
   reactionroles.js reaction roles: posting panels, handing out roles, catching up
   welcome.js      welcome and goodbye messages: joins and leaves → message + card
   tickets.js      tickets: panels, open/claim/close, transcripts (shared with server/)
+  stats.js        server stats: counts and counter channels, renamed within Discord's limit
   polls.js        reaction polls: the message with its bars, redrawing as votes come in (shared with server/)
   emojicolors.js  the bar colour for each standard emoji
   backup.js       server snapshots and restore
@@ -147,7 +149,7 @@ src/shared/
 src/renderer/   UI (plain HTML/CSS/JS, no bundler)
   js/theme.js     applies appearance settings as CSS variables (loaded in <head>)
   js/settings.js  Settings page
-  js/updates.js   update check + "New version found" popup
+  js/updates.js   update check, the "new version available" popup and the update screen
   js/core.js      element helper, icons, modals, toasts
   js/home.js      Home page / connect a bot
   js/bot.js       per-bot page + dashboard
@@ -162,6 +164,7 @@ src/renderer/   UI (plain HTML/CSS/JS, no bundler)
   js/welcome.js   Welcome & goodbye page and card designer
   js/tickets.js   Tickets page: panel editor, open tickets, transcript viewer
   js/community.js the Community page and its menu
+  js/stats.js     Server stats page
   card.html + js/cardpage.js  hidden page the bot draws cards in
   js/builder.js   Builder tab
   js/templates.js built-in server templates
@@ -180,6 +183,7 @@ test/reactionroles.test.js  reaction roles tests (not packaged)
 test/polls.test.js     polls tests (not packaged)
 test/welcome.test.js   welcome and goodbye tests (not packaged)
 test/tickets.test.js   tickets tests (not packaged)
+test/stats.test.js     server stats tests (not packaged)
 test/release.test.js   changelog handling tests (not packaged)
 docs/MOD-PORTAL.md  how to deploy the portal and give mods access
 render.yaml     Render blueprint for the portal

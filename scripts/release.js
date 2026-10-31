@@ -9,6 +9,7 @@
 //      go to releases/. mod-view.exe is only copied to releases/; it is never uploaded.
 // If a release run stops partway (say the build fails), run it again: it picks up the same version.
 // Run: npm run release   (needs the GitHub CLI signed in with push access to updateRepo)
+// For a bigger step than the patch number: npm run release -- minor (or major, or an exact 1.2.0).
 const fs = require('fs');
 const path = require('path');
 const { execSync, spawnSync } = require('child_process');
@@ -55,9 +56,25 @@ output('git fetch --quiet');
 if (/ahead \d+/.test(output('git status -sb').split('\n')[0])) fail('Your branch has commits that are not on GitHub yet. Push them first.');
 if (gh('--version').error) fail('The GitHub CLI (gh) was not found. Install it from https://cli.github.com and run "gh auth login".');
 
+// The version to release: asked for (minor, major or an exact x.y.z), else package.json's, or the next
+// patch number when that one is already published.
+function nextVersion(wanted, published) {
+  const base = published || pkg.version;
+  const [major, minor, patch] = parse(base);
+  if (wanted === 'major') return `${major + 1}.0.0`;
+  if (wanted === 'minor') return `${major}.${minor + 1}.0`;
+  if (wanted === 'patch') return `${major}.${minor}.${patch + 1}`;
+  if (/^\d+\.\d+\.\d+$/.test(wanted)) return wanted;
+  return fail(`"${wanted}" isn't a version. Use minor, major, patch or an exact version like 1.2.0.`);
+}
+
 const published = latestPublished();
+const wanted = process.argv[2];
 let version = pkg.version;
-if (published && !isNewer(version, published)) {
+if (wanted && !isNewer(pkg.version, published || '0.0.0')) {
+  version = nextVersion(wanted, published);
+  if (published && !isNewer(version, published)) fail(`Version ${version} isn't newer than ${published}, which is already published.`);
+} else if (published && !isNewer(version, published)) {
   const [major, minor, patch] = parse(published);
   version = `${major}.${minor}.${patch + 1}`;
 }

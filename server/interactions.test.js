@@ -134,7 +134,8 @@ async function startPortal({ tickets = null, fetchImpl } = {}) {
     });
     assert.equal(status, 200);
     assert.deepEqual(json, { type: 5, data: { flags: 64 } });
-    for (let i = 0; i < 200 && !discord.replies[token]; i++) await new Promise((r) => setTimeout(r, 10));
+    // Up to 5 seconds: a busy machine (all test files run at once) can be slow to answer.
+    for (let i = 0; i < 500 && !discord.replies[token]; i++) await new Promise((r) => setTimeout(r, 10));
     assert.ok(discord.replies[token], `no reply to /${name}`);
     return discord.replies[token];
   };

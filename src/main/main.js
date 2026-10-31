@@ -18,6 +18,7 @@ const reactionRoles = require('./reactionroles');
 const polls = require('./polls');
 const welcome = require('./welcome');
 const tickets = require('./tickets');
+const stats = require('./stats');
 const WelcomeCard = require('../shared/welcomecard');
 const pkg = require('../../package.json');
 
@@ -77,13 +78,37 @@ function showWindow() {
   win.focus();
 }
 
+/* ---------- New versions, noticed while the app runs ---------- */
+let newVersion = null; // a newer version GitHub has, once noticed
+
+// Opens the app and its "New version found" screen.
+function showUpdate() {
+  showWindow();
+  send('update:open', {});
+}
+
+const releaseWatcher = updater.createReleaseWatcher({
+  onNewVersion: (version) => {
+    newVersion = version;
+    send('update:available', { version });
+    updateTray();
+    // Hidden in the tray: a Windows notification, which opens the update screen when clicked.
+    if (tray && (!win || win.isDestroyed() || !win.isVisible())) {
+      tray.displayBalloon({ iconType: 'info', title: `${settings.appName} ${version} is available`, content: "Click to see what's new and update." });
+    }
+  },
+});
+
+const watchReleases = () => (settings.checkUpdates ? releaseWatcher.start() : releaseWatcher.stop());
+
 function updateTray() {
   if (!tray) return;
   tray.setImage(trayIcon());
-  tray.setToolTip(settings.appName);
+  tray.setToolTip(newVersion ? `${settings.appName} (version ${newVersion} is available)` : settings.appName);
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: `Open ${settings.appName}`, click: showWindow },
+      ...(newVersion ? [{ label: `Update to ${newVersion}…`, click: showUpdate }] : []),
       { type: 'separator' },
       { label: 'Quit', click: () => app.quit() },
     ]),
@@ -94,6 +119,7 @@ function createTray() {
   if (tray) return;
   tray = new Tray(trayIcon());
   tray.on('click', showWindow);
+  tray.on('balloon-click', () => (newVersion ? showUpdate() : showWindow()));
   updateTray();
 }
 
@@ -584,6 +610,36 @@ async function ticketTranscript(botId, logChannelId, messageId) {
   return { name: file.filename, html: await res.text() };
 }
 
+/* ---------- Server stats (counter channels renamed while the app runs, including in the tray) ---------- */
+// Settings are kept per server in servers.json as stats.
+const statsEngines = new Map(); // botId -> stats engine
+const statsState = new Map(); // `${botId}:${guildId}` -> { counts, updatedAt, problem }
+
+const statsServers = (botId) => store.listGuildConfigs().filter(({ botId: b, config }) => b === botId && config.stats).map(({ guildId, config }) => ({ guildId, settings: config.stats }));
+
+function statsFor(botId) {
+  if (!statsEngines.has(botId)) {
+    statsEngines.set(
+      botId,
+      stats.createStats({
+        rest: restFor(botId),
+        settingsFor: () => statsServers(botId),
+        report: (guildId, state) => {
+          statsState.set(`${botId}:${guildId}`, state);
+          send('stats:changed', { botId, guildId });
+        },
+      }),
+    );
+  }
+  return statsEngines.get(botId);
+}
+
+async function tickStats() {
+  for (const bot of store.listBots()) {
+    if (bot.type !== 'mod' && statsServers(bot.id).length) await statsFor(bot.id).tick().catch(() => {});
+  }
+}
+
 /* ---------- Server logs (posted while the app runs, including in the tray) ---------- */
 const logConfigs = new Map(); // `${botId}:${guildId}` -> logs config
 const logErrors = new Map(); // `${botId}:${guildId}` -> last posting problem
@@ -717,6 +773,7 @@ const handlers = {
     pollEngines.delete(bot.id);
     welcomers.delete(bot.id);
     ticketEngines.delete(bot.id);
+    statsEngines.delete(bot.id);
     loggers.delete(bot.id);
     presences.get(bot.id)?.stop();
     presences.delete(bot.id);
@@ -804,6 +861,7 @@ const handlers = {
     pollEngines.delete(botId);
     welcomers.delete(botId);
     ticketEngines.delete(botId);
+    statsEngines.delete(botId);
     loggers.delete(botId);
     store.removeBot(botId);
   },
@@ -1036,6 +1094,74 @@ const handlers = {
   },
 
   'welcome:image': (name) => cardBackground(name),
+
+  // Every server with stats counters, with its latest counts.
+  'stats:list': () =>
+    store
+      .listBots()
+      .filter((b) => b.type !== 'mod')
+      .flatMap((b) => statsServers(b.id).map(({ guildId, settings: s }) => ({ ...s, botId: b.id, guildId, state: statsState.get(`${b.id}:${guildId}`) || null, membersIntent: !!b.intents?.members }))),
+
+  // Saves a server's counters: makes the category and the channels of counters turned on (named with
+  // the counts right away), and deletes the channels of counters turned off.
+  'stats:save': async (botId, input) => {
+    if (!store.getBot(botId)) throw new Error('That bot is no longer in the app.');
+    if (isMod(botId)) ownerOnly();
+    const s = stats.normalizeSettings(input);
+    if (!s.guildId) throw new Error('Pick the server.');
+    const rest = restFor(botId);
+    const previous = store.getGuildConfig(botId, s.guildId).stats || null;
+    const { channels, counts } = await stats.countBasics(rest, s.guildId);
+    // Members see the counters but can't join them.
+    const locked = [{ id: s.guildId, type: 0, allow: '0', deny: String(stats.CONNECT) }];
+    if (input?.createCategory) {
+      const cat = await rest.request('POST', `/guilds/${s.guildId}/channels`, { body: { name: '📊 Server Stats', type: 4, position: 0, permission_overwrites: locked }, reason: 'Server stats' });
+      Object.assign(s, { categoryId: cat.id, categoryName: cat.name, madeCategory: true });
+    } else s.madeCategory = !!(previous?.madeCategory && previous.categoryId === s.categoryId);
+
+    const find = (id) => (id ? channels.find((c) => c.id === id) : null);
+    for (const [key] of stats.COUNTERS) {
+      const c = s.counters[key];
+      const was = find(previous?.counters?.[key]?.channelId);
+      if (c.on && was) {
+        c.channelId = was.id;
+        if ((was.parent_id || '') !== s.categoryId) await rest.request('PATCH', `/channels/${was.id}`, { body: { parent_id: s.categoryId || null }, reason: 'Server stats' });
+      } else if (c.on) {
+        const made = await rest.request('POST', `/guilds/${s.guildId}/channels`, { body: { name: stats.channelName(c.name, counts[key], s.format), type: 2, parent_id: s.categoryId || undefined, permission_overwrites: locked }, reason: 'Server stats counter' });
+        c.channelId = made.id;
+      } else {
+        if (was) await rest.request('DELETE', `/channels/${was.id}`, { reason: 'Server stats counter turned off' });
+        c.channelId = '';
+      }
+    }
+    store.setGuildConfig(botId, s.guildId, { stats: s });
+    // Fills in bots and users (they need the member list) and any changed names.
+    await statsFor(botId).refresh(s.guildId, s, { force: true }).catch(() => {});
+    return handlers['stats:list']();
+  },
+
+  'stats:remove': async (botId, guildId, deleteChannels) => {
+    if (isMod(botId)) ownerOnly();
+    const id = snowflake(guildId, 'server');
+    const s = store.getGuildConfig(botId, id).stats;
+    if (s && deleteChannels) {
+      const rest = restFor(botId);
+      for (const c of Object.values(s.counters)) if (c.channelId) await rest.request('DELETE', `/channels/${c.channelId}`, { reason: 'Server stats removed' }).catch(() => {});
+      if (s.madeCategory && s.categoryId) await rest.request('DELETE', `/channels/${s.categoryId}`, { reason: 'Server stats removed' }).catch(() => {});
+    }
+    store.setGuildConfig(botId, id, { stats: null });
+    statsFor(botId).forget(id);
+    statsState.delete(`${botId}:${id}`);
+    return handlers['stats:list']();
+  },
+
+  'stats:refresh': async (botId, guildId) => {
+    if (isMod(botId)) ownerOnly();
+    const s = store.getGuildConfig(botId, snowflake(guildId, 'server')).stats;
+    if (!s) throw new Error("This server's stats aren't set up any more.");
+    await statsFor(botId).refresh(guildId, s, { force: true });
+    return handlers['stats:list']();
+  },
 
   // Every ticket panel of the owner's bots, with who answers its buttons.
   'tickets:list': () =>
@@ -1481,6 +1607,7 @@ const handlers = {
     settings = Appearance.normalize(next);
     store.saveSettings(settings);
     applyWindowAppearance();
+    watchReleases();
     return settings;
   },
 
@@ -1608,6 +1735,10 @@ if (!app.requestSingleInstanceLock()) {
   Menu.setApplicationMenu(null);
   app.whenReady().then(() => {
     createWindow();
+    watchReleases();
+    // Server stats: each server is refreshed every 5 minutes (the engine paces itself).
+    setTimeout(tickStats, 30 * 1000);
+    setInterval(tickStats, 60 * 1000);
     setTimeout(runAutoBackups, 60 * 1000);
     setInterval(runAutoBackups, 30 * 60 * 1000);
     // Social alerts: YouTube channels are checked every 5 minutes and Twitch every minute (the watcher paces itself).

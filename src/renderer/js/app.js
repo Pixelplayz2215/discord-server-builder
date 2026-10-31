@@ -139,7 +139,7 @@ const App = {
 
     rail.replaceChildren(
       item('rail-home', 'Home', h('button', { class: 'rail-btn', onclick: () => this.go({ page: 'home' }) }, icon('home')), isHome),
-      item('rail-community', 'Community: welcome cards, reaction roles, tickets, polls and social alerts', h('button', { class: 'rail-btn', onclick: () => this.go({ page: Community.last }) }, icon('grid')), Community.has(this.route.page)),
+      item('rail-community', 'Community: welcome cards, reaction roles, tickets, polls, server stats and social alerts', h('button', { class: 'rail-btn', onclick: () => this.go({ page: Community.last }) }, icon('grid')), Community.has(this.route.page)),
       h('div', { class: 'rail-sep' }),
       ...botItems,
       item(

@@ -94,6 +94,46 @@ async function checkForUpdate() {
   };
 }
 
+// Watches GitHub for a new release while the app runs, in the tray too. Each look sends the ETag of
+// the last answer, so while nothing changes GitHub answers "not modified", which is quick and doesn't
+// count against its rate limit. onNewVersion(version) is called once for each newer version.
+const WATCH_EVERY_MS = 5 * 60 * 1000;
+function createReleaseWatcher({ onNewVersion, current = () => app.getVersion(), fetchImpl = fetch, everyMs = WATCH_EVERY_MS, firstLookMs = 20 * 1000 }) {
+  let etag = null;
+  let told = null;
+  let timer = null;
+  let first = null;
+
+  async function look() {
+    try {
+      const res = await fetchImpl(`https://api.github.com/repos/${REPO}/releases/latest`, { headers: etag ? { ...HEADERS, 'If-None-Match': etag } : HEADERS });
+      if (!res.ok) return; // not modified, rate limited or offline: look again next time
+      etag = res.headers.get('etag') || null;
+      const version = String((await res.json()).tag_name || '').replace(/^v/i, '');
+      if (version && version !== told && isNewer(version, current())) {
+        told = version;
+        onNewVersion(version);
+      }
+    } catch {
+      // offline: look again next time
+    }
+  }
+
+  return {
+    start() {
+      if (timer) return;
+      first = setTimeout(look, firstLookMs);
+      timer = setInterval(look, everyMs);
+    },
+    stop() {
+      clearTimeout(first);
+      clearInterval(timer);
+      timer = null;
+    },
+    look,
+  };
+}
+
 async function downloadFile(url, dest, onProgress) {
   const res = await fetch(url, { headers: { 'User-Agent': HEADERS['User-Agent'] } });
   if (!res.ok || !res.body) throw new Error(`Download failed (HTTP ${res.status}).`);
@@ -213,4 +253,4 @@ function repairShortcuts() {
   return fixed;
 }
 
-module.exports = { checkForUpdate, installUpdate, restartInto, repairShortcuts, downloadFile, swapScript, installerScript, isNewer, RELEASES_PAGE };
+module.exports = { checkForUpdate, createReleaseWatcher, installUpdate, restartInto, repairShortcuts, downloadFile, swapScript, installerScript, isNewer, RELEASES_PAGE };

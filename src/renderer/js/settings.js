@@ -273,7 +273,7 @@ const SettingsPage = {
           checkBtn,
           h('button', { class: 'btn', onclick: () => releasesUrl && openExternal(releasesUrl) }, icon('external'), 'View releases'),
         ),
-        switchEl(s.checkUpdates, (v) => SettingsPage.update({ checkUpdates: v }), 'Check for updates when the app starts'),
+        switchEl(s.checkUpdates, (v) => SettingsPage.update({ checkUpdates: v }), 'Watch for new versions (checks GitHub every few minutes, in the tray too)'),
         h(
           'p',
           { class: 'subtle', style: { fontSize: 'calc(12rem / 14)' } },

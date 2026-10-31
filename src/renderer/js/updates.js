@@ -1,7 +1,23 @@
-// Update check against GitHub Releases and the "New version found" popup.
+// Update check against GitHub Releases, the small "new version available" popup, and the
+// "New version found" screen it opens. The main process watches GitHub in the background.
 
 const Updater = {
   prompting: false,
+  notified: null, // the version the popup was shown for
+
+  // A small popup in the corner. Clicking it opens the update screen.
+  notify(version) {
+    if (Updater.prompting || Updater.notified === version) return;
+    Updater.notified = version;
+    document.getElementById('update-popup')?.remove();
+    const popup = h(
+      'div',
+      { class: 'update-popup', id: 'update-popup', role: 'status' },
+      h('button', { class: 'update-popup-main', onclick: () => { popup.remove(); Updater.check(); } }, icon('download'), h('span', null, h('b', null, `Version ${version} is available`), h('small', null, "Click to see what's new and update"))),
+      h('button', { class: 'icon-btn', title: 'Not now', onclick: () => popup.remove() }, icon('x')),
+    );
+    document.body.append(popup);
+  },
 
   // **bold** and `code` from the changelog, as elements (never as HTML).
   inline(text) {
@@ -14,7 +30,8 @@ const Updater = {
   async check({ silent = false } = {}) {
     try {
       const info = await api('update:check');
-      if (info.available) Updater.prompt(info);
+      // Found on its own (at start): the small popup. Asked for: straight to the update screen.
+      if (info.available) (silent ? Updater.notify(info.latest) : Updater.prompt(info));
       else if (!silent) toast(info.message || `You're on the latest version (v${info.current}).`, info.message ? 'info' : 'ok');
       return info;
     } catch (err) {
@@ -26,6 +43,7 @@ const Updater = {
   prompt(info) {
     if (Updater.prompting) return;
     Updater.prompting = true;
+    document.getElementById('update-popup')?.remove();
 
     const bar = h('div', { style: { width: '0%' } });
     const progress = h('div', { class: 'progress hidden' }, bar);
@@ -93,3 +111,7 @@ const Updater = {
     }).finally(() => (Updater.prompting = false));
   },
 };
+
+// The main process noticed a new release on GitHub, or the tray asked for the update screen.
+onEvent('update:available', ({ version }) => Updater.notify(version));
+onEvent('update:open', () => Updater.check());
