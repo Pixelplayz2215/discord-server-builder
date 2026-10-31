@@ -4,6 +4,8 @@ const assert = require('node:assert/strict');
 const { caseFromCall, durationLabel, privateChannel, createCases, warnMember } = require('../src/main/cases');
 const { snapshotServer, restoreBackup, validateBackup } = require('../src/main/backup');
 const { createServerLogger, intentsFor, normalizeConfig, INTENTS } = require('../src/main/logs');
+const { lockWithNotice } = require('../src/main/builder');
+const ModLog = require('../src/shared/modlog');
 
 const G = '100000000000000001';
 const BOT = '200000000000000000';
@@ -243,4 +245,76 @@ test('member updates show nickname, role and timeout changes', async () => {
   assert.match(update.description, new RegExp(`Roles added:\\*\\* <@&${R.helper}>`));
   assert.match(update.description, /Timed out/);
   assert.match(embeds.find((e) => e.title === 'Member left').description, /Roles:/);
+});
+
+test('server logs show who locked or unlocked a channel, and why', async () => {
+  const LOG = '300000000000000099';
+  const posts = [];
+  let audit = [];
+  const rest = {
+    async request(method, path, opts = {}) {
+      if (path === `/guilds/${G}/audit-logs`) {
+        if (!audit) throw Object.assign(new Error('Missing Access'), { code: 50013 });
+        return { audit_log_entries: audit };
+      }
+      if (method === 'POST') posts.push(...opts.body.embeds);
+      return {};
+    },
+  };
+  const config = normalizeConfig({ enabled: true, channelId: LOG });
+  const logger = createServerLogger({ rest, configFor: () => config, flushMs: 5, auditDelayMs: 1 });
+  const general = { guild_id: G, id: C.general, name: 'general', type: 0, permission_overwrites: [] };
+  const locked = [{ id: G, type: 0, allow: '0', deny: SEND }];
+  const id = (ms) => String((BigInt(ms) - 1420070400000n) << 22n);
+  logger.handle('GUILD_CREATE', { id: G, channels: [general], roles: [], members: [] });
+
+  audit = [
+    { id: id(Date.now() - 10 * 60e3), action_type: 14, target_id: C.general, user_id: BOT, options: { id: G }, reason: 'old', changes: [{ key: 'deny', old_value: '0', new_value: SEND }] },
+    { id: id(Date.now()), action_type: 14, target_id: C.general, user_id: BOT, options: { id: G, type: '0' }, reason: 'Raid in progress — by Pixel (750867905226211388) via /lock', changes: [{ key: 'deny', old_value: '0', new_value: SEND }] },
+  ];
+  logger.handle('CHANNEL_UPDATE', { ...general, permission_overwrites: locked });
+  logger.handle('CHANNEL_UPDATE', { ...general, topic: 'still locked', permission_overwrites: locked }); // not a lock change
+  await new Promise((r) => setTimeout(r, 40));
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].title, '🔒 Channel locked');
+  assert.equal(posts[0].description, `<#${C.general}> · general`);
+  assert.deepEqual(posts[0].fields, [
+    { name: 'By', value: '<@750867905226211388> · Pixel via `/lock`', inline: true },
+    { name: 'Reason', value: 'Raid in progress' },
+  ]);
+
+  // Without View Audit Log it's still logged, just without who and why.
+  audit = null;
+  logger.handle('CHANNEL_UPDATE', { ...general, permission_overwrites: [] });
+  await new Promise((r) => setTimeout(r, 40));
+  assert.equal(posts[1].title, '🔓 Channel unlocked');
+  assert.deepEqual(posts[1].fields, []);
+});
+
+test('a lock notice that went out is taken down when the lock itself fails', async () => {
+  const calls = [];
+  const rest = {
+    async request(method, path) {
+      calls.push(`${method} ${path}`);
+      if (method === 'GET') return { id: C.general, type: 0, permission_overwrites: [] };
+      if (method === 'POST') return { id: '700000000000000001' };
+      if (method === 'PUT') throw Object.assign(new Error('Missing Permissions'), { code: 50013 });
+      return null;
+    },
+  };
+  await assert.rejects(lockWithNotice(rest, G, C.general, true, 'audit', 'why'), /Missing Permissions/);
+  assert.ok(calls.includes(`DELETE /channels/${C.general}/messages/700000000000000001`));
+});
+
+test('reasons written through the bot name the moderator and the command', () => {
+  assert.deepEqual(ModLog.parseAuditReason('test — by Pixel (750867905226211388) via /lock'), { reason: 'test', by: { name: 'Pixel', id: '750867905226211388' }, via: '/lock' });
+  assert.deepEqual(ModLog.parseAuditReason('by Pixel (750867905226211388) via mod portal'), { reason: '', by: { name: 'Pixel', id: '750867905226211388' }, via: 'mod portal' });
+  assert.deepEqual(ModLog.parseAuditReason('Spamming'), { reason: 'Spamming', by: null, via: null });
+  const entry = (type, oldDeny, newDeny, target = G) => ({ action_type: type, options: { id: target }, changes: [{ key: 'deny', old_value: oldDeny, new_value: newDeny }] });
+  assert.equal(ModLog.lockFromAudit(entry(14, '0', SEND), G, 0), 'locked');
+  assert.equal(ModLog.lockFromAudit(entry(14, SEND, '0'), G, 0), 'unlocked');
+  assert.equal(ModLog.lockFromAudit(entry(13, undefined, String(1n << 20n)), G, 2), 'locked', 'voice: joining');
+  assert.equal(ModLog.lockFromAudit(entry(15, SEND, undefined), G), 'unlocked');
+  assert.equal(ModLog.lockFromAudit(entry(14, '0', SEND, R.mod), G, 0), null, 'another role\'s permissions');
+  assert.equal(ModLog.lockFromAudit(entry(14, '0', String(1n << 6n)), G, 0), null, 'other permissions');
 });

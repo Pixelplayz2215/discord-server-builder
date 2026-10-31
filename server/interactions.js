@@ -4,7 +4,7 @@
 // permissions, and only members ranked below them. Member actions are recorded in #mod-cases.
 // /poll is for anyone who can post polls in the channel.
 const crypto = require('crypto');
-const { purgeMessages, setChannelLock } = require('../src/main/builder');
+const { purgeMessages, lockWithNotice } = require('../src/main/builder');
 const { DURATIONS, DELETE_WINDOWS, SLOWMODES, labelFor } = require('../src/main/commands');
 const { auditReason, P } = require('./guard');
 const { createCases, notifyUser, warnMember, TYPES, escapeMarkdown } = require('../src/main/cases');
@@ -136,8 +136,9 @@ function createInteractions({ rest, guard, caseLog = createCases(rest, { botId: 
     await actorFor(ctx, P.MANAGE_CHANNELS);
     const channel = channelFor(ctx);
     if (channel.thread) throw fail("Threads can't be locked this way. Pick the channel instead.");
-    await setChannelLock(rest, ctx.guildId, channel.id, locked, audit(ctx));
-    return `${locked ? '🔒 Locked' : '🔓 Unlocked'} <#${channel.id}>.`;
+    // Everyone in the channel is told, with the reason; this reply stays with the mod.
+    const { told } = await lockWithNotice(rest, ctx.guildId, channel.id, locked, audit(ctx), ctx.options.reason);
+    return lines(`${locked ? '🔒 Locked' : '🔓 Unlocked'} <#${channel.id}>.`, told === false ? "The bot couldn't post the notice there, so members weren't told." : null);
   }
 
   const handlers = {

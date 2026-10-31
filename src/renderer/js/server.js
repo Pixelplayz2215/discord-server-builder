@@ -1249,12 +1249,12 @@ const ChannelsTab = {
       lockBtn.addEventListener(
         'click',
         withBusy(lockBtn, async () => {
-          ChannelsTab.replaceChannel(ctx, await api('channel:lock', ctx.botId, ctx.guildId, ch.id, !locked, reason));
+          ChannelsTab.replaceChannel(ctx, await api('channel:lock', ctx.botId, ctx.guildId, ch.id, !locked, reason, true));
           toast(locked ? `Unlocked #${ch.name}` : `Locked #${ch.name}`);
           ctx.rerender();
         }),
       );
-      const row = [h('div', { class: 'grow' }, h('div', { class: 'label' }, 'Lock'), h('div', { class: 'subtle', style: { fontSize: 'calc(12rem / 14)' } }, isVoice(ch.type) ? 'Stops @everyone joining.' : 'Stops @everyone sending messages.')), lockBtn];
+      const row = [h('div', { class: 'grow' }, h('div', { class: 'label' }, 'Lock'), h('div', { class: 'subtle', style: { fontSize: 'calc(12rem / 14)' } }, `${isVoice(ch.type) ? 'Stops @everyone joining.' : 'Stops @everyone sending messages.'} The bot tells members in the channel, with the reason above.`)), lockBtn];
       sections.push(h('div', { class: 'row' }, row));
     }
 
@@ -1490,13 +1490,18 @@ const AuditTab = {
   row(ctx, e) {
     const executor = ctx.srv.audit.users[e.user_id];
     const t = e.action_type;
-    const coral = [12, 20, 21, 22, 27, 32, 72, 73, 143, 144, 145].includes(t);
-    const teal = [10, 23, 28, 30, 40].includes(t);
-    const ic = { 20: 'kick', 22: 'ban', 23: 'unlock', 72: 'eraser', 73: 'eraser', 145: 'clock', 24: 'users', 25: 'tag', 30: 'tag', 31: 'tag', 32: 'tag', 40: 'link', 41: 'link', 42: 'link' }[t] || (t >= 10 && t <= 15 ? 'hash' : 'list');
-    let action = AUDIT_ACTIONS[t] || `action #${t}`;
+    // A lock shows as a permission change on @everyone; say what it really was.
+    const lock = ModLog.lockFromAudit(e, ctx.guildId, ctx.srv.channels.find((c) => c.id === e.target_id)?.type);
+    // Done through the bot (a slash command or the mod portal): the moderator and how are in the reason.
+    const { reason, by, via } = ModLog.parseAuditReason(e.reason);
+    const coral = lock === 'locked' || [12, 20, 21, 22, 27, 32, 72, 73, 143, 144, 145].includes(t);
+    const teal = lock === 'unlocked' || [10, 23, 28, 30, 40].includes(t);
+    const ic = lock ? (lock === 'locked' ? 'lock' : 'unlock') : { 20: 'kick', 22: 'ban', 23: 'unlock', 72: 'eraser', 73: 'eraser', 145: 'clock', 24: 'users', 25: 'tag', 30: 'tag', 31: 'tag', 32: 'tag', 40: 'link', 41: 'link', 42: 'link' }[t] || (t >= 10 && t <= 15 ? 'hash' : 'list');
+    let action = lock || AUDIT_ACTIONS[t] || `action #${t}`;
     if (t === 24 && e.changes?.some((c) => c.key === 'communication_disabled_until')) {
       action = e.changes.find((c) => c.key === 'communication_disabled_until').new_value ? 'timed out' : 'removed timeout from';
     }
+    const actor = by ? by.name : executor ? displayName(executor) : 'Someone';
     const when = snowflakeDate(e.id);
     return h(
       'div',
@@ -1505,8 +1510,15 @@ const AuditTab = {
       h(
         'div',
         { class: 'grow', style: { minWidth: 0 } },
-        h('div', { class: 'ellipsis' }, h('b', null, executor ? displayName(executor) : 'Someone'), ` ${action} `, h('b', null, AuditTab.targetName(ctx, e))),
-        e.reason ? h('div', { class: 'secondary ellipsis' }, `Reason: ${e.reason}`) : null,
+        h(
+          'div',
+          { class: 'ellipsis' },
+          h('b', null, actor),
+          ` ${action} `,
+          h('b', null, AuditTab.targetName(ctx, e)),
+          via ? h('span', { class: 'badge peri audit-via', title: executor ? `Done through ${displayName(executor)}` : '' }, via) : null,
+        ),
+        reason ? h('div', { class: 'audit-reason' }, h('span', { class: 'audit-reason-label' }, 'Reason'), h('span', null, reason)) : null,
       ),
       h('span', { class: 'subtle', style: { fontSize: 'calc(12rem / 14)', whiteSpace: 'nowrap' }, title: when.toLocaleString() }, fmtRelative(when)),
     );

@@ -1,6 +1,7 @@
 // Server logs: turns the bot's gateway events into embeds posted in a log channel, while the app is
 // open or in the tray. Recent messages are kept in memory so deleted and edited ones can be shown.
 // No Electron here, so it can be tested with fake events.
+const { isLocked, lockFromAudit, parseAuditReason } = require('../shared/modlog');
 
 const INTENTS = { GUILDS: 1 << 0, GUILD_MEMBERS: 1 << 1, GUILD_MODERATION: 1 << 2, GUILD_MESSAGES: 1 << 9, MESSAGE_CONTENT: 1 << 15 };
 const EVENT_GROUPS = ['members', 'moderation', 'messages', 'server'];
@@ -8,6 +9,8 @@ const MAX_MESSAGES = 5000;
 const MAX_MEMBERS = 50000;
 const NEW_ACCOUNT_MS = 7 * 86400000;
 const FLUSH_MS = 2000;
+const AUDIT_DELAY_MS = 1500; // Discord writes the audit log entry a moment after the change
+const AUDIT_MAX_AGE_MS = 2 * 60000;
 const COLORS = { join: 0x0bbfbc, leave: 0x8a80a3, ban: 0xfc354c, unban: 0x0bbfbc, member: 0x7f8cf0, delete: 0xfc8a35, edit: 0xf5a623, server: 0x5865f2 };
 
 const snowflakeTime = (id) => Number((BigInt(id) >> 22n) + 1420070400000n);
@@ -45,10 +48,10 @@ function normalizeConfig(input) {
 
 // configFor(guildId): that server's log settings when logging is on (with a channel), else null.
 // It may include content: false when Message Content Intent is off.
-function createServerLogger({ rest, configFor, onError = () => {}, flushMs = FLUSH_MS }) {
+function createServerLogger({ rest, configFor, onError = () => {}, flushMs = FLUSH_MS, auditDelayMs = AUDIT_DELAY_MS }) {
   const messages = new Map(); // message id -> { guildId, channelId, author, content, attachments }
   const members = new Map(); // guild:user -> { nick, roles, until, joinedAt, user }
-  const channels = new Map(); // channel id -> name
+  const channels = new Map(); // channel id -> { name, locked }
   const roles = new Map(); // role id -> name
   const queues = new Map(); // guild id -> { embeds, timer, sending }
 
@@ -91,7 +94,7 @@ function createServerLogger({ rest, configFor, onError = () => {}, flushMs = FLU
   }
 
   const cacheGuild = (d) => {
-    for (const c of d.channels || []) channels.set(c.id, c.name);
+    for (const c of d.channels || []) channels.set(c.id, { name: c.name, locked: isLocked(c, d.id) });
     for (const r of d.roles || []) roles.set(r.id, r.name);
     for (const m of d.members || []) rememberMember(d.id, m);
   };
@@ -108,6 +111,26 @@ function createServerLogger({ rest, configFor, onError = () => {}, flushMs = FLU
     if (until && until !== wasUntil) lines.push(`**Timed out** until ${stamp(Date.parse(until), 'f')}`);
     if (!until && wasUntil) lines.push('**Timeout ended**');
     return lines;
+  }
+
+  // A channel was locked or unlocked: who did it and why come from the audit log (when the bot may
+  // read it). Commands through the bot name the real moderator and the command in the reason.
+  async function logLock(guildId, channel, locked) {
+    let found = null;
+    try {
+      await new Promise((r) => setTimeout(r, auditDelayMs));
+      const log = await rest.request('GET', `/guilds/${guildId}/audit-logs`, { query: { limit: 10 } });
+      found = (log.audit_log_entries || []).find((e) => e.target_id === channel.id && Date.now() - snowflakeTime(e.id) < AUDIT_MAX_AGE_MS && lockFromAudit(e, guildId, channel.type) === (locked ? 'locked' : 'unlocked'));
+    } catch {
+      // no View Audit Log permission: log it without who and why
+    }
+    const fields = [];
+    if (found) {
+      const { reason, by, via } = parseAuditReason(found.reason);
+      fields.push({ name: 'By', value: by ? `<@${by.id}> · ${escape(by.name)} via \`${via}\`` : `<@${found.user_id}>`, inline: true });
+      fields.push({ name: 'Reason', value: reason ? clip(reason, 1024) : '*No reason given*' });
+    }
+    post(guildId, { title: locked ? '🔒 Channel locked' : '🔓 Channel unlocked', color: locked ? COLORS.ban : COLORS.unban, description: `<#${channel.id}> · ${escape(channel.name)}`, fields });
   }
 
   function handle(type, d) {
@@ -217,13 +240,15 @@ function createServerLogger({ rest, configFor, onError = () => {}, flushMs = FLU
       case 'CHANNEL_DELETE':
       case 'CHANNEL_UPDATE': {
         const old = channels.get(d.id);
+        const locked = isLocked(d, guildId);
         if (type === 'CHANNEL_DELETE') channels.delete(d.id);
-        else channels.set(d.id, d.name);
+        else channels.set(d.id, { name: d.name, locked });
+        if (type === 'CHANNEL_UPDATE' && old && old.locked !== locked && on.moderation && d.type !== 4) logLock(guildId, d, locked);
         if (!on.server || (d.id === cfg.channelId && type !== 'CHANNEL_DELETE')) break;
         const kind = d.type === 4 ? 'Category' : 'Channel';
         if (type === 'CHANNEL_CREATE') post(guildId, { title: `${kind} created`, color: COLORS.server, description: `<#${d.id}> · ${escape(d.name)}` });
         if (type === 'CHANNEL_DELETE') post(guildId, { title: `${kind} deleted`, color: COLORS.delete, description: escape(d.name) });
-        if (type === 'CHANNEL_UPDATE' && old && old !== d.name) post(guildId, { title: `${kind} renamed`, color: COLORS.server, description: `<#${d.id}>: ${escape(old)} → ${escape(d.name)}` });
+        if (type === 'CHANNEL_UPDATE' && old && old.name !== d.name) post(guildId, { title: `${kind} renamed`, color: COLORS.server, description: `<#${d.id}>: ${escape(old.name)} → ${escape(d.name)}` });
         break;
       }
 

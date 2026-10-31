@@ -115,7 +115,7 @@ Mods who don't use the app can moderate right in Discord. Your portal answers th
 | `/unban user [reason]` | Ban Members | Lifts a ban |
 | `/cases member` | Any mod permission | Shows their warnings and moderation history |
 | `/purge count [reason]` | Manage Messages | Deletes up to 500 recent messages in the channel |
-| `/lock`, `/unlock [channel] [reason]` | Manage Channels | Stops members sending messages, or lets them again |
+| `/lock`, `/unlock [channel] [reason]` | Manage Channels | Stops members sending messages, or lets them again. The bot tells everyone in the channel, with the reason |
 | `/slowmode interval [channel]` | Manage Channels | Sets slowmode, from off to 6 hours |
 | `/poll message emoji1 option1 emoji2 option2 [emoji3 option3] [emoji4 option4]` | Anyone who can post polls in the channel | Posts a poll members vote on by reacting. The emoji boxes suggest the server's own emojis and standard ones as you type |
 

@@ -330,3 +330,30 @@ test('/poll emoji boxes suggest server emojis and standard ones as you type', as
     server.close();
   }
 });
+
+test('/lock and /unlock tell members in the channel why, before locking and after unlocking', async () => {
+  const { discord, server, run } = await startPortal();
+  const order = () => discord.calls.filter((c) => (c.method === 'POST' && c.path === `/channels/${CH}/messages`) || (c.method === 'PUT' && c.path === `/channels/${CH}/permissions/${G}`)).map((c) => c.method);
+  try {
+    assert.match((await run('lock', { reason: 'Raid in progress' })).content, /^🔒 Locked <#300000000000000001>\.$/);
+    const [notice] = discord.messages[CH];
+    assert.equal(notice.embeds[0].title, '🔒 Channel locked');
+    assert.equal(notice.embeds[0].description, "Members can't send messages here for now.\n\n**Reason:** Raid in progress");
+    assert.deepEqual(notice.allowed_mentions, { parse: [] });
+    assert.deepEqual(order(), ['POST', 'PUT'], 'told before the lock, while the bot can still post');
+    const put = discord.calls.find((c) => c.method === 'PUT' && c.path === `/channels/${CH}/permissions/${G}`);
+    assert.equal(put.reason, 'Raid in progress — by user3 (200000000000000003) via /lock');
+
+    await run('unlock', {});
+    assert.equal(discord.messages[CH][0].embeds[0].title, '🔓 Channel unlocked');
+    assert.equal(discord.messages[CH][0].embeds[0].description, 'Members can send messages here again.');
+    assert.deepEqual(order(), ['POST', 'PUT', 'PUT', 'POST'], 'told after the unlock');
+
+    // A forum can't hold a message: it's locked without one.
+    discord.channels.push({ id: '300000000000000005', type: 15, name: 'ideas', permission_overwrites: [] });
+    assert.match((await run('lock', { channel: '300000000000000005' })).content, /^🔒 Locked/);
+    assert.equal(discord.messages['300000000000000005'], undefined);
+  } finally {
+    server.close();
+  }
+});

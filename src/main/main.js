@@ -6,7 +6,7 @@ const { DiscordRest } = require('./discord');
 const { PresenceConnection } = require('./gateway');
 const store = require('./store');
 const Appearance = require('../shared/appearance');
-const { buildServer, cloneServer, fetchAllMembers, purgeMessages, setChannelLock } = require('./builder');
+const { buildServer, cloneServer, fetchAllMembers, purgeMessages, setChannelLock, lockWithNotice } = require('./builder');
 const updater = require('./updater');
 const portal = require('./portal');
 const commands = require('./commands');
@@ -1069,10 +1069,12 @@ const handlers = {
     return isMod(botId) ? modCall(botId, '/api/purge', { channelId, count: n, reason }) : purgeMessages(restFor(botId), channelId, n, reason);
   },
 
-  'channel:lock': (botId, guildId, channelId, locked, reason) =>
-    isMod(botId)
-      ? modCall(botId, '/api/lock', { guildId, channelId, locked, reason })
-      : setChannelLock(restFor(botId), guildId, channelId, locked, reason),
+  // notice: also tell members in the channel why (a single lock from the Channels tab, not a lockdown).
+  'channel:lock': async (botId, guildId, channelId, locked, reason, notice = false) => {
+    if (isMod(botId)) return modCall(botId, '/api/lock', { guildId, channelId, locked, reason, notice });
+    if (notice) return (await lockWithNotice(restFor(botId), guildId, channelId, locked, reason, reason)).channel;
+    return setChannelLock(restFor(botId), guildId, channelId, locked, reason);
+  },
 
   'builder:run': (botId, guildId, template, opts) => {
     if (isMod(botId)) ownerOnly();

@@ -4,7 +4,7 @@
 // No dependencies beyond Node 20+. Start with: node server/index.js
 const http = require('http');
 const { DiscordRest } = require('../src/main/discord');
-const { fetchAllMembers, purgeMessages, setChannelLock } = require('../src/main/builder');
+const { fetchAllMembers, purgeMessages, setChannelLock, lockWithNotice } = require('../src/main/builder');
 const { loadConfig } = require('./config');
 const { createAuth } = require('./auth');
 const { createGuard, auditReason } = require('./guard');
@@ -183,11 +183,13 @@ function createPortal({ config, rest, auth, guard, interactions, caseLog = creat
 
     'POST /api/lock': async (req) => {
       const user = sessionUser(req);
-      const { guildId, channelId, locked, reason } = await readJson(req);
+      const { guildId, channelId, locked, reason, notice } = await readJson(req);
       const realGuild = await channelGuild(channelId);
       if (realGuild !== String(guildId)) throw httpError(400, 'That channel is not in this server.');
       const actor = await guard.actorIn(realGuild, user);
       guard.requirePermission(actor, guard.P.MANAGE_CHANNELS);
+      // notice: tell members in the channel, with the reason (a single lock; not a server lockdown).
+      if (notice) return (await lockWithNotice(rest, realGuild, String(channelId), !!locked, auditReason(reason, user), reason)).channel;
       return setChannelLock(rest, realGuild, String(channelId), !!locked, auditReason(reason, user));
     },
   };

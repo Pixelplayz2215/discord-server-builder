@@ -6,6 +6,9 @@ To release: add your changes as `- ` lines under **Unreleased**, then run `npm r
 
 ## Unreleased
 
+- **Locks are announced.** `/lock`, `/unlock` and the Lock button on the Channels tab now post a card in the channel saying it's locked (or open again) and why, so everyone knows. Raid lockdowns stay quiet.
+- **Locks in the logs.** Server logs post when a channel is locked or unlocked, with the moderator, the command and the reason. In the Audit log tab, a lock now reads "Pixel locked #channel" instead of "changed permissions", and actions from slash commands and the mod portal show the moderator who did them, the command as a badge, and the reason on its own line.
+
 ## 1.0.8 (2026-10-30)
 
 - **Polls.** A new Polls page (bars in the left rail) posts a question with 2 to 4 answers, each with a server emoji or a standard one. Members vote by reacting, and the bot draws a coloured bar under each answer like Discord's own polls: the bar matches its emoji's colour, or pick your own, and the card colour is yours too. Let members pick one answer or several, and end a poll to show the final results with the winner marked.

@@ -384,4 +384,46 @@ async function setChannelLock(rest, guildId, channelId, locked, reason) {
   return rest.request('GET', `/channels/${channelId}`);
 }
 
-module.exports = { buildServer, cloneServer, fetchAllMembers, purgeMessages, setChannelLock };
+// What members see in a channel when it's locked or unlocked, with the moderator's reason.
+function lockNotice(type, locked, reason) {
+  const voice = isVoiceType(type);
+  const what = locked ? (voice ? "Members can't join this channel for now." : "Members can't send messages here for now.") : voice ? 'Members can join this channel again.' : 'Members can send messages here again.';
+  const text = String(reason || '').trim();
+  return {
+    embeds: [{ color: locked ? 0xfc354c : 0x0bbfbc, title: locked ? '🔒 Channel locked' : '🔓 Channel unlocked', description: text ? `${what}\n\n**Reason:** ${text}` : what }],
+    allowed_mentions: { parse: [] },
+  };
+}
+
+const TALKABLE = new Set([0, 2, 5, 13]); // forums, media channels and categories can't hold a message
+
+// Locks or unlocks a channel and tells members there why (publicReason). The message goes out before
+// locking, since the lock may stop the bot posting as well, and after unlocking. Returns the
+// updated channel, and told: false when the message couldn't be posted (null when there was none).
+async function lockWithNotice(rest, guildId, channelId, locked, auditReason, publicReason) {
+  const { type } = await rest.request('GET', `/channels/${channelId}`);
+  let told = null;
+  let noticeId = null;
+  const tell = async () => {
+    if (!TALKABLE.has(type)) return;
+    try {
+      noticeId = (await rest.request('POST', `/channels/${channelId}/messages`, { body: lockNotice(type, locked, publicReason) })).id;
+      told = true;
+    } catch {
+      told = false;
+    }
+  };
+  if (locked) await tell();
+  let channel;
+  try {
+    channel = await setChannelLock(rest, guildId, channelId, locked, auditReason);
+  } catch (err) {
+    // The lock didn't happen, so the notice saying it did comes down again.
+    if (noticeId) await rest.request('DELETE', `/channels/${channelId}/messages/${noticeId}`).catch(() => {});
+    throw err;
+  }
+  if (!locked) await tell();
+  return { channel, told };
+}
+
+module.exports = { buildServer, cloneServer, fetchAllMembers, purgeMessages, setChannelLock, lockWithNotice, lockNotice };
