@@ -25,6 +25,7 @@ Windows may show a SmartScreen warning the first time because the app isn't code
 - **Channels.** Send messages as the bot, purge, lock, set slowmode, edit permissions, rename, create and delete.
 - **Builder and backups.** Build a server's roles, categories, channels and permissions from templates, clone an existing server, and back up and restore servers.
 - **Social alerts.** Post when a YouTube channel uploads or a Twitch channel goes live.
+- **Reaction roles.** Members react to a message to give themselves roles, with your server's own emojis or standard ones.
 - **Settings.** 8 themes (including light ones), custom colours, your own logo and app name, UI scale, text size, corner roundness and fonts. The app can keep running in the tray.
 - **Mod sign-in and slash commands.** Moderators sign in with Discord instead of using the bot token, or use `/warn`, `/ban` and the other mod commands in Discord, and only get what their Discord permissions allow. See [docs/MOD-PORTAL.md](https://github.com/Pixelplayz2215/discord-server-builder/blob/main/docs/MOD-PORTAL.md) to set up a portal for your own bot.
 

@@ -11,6 +11,7 @@ const INVOKE = new Set([
   'logs:get', 'logs:set', 'logs:createChannel', 'logs:test',
   'social:get', 'social:setClientId', 'social:twitchLoginStart', 'social:twitchLoginWait', 'social:twitchLoginCancel', 'social:twitchLogout',
   'social:resolve', 'social:saveAlert', 'social:setEnabled', 'social:removeAlert', 'social:test',
+  'rr:list', 'rr:save', 'rr:delete', 'rr:sync',
   'presence:set', 'rest', 'members:all', 'channel:purge', 'channel:lock',
   'builder:run', 'builder:clone',
   'templates:list', 'templates:save', 'templates:delete', 'templates:export', 'templates:import',

@@ -6,6 +6,8 @@ To release: add your changes as `- ` lines under **Unreleased**, then run `npm r
 
 ## Unreleased
 
+- **Reaction roles.** A new Reaction roles page (smiley in the left rail) posts a message members react to, to give themselves roles. Pick any of the server's own emojis or a standard one for each role, write your own message as a card or plain text, and put up to 20 reaction roles on one message. Choose whether members can pick any number of roles, only one, or add-only (for rules or verification). The bot hands roles out while the app is open or in the tray, and catches up on reactions it missed when it starts.
+
 ## 1.0.6 (2026-10-30)
 
 - **Social alerts.** A new Social page (megaphone in the left rail) posts in the channel you pick when a YouTube channel uploads or a Twitch channel goes live, with an optional ping and your own message. Paste any YouTube channel's link (no login needed), and use **Log in with Twitch** for Twitch.

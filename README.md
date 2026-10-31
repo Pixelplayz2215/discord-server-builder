@@ -13,6 +13,7 @@ A Windows desktop app (Electron) in the Pixelplayz2215 theme for running Discord
 - **Backups.** Save an exact copy of a server's roles, channels, permissions and settings to your PC, by hand or automatically every day. Restoring recreates what was deleted and puts permissions, layout and (optionally) settings back, without deleting anything. Preview the changes first, and export or import backups as files.
 - **Server logs.** The bot posts joins (new accounts flagged), leaves, bans, timeouts, role and nickname changes, deleted and edited messages, and channel and role changes to a log channel while the app runs.
 - **Social alerts** (megaphone in the left rail). Post in a channel of your choice when a YouTube channel uploads (or starts a stream) or a Twitch channel goes live, with an optional @everyone, @here or role ping and your own message. YouTube needs no login: paste any channel's link. Twitch uses **Log in with Twitch**. Checks run while the app is open or in the tray (YouTube every 5 minutes, Twitch every minute). X / Twitter isn't supported, because X charges for every API read since February 2026.
+- **Reaction roles** (smiley in the left rail). Post a message members react to, to give themselves roles: up to 20 emoji-and-role pairs per message, using the server's own uploaded emojis or standard ones (or any pasted emoji), with your own message as a card or plain text and a live preview. Members can pick any number of roles, only one (picking another swaps it), or add-only for rules and verification. The bot hands roles out while the app is open or in the tray, catches up on reactions it missed when it starts, and puts its reactions back if a mod clears them.
 - **Keeps running in the tray.** The close button hides the app to the tray so bots stay online and logs and backups keep going. Quit from the tray icon. This can be turned off in Settings.
 - **Channels.** Send a message as the bot, purge up to 1000 recent messages, lock or unlock, set slowmode, rename, delete, or create channels.
 - **Audit log.** Recent actions, with filters.
@@ -122,6 +123,7 @@ src/main/       Electron main process
   gateway.js      gateway connection (keeps bots "online", receives events for server logs)
   logs.js         server logs: gateway events → batched embeds in a log channel
   social.js       social alerts: YouTube feeds, Log in with Twitch, the watcher
+  reactionroles.js reaction roles: posting panels, handing out roles, catching up
   backup.js       server snapshots and restore
   cases.js        #mod-cases case log, warnings (shared with server/)
   builder.js      template → server builder, clone, purge, lock, member paging
@@ -145,6 +147,7 @@ src/renderer/   UI (plain HTML/CSS/JS, no bundler)
   js/backups.js   Backups tab
   js/serverlogs.js server logs settings (Logs tab)
   js/social.js    Social alerts page
+  js/reactionroles.js Reaction roles page and emoji picker (standard emojis in js/emojis.js)
   js/builder.js   Builder tab
   js/templates.js built-in server templates
 scripts/        make-icon.js (draws the logo → build/icon.png/.ico), copy-fonts.js, release.js + changelog.js
@@ -158,6 +161,8 @@ server/         mod portal (not part of the .exe)
   interactions.test.js  slash command tests with a fake Discord
 test/features.test.js  cases, backups and server logs tests (not packaged)
 test/social.test.js    social alerts tests (not packaged)
+test/reactionroles.test.js  reaction roles tests (not packaged)
+test/release.test.js   changelog handling tests (not packaged)
 docs/MOD-PORTAL.md  how to deploy the portal and give mods access
 render.yaml     Render blueprint for the portal
 ```

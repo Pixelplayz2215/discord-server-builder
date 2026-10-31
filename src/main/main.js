@@ -14,6 +14,7 @@ const { createCases, caseFromCall, warnMember, privateChannel } = require('./cas
 const backups = require('./backup');
 const { createServerLogger, intentsFor: logIntents, normalizeConfig: normalizeLogConfig } = require('./logs');
 const social = require('./social');
+const reactionRoles = require('./reactionroles');
 const pkg = require('../../package.json');
 
 const DEV = process.argv.includes('--dev');
@@ -235,13 +236,71 @@ function presenceFor(botId) {
   if (!presences.has(botId)) {
     const onState = (state, detail) => {
       connectionStates.set(botId, { state, detail });
-      // Connected only for server logs: the bot stays invisible to members.
+      // Connected only for server logs or reaction roles: the bot stays invisible to members.
       const shown = state === 'online' && !store.getBot(botId)?.presence?.enabled ? 'invisible' : state;
       send('presence:state', { botId, state: shown, detail });
     };
-    presences.set(botId, new PresenceConnection(store.getToken(botId), onState, (type, data) => loggerFor(botId).handle(type, data)));
+    const onEvent = (type, data) => {
+      loggerFor(botId).handle(type, data);
+      reactionsFor(botId).handle(type, data)?.catch?.(() => {});
+      // Reconnected: hand out roles for reactions made while the bot was away.
+      if (type === 'READY') setTimeout(() => catchUpPanels(botId), 5000);
+    };
+    presences.set(botId, new PresenceConnection(store.getToken(botId), onState, onEvent));
   }
   return presences.get(botId);
+}
+
+/* ---------- Reaction roles (handed out while the app runs, including in the tray) ---------- */
+// Panels are kept per server in servers.json; this index finds one by its message.
+let panelIndex = null; // messageId -> panel (with botId)
+const reactionEngines = new Map(); // botId -> reaction roles engine
+const panelProblems = new Map(); // panel id -> latest problem
+
+function allPanels() {
+  return store.listGuildConfigs().flatMap(({ botId, guildId, config }) => (config.reactionRoles || []).map((p) => ({ ...p, botId, guildId })));
+}
+
+function rebuildPanelIndex() {
+  panelIndex = new Map(allPanels().filter((p) => p.messageId).map((p) => [p.messageId, p]));
+}
+
+const botPanels = (botId) => {
+  if (!panelIndex) rebuildPanelIndex();
+  return [...panelIndex.values()].filter((p) => p.botId === botId);
+};
+
+function reactionsFor(botId) {
+  if (!reactionEngines.has(botId)) {
+    reactionEngines.set(
+      botId,
+      reactionRoles.createReactionRoles({
+        rest: restFor(botId),
+        botId,
+        panelFor: (messageId) => {
+          if (!panelIndex) rebuildPanelIndex();
+          const panel = panelIndex.get(messageId);
+          return panel?.botId === botId ? panel : null;
+        },
+        report: (panel, problem) => {
+          if (problem) panelProblems.set(panel.id, problem);
+          else panelProblems.delete(panel.id);
+        },
+      }),
+    );
+  }
+  return reactionEngines.get(botId);
+}
+
+let catchingUp = new Set();
+async function catchUpPanels(botId) {
+  if (catchingUp.has(botId)) return;
+  catchingUp.add(botId);
+  try {
+    for (const panel of botPanels(botId)) await reactionsFor(botId).catchUp(panel);
+  } finally {
+    catchingUp.delete(botId);
+  }
 }
 
 /* ---------- Server logs (posted while the app runs, including in the tray) ---------- */
@@ -277,18 +336,22 @@ function loggerFor(botId) {
   return loggers.get(botId).logger;
 }
 
+// Whether a bot needs its gateway connection for server logs or reaction roles.
+const needsGateway = (botId) => activeLogs(botId).length > 0 || botPanels(botId).length > 0;
+
 // One gateway connection per bot: it keeps the bot online (when presence is on) and receives the
-// events for server logs. With logs on but presence off, the bot connects as invisible.
+// events for server logs and reaction roles. With those on but presence off, it connects invisibly.
 function syncConnection(botId) {
   const bot = store.getBot(botId);
   if (!bot || bot.type === 'mod') return;
   const logs = activeLogs(botId);
+  const panels = botPanels(botId).length;
   const conn = presenceFor(botId);
   loggerFor(botId);
   loggers.get(botId).content = !!bot.intents?.content;
-  conn.setIntents(logs.length ? logIntents(logs, bot.intents) : 0);
+  conn.setIntents((logs.length ? logIntents(logs, bot.intents) : 0) | (panels ? reactionRoles.RR_INTENTS : 0));
   if (bot.presence?.enabled) conn.start(bot.presence);
-  else if (logs.length) conn.start({ status: 'invisible', text: '' });
+  else if (logs.length || panels) conn.start({ status: 'invisible', text: '' });
   else conn.stop();
 }
 
@@ -353,10 +416,11 @@ const handlers = {
     const bot = store.upsertBot(info, token);
     clients.delete(bot.id);
     caseLogs.delete(bot.id);
+    reactionEngines.delete(bot.id);
     loggers.delete(bot.id);
     presences.get(bot.id)?.stop();
     presences.delete(bot.id);
-    if (activeLogs(bot.id).length) syncConnection(bot.id);
+    if (needsGateway(bot.id)) syncConnection(bot.id);
     return bot;
   },
 
@@ -365,7 +429,7 @@ const handlers = {
     if (bot?.type !== 'mod') {
       const updated = store.updateBot(botId, await describeBot(restFor(botId)));
       // Privileged intents may have been switched on or off in the Developer Portal since.
-      if (activeLogs(botId).length) syncConnection(botId);
+      if (needsGateway(botId)) syncConnection(botId);
       return updated;
     }
     const me = await portal.call(bot.portalUrl, '/api/me', { token: store.getToken(botId) });
@@ -436,6 +500,7 @@ const handlers = {
     presences.delete(botId);
     clients.delete(botId);
     caseLogs.delete(botId);
+    reactionEngines.delete(botId);
     loggers.delete(botId);
     store.removeBot(botId);
   },
@@ -508,6 +573,48 @@ const handlers = {
   },
 
   'servers:config': (botId, guildId) => store.getGuildConfig(botId, snowflake(guildId, 'server')),
+
+  // Every reaction-role panel of the owner's bots, with its latest problem (if any).
+  'rr:list': () =>
+    allPanels()
+      .filter((p) => store.getBot(p.botId) && !isMod(p.botId))
+      .map((p) => ({ ...p, problem: panelProblems.get(p.id) || null })),
+
+  // Saves a panel and posts (or updates) its message and reactions in Discord.
+  'rr:save': async (botId, input) => {
+    if (!store.getBot(botId)) throw new Error('That bot is no longer in the app.');
+    if (isMod(botId)) ownerOnly();
+    const panel = reactionRoles.normalizePanel(input);
+    const list = store.getGuildConfig(botId, panel.guildId).reactionRoles || [];
+    const previous = panel.id ? list.find((p) => p.id === panel.id) || null : null;
+    const saved = { ...panel, id: previous?.id || crypto.randomUUID(), createdAt: previous?.createdAt || Date.now() };
+    saved.messageId = await reactionRoles.publishPanel(restFor(botId), saved, previous);
+    store.setGuildConfig(botId, panel.guildId, { reactionRoles: previous ? list.map((p) => (p.id === saved.id ? saved : p)) : [...list, saved] });
+    panelProblems.delete(saved.id);
+    rebuildPanelIndex();
+    syncConnection(botId);
+    return handlers['rr:list']();
+  },
+
+  'rr:delete': async (botId, guildId, id, deleteMessage) => {
+    if (isMod(botId)) ownerOnly();
+    const list = store.getGuildConfig(botId, snowflake(guildId, 'server')).reactionRoles || [];
+    const panel = list.find((p) => p.id === id);
+    if (panel?.messageId && deleteMessage) await restFor(botId).request('DELETE', `/channels/${panel.channelId}/messages/${panel.messageId}`).catch(() => {});
+    store.setGuildConfig(botId, guildId, { reactionRoles: list.filter((p) => p.id !== id) });
+    panelProblems.delete(id);
+    rebuildPanelIndex();
+    syncConnection(botId);
+    return handlers['rr:list']();
+  },
+
+  // Hands out roles for reactions the bot missed (for example while the app was closed).
+  'rr:sync': async (botId, guildId, id) => {
+    if (isMod(botId)) ownerOnly();
+    const panel = botPanels(botId).find((p) => p.id === id && p.guildId === guildId);
+    if (!panel) throw new Error("That panel isn't posted yet.");
+    return reactionsFor(botId).catchUp(panel);
+  },
 
   'social:get': () => socialStatus(),
 
@@ -919,7 +1026,7 @@ function createWindow() {
 
   // Bring bots that were online last session back online, and start their server logs.
   for (const bot of store.listBots()) {
-    if (bot.type !== 'mod' && (bot.presence?.enabled || activeLogs(bot.id).length)) {
+    if (bot.type !== 'mod' && (bot.presence?.enabled || needsGateway(bot.id))) {
       try {
         syncConnection(bot.id);
       } catch {
