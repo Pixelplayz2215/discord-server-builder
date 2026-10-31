@@ -6,6 +6,9 @@ const PLATFORMS = {
   twitch: { name: 'Twitch', icon: 'twitch', badge: 'peri', placeholder: 'twitch.tv/name, or just the name', when: 'go live' },
 };
 const TWITCH_CONSOLE = 'https://dev.twitch.tv/console/apps';
+const YOUTUBE_API_CONSOLE = 'https://console.cloud.google.com/apis/library/youtube.googleapis.com';
+// The watcher's message when YouTube's public feed fails (src/main/social.js); group 1 is the HTTP status.
+const FEED_ERROR = /video feed for this channel isn't answering right now \(([^)]*)\)/;
 
 const SocialPage = {
   data: null,
@@ -67,7 +70,13 @@ const SocialPage = {
     const row = (ic, name, detail, action) => h('div', { class: 'social-row' }, h('span', { class: `social-icon ${ic}` }, icon(ic)), h('div', { class: 'grow', style: { minWidth: 0 } }, h('div', { class: 'primary' }, name), h('div', { class: 'secondary' }, detail)), action);
     if (!d) return SettingsPage.card('Accounts', 'link', h('div', { class: 'skeleton' }));
 
-    const youtube = row('youtube', 'YouTube', 'No login needed. Paste any channel\'s link when you add an alert.', h('span', { class: 'badge teal' }, 'Ready'));
+    const y = d.youtube || {};
+    const youtube = row(
+      'youtube',
+      'YouTube',
+      y.hasKey ? "Checking through YouTube's API with your key. Paste any channel's link when you add an alert." : "Works without a login, but YouTube's free feed is often down. Add a free API key (below) so alerts keep working.",
+      h('span', { class: `badge ${y.hasKey ? 'teal' : 'gold'}` }, y.hasKey ? 'API key' : 'Feed only'),
+    );
 
     const t = d.twitch;
     let twitchDetail;
@@ -92,7 +101,40 @@ const SocialPage = {
 
     const x = row('cross', 'X / Twitter', 'Not available yet: since February 2026, X charges for every read of its API.', h('span', { class: 'badge' }, 'Later'));
 
-    return SettingsPage.card('Accounts', 'link', h('div', { class: 'stack', style: { gap: '4px' } }, youtube, twitch, t.builtInClientId ? null : SocialPage.clientIdBox(t), x));
+    return SettingsPage.card('Accounts', 'link', h('div', { class: 'stack', style: { gap: '4px' } }, youtube, SocialPage.youtubeKeyBox(y), twitch, t.builtInClientId ? null : SocialPage.clientIdBox(t), x));
+  },
+
+  // A YouTube Data API key: free, and checks don't depend on YouTube's public feed.
+  youtubeKeyBox(y) {
+    const input = h('input', { class: 'input mono', type: 'password', placeholder: y.hasKey ? `Saved key ending in ${y.keyHint}` : 'YouTube API key (AIza…)', autocomplete: 'off', spellcheck: false });
+    const save = h('button', { class: 'btn sm' }, icon('save'), y.hasKey ? 'Replace' : 'Save');
+    save.addEventListener('click', withBusy(save, async () => {
+      if (!input.value.trim()) return toast('Paste the API key first.', 'error');
+      SocialPage.data = await api('social:setYouTubeKey', input.value.trim());
+      toast('YouTube API key saved. Checking your YouTube alerts now.');
+      SocialPage.rerender();
+    }));
+    const remove = h('button', { class: 'btn sm ghost' }, icon('trash'), 'Remove');
+    remove.addEventListener('click', withBusy(remove, async () => {
+      if (!(await confirmDialog({ title: 'Remove the YouTube API key?', message: "YouTube alerts go back to YouTube's public feed, which is often down.", confirmLabel: 'Remove' }))) return;
+      SocialPage.data = await api('social:setYouTubeKey', '');
+      toast('YouTube API key removed');
+      SocialPage.rerender();
+    }));
+    return h(
+      'details',
+      { class: 'client-id-box youtube-key-box', open: !y.hasKey },
+      h('summary', null, y.hasKey ? `YouTube API key (saved, ends in ${y.keyHint})` : 'Add a YouTube API key (free, about 3 minutes)'),
+      h(
+        'ol',
+        { class: 'muted' },
+        h('li', null, 'Open Google Cloud and sign in with any Google account. If it asks, create a project (any name). No billing is needed.'),
+        h('li', null, 'On the ', h('b', null, 'YouTube Data API v3'), ' page that opens, press ', h('b', null, 'Enable'), '.'),
+        h('li', null, 'Go to ', h('b', null, 'APIs & Services → Credentials'), ', press ', h('b', null, 'Create credentials → API key'), ', and paste the key here. Keep it private, like a password.'),
+      ),
+      h('p', { class: 'subtle', style: { fontSize: 'calc(12rem / 14)', margin: '0 0 8px' } }, "The key is checked before it's saved, then kept encrypted on this PC. Each check uses 1 of the 10,000 free units Google gives you a day, enough for about 30 channels checked every 5 minutes."),
+      h('div', { class: 'row wrap' }, h('div', { class: 'input-wrap', style: { width: '320px' } }, icon('key'), input), save, y.hasKey ? remove : null, h('button', { class: 'btn sm ghost', onclick: () => openExternal(YOUTUBE_API_CONSOLE) }, icon('external'), 'Open Google Cloud')),
+    );
   },
 
   // Only shown when this copy of the app has no Twitch Client ID built in.
@@ -154,7 +196,31 @@ const SocialPage = {
     if (!d.alerts.length) {
       return SettingsPage.card('Alerts', 'megaphone', h('div', { class: 'empty' }, icon('megaphone'), h('h3', null, 'No alerts yet'), h('p', null, 'Add one to post in a channel of your choice when someone uploads or goes live.'), h('button', { class: 'btn primary', onclick: () => SocialPage.edit(null) }, icon('plus'), 'Add alert')));
     }
-    return h('div', { class: 'card flush' }, h('div', { class: 'card-head', style: { padding: '16px 16px 0' } }, icon('megaphone'), h('h3', null, `Alerts (${d.alerts.length})`)), h('div', { class: 'list', style: { marginTop: '12px', borderTop: '1px solid var(--border)' } }, d.alerts.map((a) => SocialPage.alertRow(a))));
+    // YouTube's public feeds failing with no API key saved: say what fixes it, up front.
+    const feedDown = !d.youtube?.hasKey && d.alerts.some((a) => a.platform === 'youtube' && a.enabled !== false && FEED_ERROR.test(a.state?.error || ''));
+    const keyCallout = feedDown
+      ? h(
+          'div',
+          { class: 'callout warn', style: { margin: '12px 16px 0' } },
+          icon('alert'),
+          h(
+            'div',
+            { class: 'grow' },
+            h('b', null, "YouTube's free video feeds are down, so these alerts can't see new videos. "),
+            'This is on YouTube\'s side and affects every channel. Add a free YouTube API key under Accounts and they work again; uploads from the last 2 days are posted once it does.',
+            h('div', { style: { marginTop: '8px' } }, h('button', { class: 'btn sm', onclick: () => SocialPage.showKeyBox() }, icon('key'), 'Set up the API key')),
+          ),
+        )
+      : null;
+    return h('div', { class: 'card flush' }, h('div', { class: 'card-head', style: { padding: '16px 16px 0' } }, icon('megaphone'), h('h3', null, `Alerts (${d.alerts.length})`)), keyCallout, h('div', { class: 'list', style: { marginTop: '12px', borderTop: '1px solid var(--border)' } }, d.alerts.map((a) => SocialPage.alertRow(a))));
+  },
+
+  showKeyBox() {
+    const box = document.querySelector('.youtube-key-box');
+    if (!box) return;
+    box.open = true;
+    box.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    box.querySelector('input')?.focus();
   },
 
   alertRow(a) {
@@ -164,7 +230,11 @@ const SocialPage = {
     const ping = a.mention === 'everyone' || a.mention === 'here' ? `@${a.mention}` : a.mention && a.mention !== 'none' ? a.mentionName || 'a role' : null;
     const status = [];
     if (a.enabled === false) status.push(h('span', { class: 'badge' }, 'Paused'));
-    else if (state.error) status.push(h('span', { class: 'badge coral', title: state.error }, icon('alert'), state.error.length > 70 ? `${state.error.slice(0, 70)}…` : state.error));
+    else if (state.error) {
+      const feed = state.error.match(FEED_ERROR);
+      const short = feed ? `YouTube feed down (${feed[1]})` : state.error.length > 70 ? `${state.error.slice(0, 70)}…` : state.error;
+      status.push(h('span', { class: 'badge coral', title: state.error }, icon('alert'), short));
+    }
     else if (state.checkedAt) status.push(h('span', { class: 'subtle' }, `Checked ${fmtRelative(state.checkedAt)}`));
     else status.push(h('span', { class: 'subtle' }, 'Waiting for the first check'));
     if (a.platform === 'twitch' && state.live && a.enabled !== false) status.push(h('span', { class: 'badge teal' }, 'Live now'));

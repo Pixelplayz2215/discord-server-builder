@@ -2,7 +2,7 @@
 // points at this portal's /interactions. Discord signs every request; unsigned ones are refused.
 // Each mod command goes through the same checks as the app (guard.js): the mod's own Discord
 // permissions, and only members ranked below them. Member actions are recorded in #mod-cases.
-// /poll is for anyone who can post polls in the channel.
+// /poll is for anyone who can post polls in the channel. Ticket buttons go to src/main/tickets.js.
 const crypto = require('crypto');
 const { purgeMessages, lockWithNotice } = require('../src/main/builder');
 const { DURATIONS, DELETE_WINDOWS, SLOWMODES, labelFor } = require('../src/main/commands');
@@ -11,7 +11,7 @@ const { createCases, notifyUser, warnMember, TYPES, escapeMarkdown } = require('
 const { normalizePoll, pollMessage, parseEmojiInput, emojiChoices, MAX_OPTIONS } = require('../src/main/polls');
 const { emojiPath } = require('../src/main/reactionroles');
 
-const INTERACTION = { PING: 1, COMMAND: 2, AUTOCOMPLETE: 4 };
+const INTERACTION = { PING: 1, COMMAND: 2, COMPONENT: 3, AUTOCOMPLETE: 4, MODAL: 5 };
 const RESPONSE = { PONG: 1, MESSAGE: 4, DEFERRED: 5, CHOICES: 8 };
 const EPHEMERAL = 1 << 6;
 const THREAD_TYPES = new Set([10, 11, 12]);
@@ -55,8 +55,9 @@ const once = (fn) => {
 
 const reply = (content) => ({ status: 200, body: { type: RESPONSE.MESSAGE, data: { content, flags: EPHEMERAL, allowed_mentions: { parse: [] } } } });
 
-// caseLog: the portal's shared case log (one is made if it isn't passed).
-function createInteractions({ rest, guard, caseLog = createCases(rest, { botId: once(async () => (await rest.request('GET', '/users/@me')).id) }) }) {
+// caseLog: the portal's shared case log (one is made if it isn't passed). tickets: answers ticket
+// buttons and forms (src/main/tickets.js), when given.
+function createInteractions({ rest, guard, tickets = null, caseLog = createCases(rest, { botId: once(async () => (await rest.request('GET', '/users/@me')).id) }) }) {
   const application = once(async () => {
     const app = await rest.request('GET', '/applications/@me');
     return { id: app.id, key: publicKey(app.verify_key) };
@@ -304,6 +305,11 @@ function createInteractions({ rest, guard, caseLog = createCases(rest, { botId: 
     }
     if (interaction.type === INTERACTION.PING) return { status: 200, body: { type: RESPONSE.PONG } };
     if (interaction.type === INTERACTION.AUTOCOMPLETE) return { status: 200, body: { type: RESPONSE.CHOICES, data: { choices: await suggest(interaction).catch(() => []) } } };
+    if (interaction.type === INTERACTION.COMPONENT || interaction.type === INTERACTION.MODAL) {
+      const handled = tickets ? await tickets.interaction(interaction) : null;
+      if (handled) return { status: 200, body: handled.response, after: handled.after };
+      return reply("This mod portal doesn't know that button. The bot owner can update it (Sync fork on GitHub).");
+    }
     if (interaction.type !== INTERACTION.COMMAND) return reply('The mod portal only handles slash commands.');
     const handler = Object.hasOwn(handlers, interaction.data?.name) ? handlers[interaction.data.name] : null;
     if (!handler) return reply("This mod portal doesn't know that command yet. The bot owner can update it (Sync fork on GitHub).");

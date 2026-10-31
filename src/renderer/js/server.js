@@ -1,19 +1,21 @@
 // Server page: header, tabs and the Overview / Members / Moderation / Channels / Logs tabs.
 // The Raid, AutoMod and Backups tabs live in raid.js, automod.js and backups.js.
 
-const SERVER_TABS = [
-  ['overview', 'Overview', 'server'],
-  ['members', 'Members', 'users'],
-  ['moderation', 'Moderation', 'shield'],
-  ['raid', 'Raid', 'siren'],
-  ['automod', 'AutoMod', 'bot'],
-  ['channels', 'Channels', 'hash'],
-  ['builder', 'Builder', 'hammer'],
-  ['backups', 'Backups', 'archive'],
-  ['audit', 'Logs', 'list'],
+// The tab bar: [id, label, icon, the tabs inside]. A group of more than one shows a switcher for them,
+// so related tools share one tab and the bar fits without scrolling. view.tab is always the inner tab.
+const SERVER_TAB_GROUPS = [
+  ['overview', 'Overview', 'server', ['overview']],
+  ['members', 'Members', 'users', ['members']],
+  ['safety', 'Safety', 'shield', ['moderation', 'raid', 'automod']],
+  ['channels', 'Channels', 'hash', ['channels']],
+  ['build', 'Build', 'hammer', ['builder', 'backups']],
+  ['audit', 'Logs', 'list', ['audit']],
 ];
+const SUB_TABS = { moderation: ['Moderation', 'shield'], raid: ['Raid tools', 'siren'], automod: ['AutoMod', 'bot'], builder: ['Builder', 'hammer'], backups: ['Backups', 'archive'] };
 // Tabs that need the bot token itself; moderators signed in through a portal don't see them.
 const OWNER_TABS = new Set(['builder', 'automod', 'backups']);
+const tabGroupOf = (tab) => SERVER_TAB_GROUPS.find(([, , , tabs]) => tabs.includes(tab)) || SERVER_TAB_GROUPS[0];
+const shownTabs = (ctx, tabs) => tabs.filter((t) => !(ctx.mod && OWNER_TABS.has(t)));
 
 const TIMEOUT_OPTIONS = [
   ['60', '60 seconds'],
@@ -112,6 +114,19 @@ const ServerPage = {
     }
     const tabs = { overview: OverviewTab, members: MembersTab, moderation: ModerationTab, raid: RaidTab, automod: AutoModTab, channels: ChannelsTab, builder: Builder, backups: BackupsTab, audit: AuditTab };
     if (ctx.mod && OWNER_TABS.has(view.tab)) view.tab = 'overview';
+    // Inside a group: a switcher between its tabs, and the group remembers the one used last.
+    const [groupId, , , groupTabs] = tabGroupOf(view.tab);
+    const inGroup = shownTabs(ctx, groupTabs);
+    if (inGroup.length > 1) {
+      (view.lastTab ||= {})[groupId] = view.tab;
+      el.append(
+        h(
+          'div',
+          { class: 'seg sub-tabs' },
+          inGroup.map((t) => h('button', { type: 'button', class: `seg-btn ${t === view.tab ? 'active' : ''}`, onclick: () => { view.tab = t; App.renderMain(); } }, icon(SUB_TABS[t][1]), SUB_TABS[t][0])),
+        ),
+      );
+    }
     (tabs[view.tab] || OverviewTab).render(ctx, el);
   },
 
@@ -159,9 +174,15 @@ const ServerPage = {
       h(
         'div',
         { class: 'tabs' },
-        SERVER_TABS.filter(([id]) => !(ctx.mod && OWNER_TABS.has(id))).map(([id, label, ic]) =>
-          h('button', { class: `tab ${view.tab === id ? 'active' : ''}`, onclick: () => { view.tab = id; App.renderMain(); } }, icon(ic), label),
-        ),
+        SERVER_TAB_GROUPS.map(([id, label, ic, tabs]) => {
+          const shown = shownTabs(ctx, tabs);
+          if (!shown.length) return null;
+          const open = () => {
+            view.tab = shown.includes(view.lastTab?.[id]) ? view.lastTab[id] : shown[0];
+            App.renderMain();
+          };
+          return h('button', { class: `tab ${shown.includes(view.tab) ? 'active' : ''}`, onclick: open }, icon(ic), label);
+        }),
       ),
     );
   },

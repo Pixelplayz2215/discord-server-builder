@@ -131,6 +131,14 @@ Mods who don't use the app can moderate right in Discord. Your portal answers th
 
 If your portal was set up before slash commands existed, update it first: open your fork on GitHub and press **Sync fork**, then wait for Render to finish deploying.
 
+### 7. Tickets (optional)
+
+With slash commands on, your portal also answers the buttons of the app's **Tickets** panels, so members can open, claim and close tickets around the clock, even when the app is closed. Set up the panels in the app (**Community → Tickets**).
+
+- **Transcripts.** When a ticket closes, the portal saves the conversation as a web page attached to a message in your ticket log channel. That message's **View transcript** button opens it at `<your portal>/transcripts/…`. The link is signed, so only links the bot made work, and the page can't run any scripts.
+- **The transcript stays in Discord.** The portal doesn't store anything. If you change `SESSION_SECRET`, old **View transcript** buttons stop working, but the transcript file on each log message is still there to download.
+- **Update first.** If your portal was set up before tickets existed, open your fork on GitHub, press **Sync fork**, and wait for Render to finish deploying.
+
 ## Good to know
 
 - **Free plan sleeps.** Render's free plan sleeps after 15 minutes without traffic, and the first request after that takes about a minute. Discord only waits 3 seconds for a slash command, so the first command after a quiet spell fails with "The application did not respond". To keep the portal awake, point a free uptime monitor at `<your portal>/health` every 10 minutes (the free plan's 750 hours a month cover one service running all month), or upgrade the service to a paid instance.

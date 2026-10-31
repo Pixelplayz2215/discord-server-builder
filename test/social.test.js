@@ -244,3 +244,82 @@ test('Twitch tokens refresh once for parallel calls, and after a 401', async () 
   const expired = social.createTwitchClient({ clientId: 'c', getTokens: () => ({ access: 'x', refresh: 'gone', expiresAt: 0 }), saveTokens: () => {}, fetchImpl: async () => reply(400, { message: 'Invalid refresh token' }) });
   await assert.rejects(expired.me(), /Log in with Twitch again/);
 });
+
+// A fake YouTube Data API: one channel with three uploads, one of them private, one a Short.
+function fakeYouTubeApi({ fail = null } = {}) {
+  const calls = [];
+  const fetchImpl = async (url, opts = {}) => {
+    calls.push({ url, opts });
+    if (url.startsWith('https://www.youtube.com/shorts/')) return { ok: true, status: url.endsWith('/s1') ? 200 : 303 };
+    if (fail) return reply(fail.status, { error: { message: fail.message, errors: [{ reason: fail.reason }], details: fail.detail ? [{ reason: fail.detail }] : [] } });
+    const u = new URL(url);
+    if (u.pathname.endsWith('/channels')) return reply(200, { items: u.searchParams.get('id') === UC || u.searchParams.get('id') === 'UCBR8-60-B28hp2BmDPdntcQ' ? [{ id: UC, snippet: { title: 'Pixel API' } }] : [] });
+    if (u.pathname.endsWith('/playlistItems')) {
+      if (u.searchParams.get('playlistId') !== `UU${UC.slice(2)}`) return reply(404, { error: { message: 'not found', errors: [{ reason: 'playlistNotFound' }] } });
+      const item = (id, at, privacyStatus = 'public') => ({ snippet: { title: `Video ${id}`, channelTitle: 'Pixel API', publishedAt: new Date(at).toISOString(), thumbnails: { high: { url: `https://i.ytimg.com/vi/${id}/hqdefault.jpg` } } }, contentDetails: { videoId: id, videoPublishedAt: new Date(at).toISOString() }, status: { privacyStatus } });
+      return reply(200, { items: [item('v2', 1_000_000_200_000), item('s1', 1_000_000_150_000), item('p1', 1_000_000_120_000, 'private'), item('v1', 1_000_000_100_000)] });
+    }
+    return reply(404, '');
+  };
+  return { calls, fetchImpl };
+}
+
+test('with an API key, videos come from the YouTube Data API, with the key kept out of the address', async () => {
+  const yt = fakeYouTubeApi();
+  const got = await social.fetchYouTubeVideos(UC, { apiKey: 'AIzaTESTKEY', fetchImpl: yt.fetchImpl });
+  assert.equal(got.name, 'Pixel API');
+  assert.deepEqual(got.videos.map((v) => v.id), ['v2', 's1', 'v1'], 'private videos are left out');
+  assert.deepEqual(got.videos[0], { id: 'v2', title: 'Video v2', url: 'https://www.youtube.com/watch?v=v2', published: new Date(1_000_000_200_000).toISOString(), thumbnail: 'https://i.ytimg.com/vi/v2/hqdefault.jpg', isShort: null });
+  assert.equal(yt.calls[0].opts.headers['X-Goog-Api-Key'], 'AIzaTESTKEY');
+  assert.ok(!yt.calls.some((c) => c.url.includes('AIzaTESTKEY')));
+  assert.ok(!yt.calls.some((c) => c.url.includes('/feeds/')), 'the public feed isn\'t used');
+  assert.deepEqual((await social.fetchYouTubeVideos('UCzzzzzzzzzzzzzzzzzzzzzz', { apiKey: 'k', fetchImpl: yt.fetchImpl })).videos, [], 'a channel with no uploads');
+
+  assert.equal(await social.isYouTubeShort('s1', yt.fetchImpl), true);
+  assert.equal(await social.isYouTubeShort('v1', yt.fetchImpl), false);
+
+  // Check: the channel's name comes from the API, and unknown channels are caught.
+  assert.deepEqual(await social.resolveYouTubeChannel(UC, yt.fetchImpl, { apiKey: 'k' }), { id: UC, name: 'Pixel API', url: `https://www.youtube.com/channel/${UC}` });
+  await assert.rejects(social.resolveYouTubeChannel('UCzzzzzzzzzzzzzzzzzzzzzz', yt.fetchImpl, { apiKey: 'k' }), /no YouTube channel at that link/);
+  await social.checkYouTubeKey('k', yt.fetchImpl);
+});
+
+test('YouTube API problems are explained', async () => {
+  const cases = [
+    [{ status: 400, reason: 'badRequest', detail: 'API_KEY_INVALID', message: 'API key not valid. Please pass a valid API key.' }, /isn't valid\. Copy it again/],
+    [{ status: 403, reason: 'accessNotConfigured', detail: 'SERVICE_DISABLED', message: 'YouTube Data API v3 has not been used in project 1 before or it is disabled.' }, /Turn on "YouTube Data API v3"/],
+    [{ status: 403, reason: 'quotaExceeded', message: 'The request cannot be completed because you have exceeded your quota.' }, /used up today's free quota/],
+    [{ status: 403, reason: 'forbidden', detail: 'API_KEY_SERVICE_BLOCKED', message: 'Requests to this API are blocked.' }, /isn't allowed to call the YouTube Data API/],
+    [{ status: 500, reason: 'backendError', message: 'Backend Error' }, /YouTube's API said: Backend Error/],
+  ];
+  for (const [fail, expected] of cases) await assert.rejects(social.checkYouTubeKey('k', fakeYouTubeApi({ fail }).fetchImpl), expected);
+});
+
+test('with a key, alerts post new uploads and can still leave out Shorts', async () => {
+  const yt = fakeYouTubeApi();
+  let key = 'AIzaTESTKEY';
+  let clock = 1_000_000_050_000;
+  const posts = [];
+  const store = [
+    { id: 'all', platform: 'youtube', source: { id: UC, name: 'P' }, createdAt: clock, enabled: true, state: {} },
+    { id: 'noShorts', platform: 'youtube', source: { id: UC, name: 'P' }, createdAt: clock, shorts: false, enabled: true, state: {} },
+  ];
+  const watcher = social.createSocialWatcher({
+    getAlerts: () => store,
+    updateState: (id, state) => Object.assign(store.find((a) => a.id === id), { state }),
+    post: async (alert, message) => posts.push({ alert: alert.id, content: message.content }),
+    getTwitch: () => null,
+    fetchImpl: yt.fetchImpl,
+    now: () => clock,
+    sleep: async () => {},
+    youtubeKey: () => key,
+  });
+  clock = 1_000_000_300_000;
+  await watcher.tick();
+  assert.deepEqual(posts.filter((p) => p.alert === 'all').map((p) => p.content), ['**Pixel API** posted a new video: https://www.youtube.com/watch?v=v1', '**Pixel API** posted a new video: https://www.youtube.com/watch?v=s1', '**Pixel API** posted a new video: https://www.youtube.com/watch?v=v2']);
+  assert.deepEqual(posts.filter((p) => p.alert === 'noShorts').map((p) => p.content.split('v=')[1]), ['v1', 'v2']);
+  assert.equal(yt.calls.filter((c) => c.url.includes('/shorts/')).length, 3, 'each new video is asked about once, for both alerts');
+  assert.equal(yt.calls.filter((c) => c.url.includes('/playlistItems')).length, 1, 'one API call for the channel');
+  assert.equal(store[0].state.error, null);
+  key = '';
+});

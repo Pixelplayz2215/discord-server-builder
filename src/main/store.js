@@ -119,11 +119,28 @@ const store = {
     return all[key];
   },
 
-  // Social alerts and the Twitch account. The Twitch tokens are encrypted like bot tokens and never
-  // leave the main process.
+  // Social alerts, the Twitch account and the YouTube API key. The Twitch tokens and the API key are
+  // encrypted like bot tokens and never leave the main process.
   getSocial() {
-    const { twitchTokens, ...social } = readJson('social.json', {});
+    const { twitchTokens, youtubeKey, ...social } = readJson('social.json', {});
     return { clientId: '', account: null, alerts: [], ...social };
+  },
+
+  getYouTubeKey() {
+    const record = readJson('social.json', {}).youtubeKey;
+    if (!record) return '';
+    try {
+      return decrypt(record);
+    } catch {
+      return '';
+    }
+  },
+
+  setYouTubeKey(key) {
+    const all = readJson('social.json', {});
+    if (key) all.youtubeKey = encrypt(key);
+    else delete all.youtubeKey;
+    writeJson('social.json', all);
   },
 
   saveSocial(patch) {

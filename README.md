@@ -12,9 +12,12 @@ A Windows desktop app (Electron) in the Pixelplayz2215 theme for running Discord
 - **AutoMod.** Add and edit Discord's built-in AutoMod rules: blocked words, common bad words, spam and mass mentions, with block, alert and timeout actions and exempt roles and channels. Discord enforces them itself, even when the app is closed.
 - **Backups.** Save an exact copy of a server's roles, channels, permissions and settings to your PC, by hand or automatically every day. Restoring recreates what was deleted and puts permissions, layout and (optionally) settings back, without deleting anything. Preview the changes first, and export or import backups as files.
 - **Server logs.** The bot posts joins (new accounts flagged), leaves, bans, timeouts, channel locks and unlocks (with who and why), role and nickname changes, deleted and edited messages, and channel and role changes to a log channel while the app runs.
-- **Social alerts** (megaphone in the left rail). Post in a channel of your choice when a YouTube channel uploads (or starts a stream) or a Twitch channel goes live, with an optional @everyone, @here or role ping and your own message. YouTube needs no login: paste any channel's link. Twitch uses **Log in with Twitch**. Checks run while the app is open or in the tray (YouTube every 5 minutes, Twitch every minute). X / Twitter isn't supported, because X charges for every API read since February 2026.
-- **Reaction roles** (smiley in the left rail). Post a message members react to, to give themselves roles: up to 20 emoji-and-role pairs per message, using the server's own uploaded emojis or standard ones (or any pasted emoji), with your own message as a card or plain text and a live preview. Members can pick any number of roles, only one (picking another swaps it), or add-only for rules and verification. The bot hands roles out while the app is open or in the tray, catches up on reactions it missed when it starts, and puts its reactions back if a mod clears them.
-- **Polls** (bars in the left rail). Ask a question with 2 to 4 answers, each with its own emoji (server or standard). Members vote by reacting, and the bot draws a coloured bar under each answer like Discord's own polls, in a colour that matches the emoji (or one you pick), with your own message and card colour. Choose whether members can pick one answer or several, and end a poll to show the final results. Anyone who can post polls in a channel can also use `/poll message emoji1 option1 emoji2 option2 …` in Discord (with the mod portal's slash commands on); its emoji boxes suggest the server's emojis as you type. Bars update while the app is open or in the tray.
+- **Community page** (grid button in the left rail). Welcome cards, reaction roles, tickets, polls and social alerts live together here, with a menu to move between them.
+- **Social alerts** (Community page). Post in a channel of your choice when a YouTube channel uploads (or starts a stream) or a Twitch channel goes live, with an optional @everyone, @here or role ping and your own message. YouTube needs no login: paste any channel's link. YouTube's free feed is often down, so for dependable alerts add a free YouTube Data API key under Accounts (kept encrypted on your PC); checks then go through the API. Twitch uses **Log in with Twitch**. Checks run while the app is open or in the tray (YouTube every 5 minutes, Twitch every minute). X / Twitter isn't supported, because X charges for every API read since February 2026.
+- **Reaction roles** (Community page). Post a message members react to, to give themselves roles: up to 20 emoji-and-role pairs per message, using the server's own uploaded emojis or standard ones (or any pasted emoji), with your own message as a card or plain text and a live preview. Members can pick any number of roles, only one (picking another swaps it), or add-only for rules and verification. The bot hands roles out while the app is open or in the tray, catches up on reactions it missed when it starts, and puts its reactions back if a mod clears them.
+- **Polls** (Community page). Ask a question with 2 to 4 answers, each with its own emoji (server or standard). Members vote by reacting, and the bot draws a coloured bar under each answer like Discord's own polls, in a colour that matches the emoji (or one you pick), with your own message and card colour. Choose whether members can pick one answer or several, and end a poll to show the final results. Anyone who can post polls in a channel can also use `/poll message emoji1 option1 emoji2 option2 …` in Discord (with the mod portal's slash commands on); its emoji boxes suggest the server's emojis as you type. Bars update while the app is open or in the tray.
+- **Tickets** (Community page). Post a panel with your own text and an "open a ticket" button (your label, emoji and colour). Pressing it gives the member a private channel that only they, your support roles and admins can see, with your own message telling them what to write. Staff press **Claim** to take it, and **Close** asks for a reason, saves the whole conversation as a transcript (images copied in, so they keep working) to a private ticket log channel with a **View transcript** link, then deletes the channel. The Tickets page lists open tickets and closed ones, and shows any transcript in the app. With slash commands on, your mod portal answers the buttons around the clock; otherwise the app does while it runs.
+- **Welcome & goodbye cards** (Community page). When someone joins or leaves, the bot posts your message with a card made for them: their avatar and name over a gradient, a colour or your own background image (with a darken slider). Every part is yours to change: the layout, the font (8 to pick from, including a pixel font), three lines of text with their own words, colour and size, the avatar ring and the text shadow, or start from a quick style. Placeholders like {user}, {server} and {count} fill in, the welcome can ping the new member, and a live preview and **Send a test** show exactly what members will see. Free, with no premium tier. Needs the Server Members Intent; posts while the app is open or in the tray.
 - **Keeps running in the tray.** The close button hides the app to the tray so bots stay online and logs and backups keep going. Quit from the tray icon. This can be turned off in Settings.
 - **Channels.** Send a message as the bot, purge up to 1000 recent messages, lock or unlock, set slowmode, rename, delete, or create channels.
 - **Audit log.** Recent actions, with filters.
@@ -125,6 +128,8 @@ src/main/       Electron main process
   logs.js         server logs: gateway events → batched embeds in a log channel
   social.js       social alerts: YouTube feeds, Log in with Twitch, the watcher
   reactionroles.js reaction roles: posting panels, handing out roles, catching up
+  welcome.js      welcome and goodbye messages: joins and leaves → message + card
+  tickets.js      tickets: panels, open/claim/close, transcripts (shared with server/)
   polls.js        reaction polls: the message with its bars, redrawing as votes come in (shared with server/)
   emojicolors.js  the bar colour for each standard emoji
   backup.js       server snapshots and restore
@@ -137,6 +142,8 @@ src/main/       Electron main process
   preload.js      narrow IPC bridge
 src/shared/
   appearance.js   theme presets + settings defaults/validation (used by main and UI)
+  modlog.js       reads locks and "by … via /command" reasons back from Discord (main, portal and UI)
+  welcomecard.js  welcome/goodbye card settings and drawing (the app's preview and the bot's cards)
 src/renderer/   UI (plain HTML/CSS/JS, no bundler)
   js/theme.js     applies appearance settings as CSS variables (loaded in <head>)
   js/settings.js  Settings page
@@ -152,6 +159,10 @@ src/renderer/   UI (plain HTML/CSS/JS, no bundler)
   js/social.js    Social alerts page
   js/reactionroles.js Reaction roles page and emoji picker (standard emojis in js/emojis.js)
   js/polls.js     Polls page
+  js/welcome.js   Welcome & goodbye page and card designer
+  js/tickets.js   Tickets page: panel editor, open tickets, transcript viewer
+  js/community.js the Community page and its menu
+  card.html + js/cardpage.js  hidden page the bot draws cards in
   js/builder.js   Builder tab
   js/templates.js built-in server templates
 scripts/        make-icon.js (draws the logo → build/icon.png/.ico), copy-fonts.js, release.js + changelog.js
@@ -167,6 +178,8 @@ test/features.test.js  cases, backups and server logs tests (not packaged)
 test/social.test.js    social alerts tests (not packaged)
 test/reactionroles.test.js  reaction roles tests (not packaged)
 test/polls.test.js     polls tests (not packaged)
+test/welcome.test.js   welcome and goodbye tests (not packaged)
+test/tickets.test.js   tickets tests (not packaged)
 test/release.test.js   changelog handling tests (not packaged)
 docs/MOD-PORTAL.md  how to deploy the portal and give mods access
 render.yaml     Render blueprint for the portal

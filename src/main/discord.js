@@ -59,7 +59,9 @@ class DiscordRest {
     return `${method} ${route}`;
   }
 
-  async request(method, path, { body, reason, query } = {}) {
+  // files: [{ name, data: Buffer, type }] sends the body as a multipart form with those files
+  // attached (as attachments 0, 1, …), e.g. an image for a message.
+  async request(method, path, { body, reason, query, files } = {}) {
     const key = this.routeKey(method, path);
     let url = API + path;
     if (query) {
@@ -74,12 +76,21 @@ class DiscordRest {
       if (wait > 0) await sleep(wait);
 
       const headers = { Authorization: `Bot ${this.token}`, 'User-Agent': USER_AGENT };
-      if (body !== undefined) headers['Content-Type'] = 'application/json';
+      let payload;
+      if (files?.length) {
+        // fetch sets the multipart Content-Type (with its boundary) itself.
+        payload = new FormData();
+        payload.append('payload_json', JSON.stringify({ ...body, attachments: files.map((f, id) => ({ id, filename: f.name })) }));
+        files.forEach((f, i) => payload.append(`files[${i}]`, new Blob([f.data], { type: f.type || 'application/octet-stream' }), f.name));
+      } else if (body !== undefined) {
+        headers['Content-Type'] = 'application/json';
+        payload = JSON.stringify(body);
+      }
       if (reason) headers['X-Audit-Log-Reason'] = encodeURIComponent(reason.slice(0, 512));
 
       let res;
       try {
-        res = await fetch(url, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined });
+        res = await fetch(url, { method, headers, body: payload });
       } catch (err) {
         if (attempt < 2) {
           await sleep(1000);

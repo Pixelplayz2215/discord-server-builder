@@ -16,6 +16,9 @@ const { createServerLogger, intentsFor: logIntents, normalizeConfig: normalizeLo
 const social = require('./social');
 const reactionRoles = require('./reactionroles');
 const polls = require('./polls');
+const welcome = require('./welcome');
+const tickets = require('./tickets');
+const WelcomeCard = require('../shared/welcomecard');
 const pkg = require('../../package.json');
 
 const DEV = process.argv.includes('--dev');
@@ -184,14 +187,18 @@ const socialWatcher = social.createSocialWatcher({
   post: postAlert,
   getTwitch,
   fetchImpl: fetch,
+  youtubeKey: () => store.getYouTubeKey(),
 });
 
 function socialStatus() {
   const data = store.getSocial();
+  const key = store.getYouTubeKey();
   return {
     alerts: data.alerts,
     defaults: social.DEFAULT_MESSAGES,
     twitch: { builtInClientId: !!pkg.twitchClientId, clientId: pkg.twitchClientId ? '' : data.clientId, account: data.account, loggedIn: !!store.getTwitchTokens() },
+    // Only the end of the key is shown.
+    youtube: { hasKey: !!key, keyHint: key ? key.slice(-4) : '' },
   };
 }
 
@@ -245,6 +252,9 @@ function presenceFor(botId) {
       loggerFor(botId).handle(type, data);
       reactionsFor(botId).handle(type, data)?.catch?.(() => {});
       pollsFor(botId).handle(type, data)?.catch?.(() => {});
+      welcomerFor(botId).handle(type, data);
+      // Ticket buttons come here only when the bot has no interactions endpoint (no mod portal).
+      if (type === 'INTERACTION_CREATE') answerInteraction(botId, data).catch(() => {});
       // Reconnected: hand out roles for reactions made while the bot was away, and redraw polls.
       if (type === 'READY') {
         setTimeout(() => {
@@ -427,6 +437,153 @@ async function catchUpPolls(botId) {
 // Reactions are watched for reaction roles, open polls, and polls anyone may post with /poll.
 const watchesReactions = (botId) => botPanels(botId).length > 0 || botPolls(botId).some((p) => !p.ended) || !!store.getBot(botId)?.slashCommands;
 
+/* ---------- Welcome and goodbye cards (posted while the app runs, including in the tray) ---------- */
+// Settings are kept per server in servers.json as greetings: { guildName, welcome, goodbye }.
+// Cards are drawn in a hidden window with the same code as the app's preview.
+const CARD_IMAGE_TYPES = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' };
+const MAX_CARD_IMAGE_BYTES = 8 * 1024 * 1024;
+const welcomers = new Map(); // botId -> welcomer
+const greetingProblems = new Map(); // `${botId}:${guildId}:${kind}` -> latest problem
+let cardWindow = null;
+let cardWindowTimer = null;
+let cardsDrawing = 0;
+
+const cardsDir = () => path.join(app.getPath('userData'), 'cards');
+
+function greetingsOf(botId, guildId) {
+  const saved = store.getGuildConfig(botId, guildId).greetings;
+  if (!saved) return null;
+  return { guildName: saved.guildName || '', welcome: WelcomeCard.normalizeKind(saved.welcome, 'welcome'), goodbye: WelcomeCard.normalizeKind(saved.goodbye, 'goodbye') };
+}
+
+const greetingsOn = (botId) =>
+  store.listGuildConfigs().some(({ botId: b, config }) => b === botId && (config.greetings?.welcome?.enabled || config.greetings?.goodbye?.enabled));
+
+// A card background picked in the app, as a data URL (null when the file is gone).
+function cardBackground(name) {
+  const file = path.join(cardsDir(), path.basename(String(name || '')));
+  const type = CARD_IMAGE_TYPES[path.extname(file).slice(1).toLowerCase()];
+  if (!type || !fs.existsSync(file)) return null;
+  return `data:${type};base64,${fs.readFileSync(file).toString('base64')}`;
+}
+
+async function imageDataUrl(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return `data:${res.headers.get('content-type') || 'image/png'};base64,${Buffer.from(await res.arrayBuffer()).toString('base64')}`;
+}
+
+// The hidden window closes after two quiet minutes, and with the app's window.
+function closeCardWindow() {
+  clearTimeout(cardWindowTimer);
+  if (cardsDrawing) {
+    cardWindowTimer = setTimeout(closeCardWindow, 30 * 1000);
+    return;
+  }
+  if (cardWindow && !cardWindow.isDestroyed()) cardWindow.destroy();
+  cardWindow = null;
+}
+
+// Draws a card for a member and resolves to its PNG bytes.
+async function renderCardImage(card, vars, user) {
+  if (!cardWindow || cardWindow.isDestroyed()) {
+    cardWindow = new BrowserWindow({ show: false, width: 320, height: 200, webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false } });
+    cardWindow.webContents.on('will-navigate', (event) => event.preventDefault());
+    cardWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    cardWindow.ready = cardWindow.loadFile(path.join(ROOT, 'src', 'renderer', 'card.html'));
+  }
+  const page = cardWindow;
+  cardsDrawing++;
+  try {
+    await page.ready;
+    const [avatar, background] = await Promise.all([imageDataUrl(welcome.avatarUrl(user)).catch(() => null), card.background.type === 'image' ? cardBackground(card.background.image) : null]);
+    const dataUrl = await page.webContents.executeJavaScript(`renderCard(${JSON.stringify(card)}, ${JSON.stringify(vars)}, ${JSON.stringify(avatar)}, ${JSON.stringify(background)})`);
+    return Buffer.from(dataUrl.slice(dataUrl.indexOf(',') + 1), 'base64');
+  } finally {
+    cardsDrawing--;
+    clearTimeout(cardWindowTimer);
+    cardWindowTimer = setTimeout(closeCardWindow, 2 * 60 * 1000);
+  }
+}
+
+function welcomerFor(botId) {
+  if (!welcomers.has(botId)) {
+    welcomers.set(
+      botId,
+      welcome.createWelcomer({
+        rest: restFor(botId),
+        settingsFor: (guildId) => greetingsOf(botId, guildId),
+        render: renderCardImage,
+        report: (guildId, kind, problem) => {
+          const key = `${botId}:${guildId}:${kind}`;
+          if (problem) greetingProblems.set(key, problem);
+          else greetingProblems.delete(key);
+        },
+      }),
+    );
+  }
+  return welcomers.get(botId);
+}
+
+/* ---------- Tickets ---------- */
+// Panels are kept per server in servers.json as ticketPanels. With slash commands on, the mod portal
+// answers the buttons around the clock; without, this app does while it runs.
+const ticketEngines = new Map(); // botId -> tickets engine (for answering without a portal)
+const userNames = new Map(); // user id -> name, for ticket history
+
+const ticketPanelsOf = (botId) => store.listGuildConfigs().flatMap(({ botId: b, guildId, config }) => (b === botId ? (config.ticketPanels || []).map((p) => ({ ...p, botId, guildId })) : []));
+// The app answers ticket buttons only for bots whose interactions don't go to a portal.
+const answersTickets = (botId) => ticketPanelsOf(botId).length > 0 && !store.getBot(botId)?.slashCommands;
+
+function ticketsFor(botId) {
+  if (!ticketEngines.has(botId)) ticketEngines.set(botId, tickets.createTickets({ rest: restFor(botId), botId }));
+  return ticketEngines.get(botId);
+}
+
+async function answerInteraction(botId, i) {
+  const handled = await ticketsFor(botId).interaction(i);
+  if (!handled) return;
+  await restFor(botId).request('POST', `/interactions/${i.id}/${i.token}/callback`, { body: handled.response });
+  await handled.after?.();
+}
+
+async function userName(rest, id) {
+  if (!userNames.has(id)) {
+    const u = await rest.request('GET', `/users/${id}`).catch(() => null);
+    userNames.set(id, u ? u.global_name || u.username : null);
+  }
+  return userNames.get(id);
+}
+
+// A closed ticket, read back from its log message.
+function closedTicket(m) {
+  const e = m.embeds?.[0];
+  const field = (name) => e.fields?.find((f) => f.name === name)?.value || '';
+  const who = (name) => field(name).match(/<@(\d{15,21})>/)?.[1] || null;
+  return {
+    messageId: m.id,
+    channelId: e.footer.text.slice('Ticket '.length),
+    channelName: (e.title || '').replace(/^🎫 Ticket closed · #/, ''),
+    openedBy: who('Opened by'),
+    claimedBy: who('Claimed by'),
+    closedBy: who('Closed by'),
+    reason: field('Reason') === 'No reason given' ? '' : field('Reason'),
+    messages: Number(field('Messages')) || 0,
+    closedAt: e.timestamp || m.timestamp,
+    transcript: (m.attachments || []).some((a) => /\.html$/i.test(a.filename || '')),
+    link: m.components?.[0]?.components?.find((c) => c.url)?.url || null,
+  };
+}
+
+async function ticketTranscript(botId, logChannelId, messageId) {
+  const message = await restFor(botId).request('GET', `/channels/${snowflake(logChannelId, 'channel')}/messages/${snowflake(messageId, 'message')}`);
+  const file = (message.attachments || []).find((a) => /\.html$/i.test(a.filename || ''));
+  if (!file) throw new Error('That log message has no transcript attached.');
+  const res = await fetch(file.url);
+  if (!res.ok) throw new Error(`Discord's file server returned HTTP ${res.status}.`);
+  return { name: file.filename, html: await res.text() };
+}
+
 /* ---------- Server logs (posted while the app runs, including in the tray) ---------- */
 const logConfigs = new Map(); // `${botId}:${guildId}` -> logs config
 const logErrors = new Map(); // `${botId}:${guildId}` -> last posting problem
@@ -460,8 +617,8 @@ function loggerFor(botId) {
   return loggers.get(botId).logger;
 }
 
-// Whether a bot needs its gateway connection for server logs, reaction roles or polls.
-const needsGateway = (botId) => activeLogs(botId).length > 0 || watchesReactions(botId);
+// Whether a bot needs its gateway connection for server logs, reaction roles, polls or welcome cards.
+const needsGateway = (botId) => activeLogs(botId).length > 0 || watchesReactions(botId) || greetingsOn(botId) || answersTickets(botId);
 
 // One gateway connection per bot: it keeps the bot online (when presence is on) and receives the
 // events for server logs, reaction roles and polls. With those on but presence off, it connects invisibly.
@@ -470,12 +627,16 @@ function syncConnection(botId) {
   if (!bot || bot.type === 'mod') return;
   const logs = activeLogs(botId);
   const reactions = watchesReactions(botId);
+  const greetings = greetingsOn(botId);
+  const ticketButtons = answersTickets(botId); // button presses arrive whatever the intents
   const conn = presenceFor(botId);
   loggerFor(botId);
   loggers.get(botId).content = !!bot.intents?.content;
-  conn.setIntents((logs.length ? logIntents(logs, bot.intents) : 0) | (reactions ? reactionRoles.RR_INTENTS : 0));
+  // Joins and leaves need the Server Members Intent, asked for only when the Developer Portal allows it.
+  const greetingIntents = greetings ? welcome.WELCOME_INTENTS.GUILDS | (bot.intents?.members ? welcome.WELCOME_INTENTS.GUILD_MEMBERS : 0) : 0;
+  conn.setIntents((logs.length ? logIntents(logs, bot.intents) : 0) | (reactions ? reactionRoles.RR_INTENTS : 0) | greetingIntents | (ticketButtons ? welcome.WELCOME_INTENTS.GUILDS : 0));
   if (bot.presence?.enabled) conn.start(bot.presence);
-  else if (logs.length || reactions) conn.start({ status: 'invisible', text: '' });
+  else if (logs.length || reactions || greetings || ticketButtons) conn.start({ status: 'invisible', text: '' });
   else conn.stop();
 }
 
@@ -506,7 +667,7 @@ async function describeBot(rest) {
   };
 }
 
-const SAFE_HOSTS = ['discord.com', 'support.discord.com', 'discord.dev', 'pixelplayz.org', 'github.com', 'render.com', 'twitch.tv', 'youtube.com'];
+const SAFE_HOSTS = ['discord.com', 'support.discord.com', 'discord.dev', 'pixelplayz.org', 'github.com', 'render.com', 'twitch.tv', 'youtube.com', 'console.cloud.google.com'];
 const isSafeUrl = (url) => {
   try {
     const u = new URL(url);
@@ -554,6 +715,8 @@ const handlers = {
     caseLogs.delete(bot.id);
     reactionEngines.delete(bot.id);
     pollEngines.delete(bot.id);
+    welcomers.delete(bot.id);
+    ticketEngines.delete(bot.id);
     loggers.delete(bot.id);
     presences.get(bot.id)?.stop();
     presences.delete(bot.id);
@@ -639,6 +802,8 @@ const handlers = {
     caseLogs.delete(botId);
     reactionEngines.delete(botId);
     pollEngines.delete(botId);
+    welcomers.delete(botId);
+    ticketEngines.delete(botId);
     loggers.delete(botId);
     store.removeBot(botId);
   },
@@ -810,6 +975,183 @@ const handlers = {
   // The bar colour that goes with an emoji, for the poll editor.
   'polls:emojiColor': (emoji, index) => emojiBarColor(reactionRoles.cleanEmoji(emoji), Number(index) || 0),
 
+  // Every server of the owner's bots with welcome or goodbye settings, with any problems.
+  'welcome:list': () =>
+    store
+      .listGuildConfigs()
+      .filter(({ botId, config }) => config.greetings && store.getBot(botId) && !isMod(botId))
+      .map(({ botId, guildId }) => {
+        const g = greetingsOf(botId, guildId);
+        const problem = (kind) => greetingProblems.get(`${botId}:${guildId}:${kind}`) || null;
+        return { botId, guildId, ...g, problems: { welcome: problem('welcome'), goodbye: problem('goodbye') }, membersIntent: !!store.getBot(botId).intents?.members };
+      }),
+
+  'welcome:save': (botId, guildId, input) => {
+    if (!store.getBot(botId)) throw new Error('That bot is no longer in the app.');
+    if (isMod(botId)) ownerOnly();
+    const id = snowflake(guildId, 'server');
+    const greetings = { guildName: String(input?.guildName || '').slice(0, 100), welcome: WelcomeCard.normalizeKind(input?.welcome, 'welcome'), goodbye: WelcomeCard.normalizeKind(input?.goodbye, 'goodbye') };
+    for (const kind of WelcomeCard.KINDS) {
+      if (greetings[kind].enabled && !greetings[kind].channelId) throw new Error(`Pick the channel for ${kind === 'welcome' ? 'welcome' : 'goodbye'} messages.`);
+      greetingProblems.delete(`${botId}:${id}:${kind}`);
+    }
+    store.setGuildConfig(botId, id, { greetings });
+    syncConnection(botId);
+    return handlers['welcome:list']();
+  },
+
+  'welcome:remove': (botId, guildId) => {
+    if (isMod(botId)) ownerOnly();
+    store.setGuildConfig(botId, snowflake(guildId, 'server'), { greetings: null });
+    syncConnection(botId);
+    return handlers['welcome:list']();
+  },
+
+  // Posts a welcome or goodbye for the bot itself, with the settings being edited, without pinging.
+  'welcome:test': async (botId, guildId, kind, input) => {
+    if (isMod(botId)) ownerOnly();
+    if (!WelcomeCard.KINDS.includes(kind)) throw new Error('Unknown message type.');
+    const settings = { ...WelcomeCard.normalizeKind(input, kind), ping: false };
+    if (!settings.channelId) throw new Error('Pick the channel first.');
+    const rest = restFor(botId);
+    const me = await rest.request('GET', '/users/@me');
+    const guild = await welcomerFor(botId).guildInfo(snowflake(guildId, 'server'));
+    const { body, files, problem } = await welcome.greetingMessage(kind, settings, welcome.varsFor(me, guild), me, renderCardImage);
+    body.content = `🧪 **Test** (nobody was pinged)\n${body.content}`.slice(0, 2000);
+    await rest.request('POST', `/channels/${settings.channelId}/messages`, { body, files });
+    if (problem) throw new Error(problem);
+  },
+
+  // A background image for a card: copied into the app's data folder, and shown in the preview.
+  'welcome:pickBackground': async () => {
+    const { canceled, filePaths } = await dialog.showOpenDialog(win, { title: 'Choose a card background', filters: [{ name: 'Images', extensions: Object.keys(CARD_IMAGE_TYPES) }], properties: ['openFile'] });
+    if (canceled || !filePaths[0]) return null;
+    const ext = path.extname(filePaths[0]).slice(1).toLowerCase();
+    if (!CARD_IMAGE_TYPES[ext]) throw new Error('Pick a PNG, JPG, WebP or GIF image.');
+    if (fs.statSync(filePaths[0]).size > MAX_CARD_IMAGE_BYTES) throw new Error('That image is over 8 MB. Pick a smaller one.');
+    const name = `${crypto.randomUUID()}.${ext}`;
+    fs.mkdirSync(cardsDir(), { recursive: true });
+    fs.copyFileSync(filePaths[0], path.join(cardsDir(), name));
+    return { image: name, dataUrl: cardBackground(name) };
+  },
+
+  'welcome:image': (name) => cardBackground(name),
+
+  // Every ticket panel of the owner's bots, with who answers its buttons.
+  'tickets:list': () =>
+    store
+      .listBots()
+      .filter((b) => b.type !== 'mod')
+      .flatMap((b) => ticketPanelsOf(b.id).map((p) => ({ ...p, answeredBy: b.slashCommands ? 'portal' : 'app' }))),
+
+  // Saves a panel: makes the log channel and category if asked, keeps the settings message in the log
+  // channel up to date (open tickets point at it), and posts or updates the panel.
+  'tickets:save': async (botId, input) => {
+    if (!store.getBot(botId)) throw new Error('That bot is no longer in the app.');
+    if (isMod(botId)) ownerOnly();
+    const s = tickets.normalizeSettings(input);
+    if (!s.guildId) throw new Error('Pick the server.');
+    if (!s.panel.channelId) throw new Error('Pick the channel for the ticket panel.');
+    const rest = restFor(botId);
+    const list = store.getGuildConfig(botId, s.guildId).ticketPanels || [];
+    const previous = s.id ? list.find((p) => p.id === s.id) || null : null;
+    const ow = (id, type, allow, deny = 0n) => ({ id, type, allow: String(allow), deny: String(deny) });
+    const { P } = tickets;
+
+    if (input?.createLogChannel) {
+      const ch = await rest.request('POST', `/guilds/${s.guildId}/channels`, {
+        body: { name: 'ticket-logs', type: 0, topic: 'Closed tickets and their transcripts.', permission_overwrites: [ow(s.guildId, 0, 0n, P.VIEW), ...s.supportRoles.map((r) => ow(r, 0, tickets.LOG_READ)), ow(botId, 1, tickets.MEMBER_ALLOW)] },
+        reason: 'Ticket log channel',
+      });
+      Object.assign(s, { logChannelId: ch.id, logChannelName: ch.name });
+    }
+    if (!s.logChannelId) throw new Error('Pick the ticket log channel, or let the app make one.');
+    if (input?.createCategory) {
+      const cat = await rest.request('POST', `/guilds/${s.guildId}/channels`, { body: { name: 'Tickets', type: 4, permission_overwrites: [ow(s.guildId, 0, 0n, P.VIEW), ow(botId, 1, tickets.MEMBER_ALLOW)] }, reason: 'Ticket category' });
+      Object.assign(s, { categoryId: cat.id, categoryName: cat.name });
+    }
+
+    const files = [{ name: tickets.SETTINGS_FILE, data: tickets.settingsFile(s), type: 'application/json' }];
+    let settingsMessageId = previous?.logChannelId === s.logChannelId ? previous.settingsMessageId : null;
+    if (settingsMessageId) {
+      try {
+        await rest.request('PATCH', `/channels/${s.logChannelId}/messages/${settingsMessageId}`, { body: { content: tickets.settingsNote(s), allowed_mentions: { parse: [] } }, files });
+      } catch (err) {
+        if (err.code !== 10008 && err.status !== 404) throw err;
+        settingsMessageId = null; // deleted: post it again
+      }
+    }
+    if (!settingsMessageId) {
+      settingsMessageId = (await rest.request('POST', `/channels/${s.logChannelId}/messages`, { body: { content: tickets.settingsNote(s), allowed_mentions: { parse: [] } }, files })).id;
+      await rest.request('PUT', `/channels/${s.logChannelId}/pins/${settingsMessageId}`).catch(() => {});
+    }
+
+    const ref = { logChannelId: s.logChannelId, settingsId: settingsMessageId };
+    const panelMessageId = await reactionRoles.publishMessage(
+      rest,
+      { channelId: s.panel.channelId, body: tickets.panelMessage(s, ref), emojis: [] },
+      previous && { channelId: previous.panel.channelId, messageId: previous.panelMessageId, emojis: [] },
+    );
+    const saved = { ...s, id: previous?.id || crypto.randomUUID(), settingsMessageId, panelMessageId, createdAt: previous?.createdAt || Date.now() };
+    store.setGuildConfig(botId, s.guildId, { ticketPanels: previous ? list.map((p) => (p.id === saved.id ? saved : p)) : [...list, saved] });
+    syncConnection(botId);
+    return handlers['tickets:list']();
+  },
+
+  // Removes a panel. Its settings message stays, so tickets that are still open can be closed.
+  'tickets:delete': async (botId, guildId, id, deletePanel) => {
+    if (isMod(botId)) ownerOnly();
+    const list = store.getGuildConfig(botId, snowflake(guildId, 'server')).ticketPanels || [];
+    const panel = list.find((p) => p.id === id);
+    if (panel?.panelMessageId && deletePanel) await restFor(botId).request('DELETE', `/channels/${panel.panel.channelId}/messages/${panel.panelMessageId}`).catch(() => {});
+    store.setGuildConfig(botId, guildId, { ticketPanels: list.filter((p) => p.id !== id) });
+    syncConnection(botId);
+    return handlers['tickets:list']();
+  },
+
+  // Open tickets (from the server's channels) and closed ones (from the log channel), newest first.
+  'tickets:history': async (botId, guildId, id) => {
+    if (isMod(botId)) ownerOnly();
+    const panel = (store.getGuildConfig(botId, snowflake(guildId, 'server')).ticketPanels || []).find((p) => p.id === id);
+    if (!panel) throw new Error("That panel isn't in the app any more.");
+    const rest = restFor(botId);
+    const channels = await rest.request('GET', `/guilds/${guildId}/channels`);
+    const open = channels
+      .map((c) => ({ c, info: tickets.parseTopic(c.topic) }))
+      .filter(({ info }) => info)
+      .map(({ c, info }) => ({ channelId: c.id, name: c.name, userId: info.userId, claimedBy: info.claimedBy, openedAt: Number((BigInt(c.id) >> 22n) + 1420070400000n) }))
+      .sort((a, b) => b.openedAt - a.openedAt);
+    const logs = [];
+    let before;
+    for (let page = 0; page < 3; page++) {
+      const batch = await rest.request('GET', `/channels/${panel.logChannelId}/messages`, { query: { limit: 100, before } }).catch((err) => {
+        if (page === 0) throw new Error(`Couldn't read the log channel: ${err.message}`);
+        return [];
+      });
+      logs.push(...batch);
+      if (batch.length < 100) break;
+      before = batch[batch.length - 1].id;
+    }
+    const closed = logs.filter((m) => m.author?.id === botId && /^Ticket \d{15,21}$/.test(m.embeds?.[0]?.footer?.text || '')).map(closedTicket);
+    const ids = [...new Set([...open.flatMap((t) => [t.userId, t.claimedBy]), ...closed.flatMap((t) => [t.openedBy, t.claimedBy, t.closedBy])].filter(Boolean))].slice(0, 60);
+    const users = Object.fromEntries(await Promise.all(ids.map(async (u) => [u, await userName(rest, u)])));
+    return { open, closed, users, logChannelId: panel.logChannelId };
+  },
+
+  'tickets:transcript': (botId, logChannelId, messageId) => {
+    if (isMod(botId)) ownerOnly();
+    return ticketTranscript(botId, logChannelId, messageId).then((t) => t.html);
+  },
+
+  'tickets:saveTranscript': async (botId, logChannelId, messageId) => {
+    if (isMod(botId)) ownerOnly();
+    const { name, html } = await ticketTranscript(botId, logChannelId, messageId);
+    const { canceled, filePath } = await dialog.showSaveDialog(win, { title: 'Save the transcript', defaultPath: name, filters: [{ name: 'Web page', extensions: ['html'] }] });
+    if (canceled || !filePath) return null;
+    fs.writeFileSync(filePath, html);
+    return filePath;
+  },
+
   'social:get': () => socialStatus(),
 
   'social:setClientId': (clientId) => {
@@ -820,6 +1162,21 @@ const handlers = {
       store.setTwitchTokens(null); // a login belongs to the Client ID it was made with
       twitchClient = null;
     }
+    return socialStatus();
+  },
+
+  // A YouTube Data API key, so YouTube alerts don't depend on the public feed. It's tried before it's saved.
+  'social:setYouTubeKey': async (key) => {
+    const value = String(key || '').trim();
+    if (value) {
+      if (!/^[\w-]{30,60}$/.test(value)) throw new Error("That doesn't look like a YouTube API key (they start with AIza).");
+      await social.checkYouTubeKey(value, fetch);
+    }
+    store.setYouTubeKey(value);
+    // Check the YouTube alerts again now, the new way.
+    const { alerts } = store.getSocial();
+    store.saveSocial({ alerts: alerts.map((a) => (a.platform === 'youtube' ? { ...a, state: { ...a.state, checkedAt: 0 } } : a)) });
+    setTimeout(() => socialWatcher.tick().catch(() => {}), 500);
     return socialStatus();
   },
 
@@ -865,7 +1222,7 @@ const handlers = {
 
   // Turns what the owner typed (a link, @handle or channel name) into the channel to watch.
   'social:resolve': async (platform, input) => {
-    if (platform === 'youtube') return social.resolveYouTubeChannel(input, fetch);
+    if (platform === 'youtube') return social.resolveYouTubeChannel(input, fetch, { apiKey: store.getYouTubeKey() });
     if (platform !== 'twitch') throw new Error('Unknown platform.');
     const twitch = getTwitch();
     if (!twitch) throw new Error('Log in with Twitch first.');
@@ -924,9 +1281,15 @@ const handlers = {
     if (!alert) throw new Error('That alert no longer exists.');
     let message;
     if (alert.platform === 'youtube') {
-      const feed = await social.fetchYouTubeFeed(alert.source.id, fetch);
-      const video = feed.videos.find((v) => alert.shorts !== false || !v.isShort);
-      if (!video) throw new Error('This channel has no videos to show in a test yet.');
+      const feed = await social.fetchYouTubeVideos(alert.source.id, { apiKey: store.getYouTubeKey(), fetchImpl: fetch });
+      let video = null;
+      for (const v of feed.videos.slice(0, 5)) {
+        if (alert.shorts !== false || !(v.isShort ?? (await social.isYouTubeShort(v.id, fetch)))) {
+          video = v;
+          break;
+        }
+      }
+      if (!video) throw new Error(feed.videos.length ? 'Its latest videos are all Shorts, which this alert leaves out.' : 'This channel has no videos to show in a test yet.');
       message = social.youtubeMessage(alert, feed.name || alert.source.name, video);
     } else {
       const twitch = getTwitch();
@@ -1206,6 +1569,7 @@ function createWindow() {
 
   // The close button hides the window to the tray so bots stay online; Quit is in the tray menu.
   createTray();
+  win.on('closed', closeCardWindow); // or the hidden card window would keep the app running
   win.on('close', (event) => {
     if (quitting || !settings.closeToTray) return;
     event.preventDefault();

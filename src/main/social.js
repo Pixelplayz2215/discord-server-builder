@@ -1,10 +1,14 @@
 // Social alerts: posts in a Discord channel when a YouTube channel uploads (or starts a stream or
 // premiere) and when a Twitch channel goes live. Checks run in the app, while it's open or in the tray.
-// YouTube is read from each channel's public feed, so it needs no login. Twitch goes through its API
-// with a token from "Log in with Twitch" (device-code sign-in, no client secret).
+// YouTube is read from each channel's public feed, which needs no login but is often down, or with
+// an API key through the YouTube Data API. Twitch goes through its API with a token from "Log in with
+// Twitch" (device-code sign-in, no client secret).
 // No Electron here, so it can be tested with a fake fetch.
 
 const YT_FEED = 'https://www.youtube.com/feeds/videos.xml?channel_id=';
+const YT_API = 'https://www.googleapis.com/youtube/v3';
+const YT_KEY_CHECK_CHANNEL = 'UCBR8-60-B28hp2BmDPdntcQ'; // YouTube's own channel, to test a key on
+const YT_VIDEOS = 15; // the latest uploads read per check, as many as the feed has
 const TWITCH_AUTH = 'https://id.twitch.tv/oauth2';
 const HELIX = 'https://api.twitch.tv/helix';
 const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36';
@@ -68,7 +72,69 @@ async function fetchYouTubeFeed(channelId, fetchImpl, { sleep = realSleep } = {}
     problem = `HTTP ${res.status}`;
     if (res.status !== 404 && res.status !== 429 && res.status < 500) break; // trying again won't change it
   }
-  throw new Error(`YouTube's video feed for this channel isn't answering right now (${problem}). It comes back on its own, and the app keeps checking and posts anything it missed.`);
+  throw new Error(`YouTube's video feed for this channel isn't answering right now (${problem}). The app keeps checking and posts anything it missed. To check through YouTube's API instead, add a YouTube API key under Accounts.`);
+}
+
+// A call to the YouTube Data API. The key goes in a header, not the address.
+async function youtubeApi(path, params, apiKey, fetchImpl) {
+  const res = await fetchImpl(`${YT_API}/${path}?${new URLSearchParams(params)}`, { headers: { 'X-Goog-Api-Key': apiKey, Accept: 'application/json' } });
+  const body = await res.json().catch(() => ({}));
+  if (res.ok) return body;
+  const reasons = [body.error?.errors?.[0]?.reason, ...(body.error?.details || []).map((d) => d.reason)].filter(Boolean).join(' ');
+  const said = body.error?.message || `HTTP ${res.status}`;
+  let message = `YouTube's API said: ${said}`;
+  if (/API_KEY_INVALID|keyInvalid/.test(reasons) || /API key not valid/i.test(said)) message = "That YouTube API key isn't valid. Copy it again from Google Cloud → Credentials.";
+  else if (/accessNotConfigured|SERVICE_DISABLED/.test(reasons)) message = 'Turn on "YouTube Data API v3" for your Google Cloud project (APIs & Services → Library), wait a minute, then try again.';
+  else if (/quotaExceeded|dailyLimitExceeded|RATE_LIMIT_EXCEEDED/.test(reasons)) message = "Your YouTube API key has used up today's free quota. It resets at midnight Pacific time.";
+  else if (/API_KEY_\w*BLOCKED|forbidden/.test(reasons)) message = "Your YouTube API key isn't allowed to call the YouTube Data API. In Google Cloud → Credentials, let the key use YouTube Data API v3, with no website or IP address limits.";
+  throw Object.assign(new Error(message), { status: res.status, reasons });
+}
+
+// Checks a key works before it's saved.
+async function checkYouTubeKey(apiKey, fetchImpl) {
+  await youtubeApi('channels', { part: 'id', id: YT_KEY_CHECK_CHANNEL }, apiKey, fetchImpl);
+}
+
+// A channel's latest public uploads, from its uploads playlist ("UU" + the channel ID's rest).
+// The API doesn't say which ones are Shorts, so isShort is null until isYouTubeShort is asked.
+async function fetchYouTubeApiVideos(channelId, apiKey, fetchImpl) {
+  let body;
+  try {
+    body = await youtubeApi('playlistItems', { part: 'snippet,contentDetails,status', playlistId: `UU${channelId.slice(2)}`, maxResults: String(YT_VIDEOS) }, apiKey, fetchImpl);
+  } catch (err) {
+    if (/playlistNotFound/.test(err.reasons || '')) return { name: '', videos: [] }; // no uploads yet
+    throw err;
+  }
+  const items = (body.items || []).filter((i) => i.status?.privacyStatus === 'public' && i.contentDetails?.videoId);
+  return {
+    name: items[0]?.snippet?.channelTitle || '',
+    videos: items.map((i) => {
+      const t = i.snippet.thumbnails || {};
+      return {
+        id: i.contentDetails.videoId,
+        title: i.snippet.title || '',
+        url: `https://www.youtube.com/watch?v=${i.contentDetails.videoId}`,
+        published: i.contentDetails.videoPublishedAt || i.snippet.publishedAt || '',
+        thumbnail: (t.maxres || t.high || t.medium || t.default)?.url || '',
+        isShort: null,
+      };
+    }),
+  };
+}
+
+// A Short opens at /shorts/<id>; any other video is sent on to /watch from there.
+async function isYouTubeShort(videoId, fetchImpl) {
+  try {
+    const res = await fetchImpl(`https://www.youtube.com/shorts/${videoId}`, { method: 'HEAD', redirect: 'manual', headers: { 'User-Agent': BROWSER_UA, Cookie: 'SOCS=CAI' } });
+    return res.status === 200;
+  } catch {
+    return false;
+  }
+}
+
+// A channel's latest videos: through the API when there's a key, otherwise from the public feed.
+function fetchYouTubeVideos(channelId, { apiKey, fetchImpl, sleep } = {}) {
+  return apiKey ? fetchYouTubeApiVideos(channelId, apiKey, fetchImpl) : fetchYouTubeFeed(channelId, fetchImpl, { sleep });
 }
 
 async function fetchChannelPage(page, fetchImpl) {
@@ -102,6 +168,11 @@ async function resolveYouTubeChannel(input, fetchImpl, options) {
     id = (html.match(/"externalId":"(UC[\w-]{22})"/) || html.match(/<meta itemprop="identifier" content="(UC[\w-]{22})"/) || html.match(/<link rel="canonical" href="https:\/\/www\.youtube\.com\/channel\/(UC[\w-]{22})"/))?.[1];
     if (!id) throw new Error("Couldn't find that channel on YouTube.");
     name = channelPageName(html);
+  }
+  if (!name && options?.apiKey) {
+    const found = await youtubeApi('channels', { part: 'snippet', id }, options.apiKey, fetchImpl);
+    if (!found.items?.length) throw new Error("There's no YouTube channel at that link.");
+    name = found.items[0].snippet?.title || '';
   }
   if (!name) {
     try {
@@ -258,7 +329,7 @@ function twitchMessage(alert, stream, now = Date.now()) {
 // alerts: [{ id, botId, guildId, channelId, platform: 'youtube'|'twitch', source: { id, name, login?, url },
 //   message, mention, shorts, enabled, createdAt, state: { seen, live, checkedAt, error, lastPostAt } }]
 // post(alert, message) sends to Discord; updateState(id, state) saves an alert's state.
-function createSocialWatcher({ getAlerts, updateState, post, getTwitch, fetchImpl, now = Date.now, sleep = realSleep }) {
+function createSocialWatcher({ getAlerts, updateState, post, getTwitch, fetchImpl, now = Date.now, sleep = realSleep, youtubeKey = () => '' }) {
   let running = false;
   let twitchCheckedAt = 0;
 
@@ -278,7 +349,7 @@ function createSocialWatcher({ getAlerts, updateState, post, getTwitch, fetchImp
     for (const [channelId, group] of byChannel) {
       let feed;
       try {
-        feed = await fetchYouTubeFeed(channelId, fetchImpl, { sleep });
+        feed = await fetchYouTubeVideos(channelId, { apiKey: youtubeKey(), fetchImpl, sleep });
       } catch (err) {
         for (const a of group) {
           const failures = (a.state?.failures || 0) + 1;
@@ -290,8 +361,12 @@ function createSocialWatcher({ getAlerts, updateState, post, getTwitch, fetchImp
         const state = { ...a.state, checkedAt: now(), error: null, failures: 0 };
         const seen = new Set(state.seen || []);
         const since = Math.max(a.createdAt || 0, now() - CATCH_UP_MS);
-        const fresh = feed.videos.filter((v) => !seen.has(v.id) && Date.parse(v.published) >= since && (a.shorts !== false || !v.isShort)).reverse(); // oldest first
-        for (const v of fresh) await send(a, youtubeMessage(a, feed.name || a.source.name, v), state);
+        const fresh = feed.videos.filter((v) => !seen.has(v.id) && Date.parse(v.published) >= since).reverse(); // oldest first
+        for (const v of fresh) {
+          // Only new videos are asked about, once each (alerts on the same channel share the answer).
+          if (a.shorts === false && (v.isShort ??= await isYouTubeShort(v.id, fetchImpl))) continue;
+          await send(a, youtubeMessage(a, feed.name || a.source.name, v), state);
+        }
         state.seen = [...new Set([...feed.videos.map((v) => v.id), ...seen])].slice(0, MAX_SEEN);
         updateState(a.id, state);
       }
@@ -341,6 +416,9 @@ function createSocialWatcher({ getAlerts, updateState, post, getTwitch, fetchImp
 module.exports = {
   parseYouTubeFeed,
   fetchYouTubeFeed,
+  fetchYouTubeVideos,
+  checkYouTubeKey,
+  isYouTubeShort,
   resolveYouTubeChannel,
   twitchStartLogin,
   twitchFinishLogin,

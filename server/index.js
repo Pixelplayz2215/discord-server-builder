@@ -10,6 +10,7 @@ const { createAuth } = require('./auth');
 const { createGuard, auditReason } = require('./guard');
 const { createInteractions, once } = require('./interactions');
 const { createCases, caseFromCall, warnMember } = require('../src/main/cases');
+const { createTickets, transcriptSignature, checkTranscriptSignature } = require('../src/main/tickets');
 
 const MAX_BODY = 64 * 1024;
 const MAX_INTERACTION_BODY = 1024 * 1024;
@@ -77,8 +78,13 @@ function createLimiter(limit, windowMs) {
   };
 }
 
+// A ticket transcript is an HTML file on a message in the ticket log channel. Shown here so the log's
+// "View transcript" button opens it in a browser; the link's signature proves the bot made it.
+// Transcripts can't run anything: no scripts are allowed on the page.
+const TRANSCRIPT_CSP = "default-src 'none'; img-src data: https://cdn.discordapp.com https://media.discordapp.net; style-src 'unsafe-inline'";
+
 // interactions is optional: without it the portal doesn't answer slash commands.
-function createPortal({ config, rest, auth, guard, interactions, caseLog = createCases(rest, { botId: once(async () => (await rest.request('GET', '/users/@me')).id) }) }) {
+function createPortal({ config, rest, auth, guard, interactions, fetchImpl = fetch, caseLog = createCases(rest, { botId: once(async () => (await rest.request('GET', '/users/@me')).id) }) }) {
   const limitUser = createLimiter(120, 60000);
   const limitIp = createLimiter(30, 60000);
   let botUser = null;
@@ -194,9 +200,37 @@ function createPortal({ config, rest, auth, guard, interactions, caseLog = creat
     },
   };
 
+  async function sendTranscript(res, channelId, messageId, signature) {
+    if (!checkTranscriptSignature(config.sessionSecret, channelId, messageId, signature)) return sendPage(res, 403, 'This link is not valid', 'Open transcripts with the View transcript button in your ticket log channel.');
+    try {
+      const message = await rest.request('GET', `/channels/${channelId}/messages/${messageId}`);
+      const file = (message.attachments || []).find((a) => /\.html$/i.test(a.filename || ''));
+      if (!file) return sendPage(res, 404, 'Transcript not found', 'That log message has no transcript attached.');
+      const page = await fetchImpl(file.url);
+      if (!page.ok) throw new Error(`Discord's file server returned HTTP ${page.status}.`);
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': TRANSCRIPT_CSP, 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'Cache-Control': 'private, max-age=300' });
+      return res.end(Buffer.from(await page.arrayBuffer()));
+    } catch (err) {
+      if (err.code === 10008 || err.code === 10003 || err.status === 404) return sendPage(res, 404, 'Transcript deleted', 'This transcript was deleted from the ticket log channel.');
+      if (err.code === 50001 || err.code === 50013) return sendPage(res, 403, "Can't read the transcript", "The bot can't see the ticket log channel any more.");
+      console.error('GET /transcripts:', err);
+      return sendPage(res, 502, 'Transcript unavailable', "Discord didn't hand over the transcript just now. Try again in a minute.");
+    }
+  }
+
   async function handle(req, res) {
     const url = new URL(req.url, config.publicUrl);
     const ip = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket.remoteAddress;
+
+    const transcript = req.method === 'GET' && url.pathname.match(/^\/transcripts\/(\d{15,21})\/(\d{15,21})$/);
+    if (transcript) {
+      try {
+        limitIp(`transcript:${ip}`);
+      } catch (err) {
+        return sendPage(res, 429, 'Slow down', err.message);
+      }
+      return sendTranscript(res, transcript[1], transcript[2], url.searchParams.get('sig'));
+    }
 
     if (req.method === 'GET' && url.pathname === '/health') return sendJson(res, 200, { ok: true });
     if (req.method === 'GET' && url.pathname === '/') {
@@ -271,8 +305,10 @@ if (require.main === module) {
   const config = loadConfig();
   const rest = new DiscordRest(config.botToken);
   const guard = createGuard(rest);
-  const caseLog = createCases(rest, { botId: once(async () => (await rest.request('GET', '/users/@me')).id) });
-  const server = createPortal({ config, rest, auth: createAuth(config), guard, caseLog, interactions: createInteractions({ rest, guard, caseLog }) });
+  const botId = once(async () => (await rest.request('GET', '/users/@me')).id);
+  const caseLog = createCases(rest, { botId });
+  const tickets = createTickets({ rest, botId, transcriptLink: (channelId, messageId) => `${config.publicUrl}/transcripts/${channelId}/${messageId}?sig=${transcriptSignature(config.sessionSecret, channelId, messageId)}` });
+  const server = createPortal({ config, rest, auth: createAuth(config), guard, caseLog, interactions: createInteractions({ rest, guard, caseLog, tickets }) });
   server.listen(config.port, () => console.log(`Mod portal listening on port ${config.port} (${config.publicUrl})`));
 }
 

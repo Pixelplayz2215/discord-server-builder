@@ -7,6 +7,7 @@ const { createGuard, P } = require('./guard');
 const { createInteractions, verifySignature, publicKey } = require('./interactions');
 const { createPortal } = require('./index');
 const { COMMANDS } = require('../src/main/commands');
+const { transcriptSignature } = require('../src/main/tickets');
 
 const G = '100000000000000001';
 const CH = '300000000000000001';
@@ -38,6 +39,7 @@ function fakeDiscord() {
   const members = { [OWNER]: [], [ADMIN]: [R.admin], [MOD]: [R.mod], [HELPER]: [R.helper], [MEMBER]: [R.member], [QUIET]: [R.member], [BOT]: [R.bot] };
   const channels = [{ id: CH, type: 0, name: 'general', permission_overwrites: [] }];
   const messages = {}; // channel id -> newest first
+  const transcripts = {}; // log message id -> message with a transcript attached
   let next = 500000000000000000n;
   const newId = () => String(next++);
   const error = (status, code, message) => Object.assign(new Error(message), { status, code });
@@ -47,6 +49,7 @@ function fakeDiscord() {
     replies,
     channels,
     messages,
+    transcripts,
     async request(method, path, opts = {}) {
       calls.push({ method, path, ...opts });
       let m;
@@ -75,6 +78,7 @@ function fakeDiscord() {
         const start = opts.query?.before ? list.findIndex((x) => x.id === opts.query.before) + 1 : 0;
         return list.slice(start, start + (opts.query?.limit || 50));
       }
+      if ((m = path.match(/^\/channels\/\d+\/messages\/(\d+)$/)) && method === 'GET' && transcripts[m[1]]) return transcripts[m[1]];
       if (path === '/users/@me/channels') return { id: `9${opts.body.recipient_id.slice(1)}` };
       if ((m = path.match(/^\/channels\/(\d+)$/)) && method === 'GET') return channels.find((c) => c.id === m[1]) || { id: m[1], guild_id: G, type: 0, permission_overwrites: [] };
       if (path === `/guilds/${G}/emojis`) return [{ id: '800000000000000001', name: 'pepe', animated: false }, { id: '800000000000000002', name: 'party_parrot', animated: true }];
@@ -89,11 +93,11 @@ function fakeDiscord() {
   };
 }
 
-async function startPortal() {
+async function startPortal({ tickets = null, fetchImpl } = {}) {
   const discord = fakeDiscord();
   const guard = createGuard(discord);
   const config = { publicUrl: 'http://localhost', clientId: 'c', clientSecret: 's', redirectUri: 'http://localhost/auth/callback', sessionSecret: 'z'.repeat(32), sessionDays: 7 };
-  const server = createPortal({ config, rest: discord, auth: createAuth(config), guard, interactions: createInteractions({ rest: discord, guard }) });
+  const server = createPortal({ config, rest: discord, auth: createAuth(config), guard, fetchImpl, interactions: createInteractions({ rest: discord, guard, tickets }) });
   await new Promise((r) => server.listen(0, r));
   const url = `http://127.0.0.1:${server.address().port}/interactions`;
 
@@ -353,6 +357,48 @@ test('/lock and /unlock tell members in the channel why, before locking and afte
     discord.channels.push({ id: '300000000000000005', type: 15, name: 'ideas', permission_overwrites: [] });
     assert.match((await run('lock', { channel: '300000000000000005' })).content, /^🔒 Locked/);
     assert.equal(discord.messages['300000000000000005'], undefined);
+  } finally {
+    server.close();
+  }
+});
+
+test('ticket buttons and forms go to the ticket engine; unknown buttons get a hint', async () => {
+  let ran = false;
+  const tickets = { interaction: async (i) => (i.data.custom_id.startsWith('tk:') ? { response: { type: 6 }, after: async () => (ran = true) } : null) };
+  const { server, post } = await startPortal({ tickets });
+  try {
+    const press = (custom_id, type = 3) => post({ type, id: '1', application_id: BOT, token: 't', guild_id: G, channel_id: CH, member: { user: { id: MEMBER } }, data: { custom_id } });
+    assert.deepEqual((await press(`tk:claim:${CH}:${CH}`)).json, { type: 6 });
+    for (let i = 0; i < 50 && !ran; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.equal(ran, true, 'the work after the reply runs');
+    assert.deepEqual((await press(`tk:closing:${CH}:${CH}`, 5)).json, { type: 6 });
+    const unknown = await press('something-else');
+    assert.equal(unknown.json.data.flags, 64);
+    assert.match(unknown.json.data.content, /doesn't know that button/);
+  } finally {
+    server.close();
+  }
+});
+
+test('transcripts open from signed links only, with no scripts allowed', async () => {
+  const LOG_MSG = '700000000000000001';
+  const fetchImpl = async (url) => (url === 'https://cdn.test/transcript.html' ? new Response('<!doctype html><p>chat</p>', { status: 200 }) : new Response('', { status: 404 }));
+  const { discord, server } = await startPortal({ fetchImpl });
+  discord.transcripts[LOG_MSG] = { id: LOG_MSG, attachments: [{ filename: 'transcript-ticket-anna.html', url: 'https://cdn.test/transcript.html' }] };
+  discord.transcripts['700000000000000002'] = { id: '700000000000000002', attachments: [] };
+  const base = `http://127.0.0.1:${server.address().port}/transcripts`;
+  const sig = (msg) => transcriptSignature('z'.repeat(32), CH, msg);
+  try {
+    const ok = await fetch(`${base}/${CH}/${LOG_MSG}?sig=${sig(LOG_MSG)}`);
+    assert.equal(ok.status, 200);
+    assert.equal(await ok.text(), '<!doctype html><p>chat</p>');
+    assert.match(ok.headers.get('content-security-policy'), /default-src 'none'/);
+    assert.doesNotMatch(ok.headers.get('content-security-policy'), /script-src/);
+    assert.equal(ok.headers.get('x-content-type-options'), 'nosniff');
+
+    assert.equal((await fetch(`${base}/${CH}/${LOG_MSG}?sig=wrong`)).status, 403);
+    assert.equal((await fetch(`${base}/${CH}/${LOG_MSG}`)).status, 403);
+    assert.equal((await fetch(`${base}/${CH}/700000000000000002?sig=${sig('700000000000000002')}`)).status, 404, 'no transcript attached');
   } finally {
     server.close();
   }
