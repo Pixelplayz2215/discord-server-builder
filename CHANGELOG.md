@@ -6,6 +6,8 @@ To release: add your changes as `- ` lines under **Unreleased**, then run `npm r
 
 ## Unreleased
 
+## 1.2.4 (2026-10-31)
+
 - **Copy user ID on bans and kicks.** Each row in Safety → Moderation's Bans and Kicks lists has a **Copy user ID** button, handy for looking someone up or banning them in another server.
 
 ## 1.2.3 (2026-10-31)
