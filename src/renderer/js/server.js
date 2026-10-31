@@ -1338,11 +1338,19 @@ const ModerationTab = {
         return listHost.replaceChildren(h('div', { class: 'empty' }, icon('shield'), h('h3', null, list.length ? `No ${kicks ? 'kicks' : 'bans'} match` : none[0]), h('p', null, list.length ? '' : none[1])));
       }
       const who = (u) => [h('img', { class: 'avatar', src: userAvatar(u, 64), width: 36, height: 36, alt: '', loading: 'lazy' }), h('div', { class: 'primary ellipsis' }, displayName(u), h('span', { class: 'subtle', style: { fontWeight: 400 } }, `  @${u.username}`))];
+      const copyId = (u) => h('button', { class: 'btn sm ghost', title: u.id, onclick: () => copyText(u.id, 'User ID copied') }, icon('copy'), 'Copy user ID');
       listHost.replaceChildren(
         ...shown.slice(0, 300).map((item) => {
           if (!kicks) {
             const [avatar, name] = who(item.user);
-            return h('div', { class: 'list-row' }, avatar, h('div', { class: 'grow', style: { minWidth: 0 } }, name, h('div', { class: 'secondary ellipsis' }, item.reason ? `Reason: ${item.reason}` : 'No reason given')), h('button', { class: 'btn sm', onclick: () => Mod.unban(ctx, item.user.id, displayName(item.user)) }, icon('unlock'), 'Unban'));
+            return h(
+              'div',
+              { class: 'list-row' },
+              avatar,
+              h('div', { class: 'grow', style: { minWidth: 0 } }, name, h('div', { class: 'secondary ellipsis' }, item.reason ? `Reason: ${item.reason}` : 'No reason given')),
+              copyId(item.user),
+              h('button', { class: 'btn sm', onclick: () => Mod.unban(ctx, item.user.id, displayName(item.user)) }, icon('unlock'), 'Unban'),
+            );
           }
           // Through the bot (a slash command, the mod portal), the moderator is named in the reason.
           const { reason, by, via } = ModLog.parseAuditReason(item.reason);
@@ -1359,6 +1367,7 @@ const ModerationTab = {
               h('div', { class: 'secondary ellipsis' }, `Kicked by ${kicker}${via ? ` via ${via}` : ''} · ${fmtRelative(snowflakeDate(item.id))}`),
               reason ? h('div', { class: 'audit-reason' }, h('span', { class: 'audit-reason-label' }, 'Reason'), h('span', null, reason)) : null,
             ),
+            copyId(item.user),
             h('button', { class: 'btn sm', title: 'Ban them, for example if they come back', onclick: () => Mod.ban(ctx, item.user.id, displayName(item.user)) }, icon('ban'), 'Ban'),
           );
         }),

@@ -6,6 +6,8 @@ To release: add your changes as `- ` lines under **Unreleased**, then run `npm r
 
 ## Unreleased
 
+- **Copy user ID on bans and kicks.** Each row in Safety → Moderation's Bans and Kicks lists has a **Copy user ID** button, handy for looking someone up or banning them in another server.
+
 ## 1.2.3 (2026-10-31)
 
 - **Select several at once.** Channels, roles and members each have a **Select** button. Pick channels and categories to lock, unlock, set slowmode on, move to another category, clone (with their settings and permissions; a category is copied with the channels picked in it) or delete. Pick roles to clone or delete. Pick members, or all that match a search, to give or take a role, time out, kick or ban. Deleting 5 or more asks you to type "delete" first.
