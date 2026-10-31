@@ -423,6 +423,7 @@ onEvent('social:changed', () => {
   if (App.route.page !== 'social' || document.querySelector('#modal-root .modal')) return;
   api('social:get')
     .then((data) => {
+      if (JSON.stringify(data) === JSON.stringify(SocialPage.data)) return; // nothing new to show
       SocialPage.data = data;
       SocialPage.rerender();
     })

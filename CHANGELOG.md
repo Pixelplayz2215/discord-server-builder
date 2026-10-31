@@ -6,6 +6,9 @@ To release: add your changes as `- ` lines under **Unreleased**, then run `npm r
 
 ## Unreleased
 
+- **New versions show up sooner.** The background check now looks every 2 minutes, at GitHub's release page instead of its API (whose answers could be a minute old, and which limits how often it's asked), so the "new version" popup appears within about 2 minutes of a release.
+- **Pages stop flickering.** Social alerts, Announcements, Polls and Server stats no longer redraw every minute when nothing changed, and when something does change, the page updates in place instead of fading in again as if it had reloaded.
+
 ## 1.2.1 (2026-10-31)
 
 - **What 24/7 did while you were away.** When you open the app, the Home page's **Run 24/7** card shows what your mod portal did for each server while the app was closed: welcomes, goodbyes, members given auto roles, reaction roles, votes, announcements, YouTube posts and log entries. Update your portal with **Sync fork** to start counting.

@@ -400,8 +400,15 @@ const AnnouncePage = {
   },
 };
 
-// Something was sent on schedule: refresh the list if it's showing.
+// Something was sent on schedule: refresh the list if it's showing and something changed.
 onEvent('announce:changed', () => {
   if (App.route.page !== 'announce' || document.querySelector('#modal-root .modal')) return;
-  AnnouncePage.load();
+  api('announce:list')
+    .then((data) => {
+      if (JSON.stringify(data) === JSON.stringify(AnnouncePage.data)) return;
+      AnnouncePage.data = data;
+      AnnouncePage.error = null;
+      AnnouncePage.rerender();
+    })
+    .catch(() => {});
 });

@@ -279,6 +279,13 @@ onEvent('stats:changed', () => {
   clearTimeout(statsRefresh);
   statsRefresh = setTimeout(() => {
     if (App.route.page !== 'stats' || document.querySelector('#modal-root .modal')) return;
-    StatsPage.load();
+    api('stats:list')
+      .then((data) => {
+        if (JSON.stringify(data) === JSON.stringify(StatsPage.data)) return; // nothing new to show
+        StatsPage.data = data;
+        StatsPage.error = null;
+        StatsPage.rerender();
+      })
+      .catch(() => {});
   }, 400);
 });

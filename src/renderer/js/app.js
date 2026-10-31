@@ -6,6 +6,7 @@ const App = {
   route: { page: 'home' },
   views: {}, // botId -> per-bot page state (kept while switching between bots)
   savedTemplates: [],
+  shownRoute: null, // the route the page was last drawn for
 
   bot(botId) {
     return this.bots.find((b) => b.id === botId);
@@ -45,6 +46,11 @@ const App = {
     else if (this.route.page === 'settings') content = SettingsPage.render();
     else if (Community.has(this.route.page)) content = Community.render(this.route.page);
     else content = HomePage.render();
+    // Drawing the same page again (new data, a save) skips the entrance animation, so it doesn't
+    // look like the page reloaded.
+    const shown = JSON.stringify(this.route);
+    if (shown === this.shownRoute) content.classList.add('quiet');
+    this.shownRoute = shown;
     document.getElementById('page').replaceChildren(content);
     this.renderCrumb();
   },

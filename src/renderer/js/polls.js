@@ -385,6 +385,13 @@ onEvent('polls:changed', () => {
   clearTimeout(pollsRefresh);
   pollsRefresh = setTimeout(() => {
     if (App.route.page !== 'polls' || document.querySelector('#modal-root .modal')) return;
-    PollsPage.load();
+    api('polls:list')
+      .then((data) => {
+        if (JSON.stringify(data) === JSON.stringify(PollsPage.data)) return; // nothing new to show
+        PollsPage.data = data;
+        PollsPage.error = null;
+        PollsPage.rerender();
+      })
+      .catch(() => {});
   }, 300);
 });

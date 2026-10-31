@@ -143,6 +143,7 @@ img { display: block; }
 .shell { display: flex; min-height: 0; }
 .page { flex: 1; min-width: 0; position: relative; overflow: hidden; }
 .page > * { animation: fade-in 0.22s ease both; }
+.page > .quiet { animation: none; }
 @keyframes fade-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
 /* ---------- Bot rail ---------- */

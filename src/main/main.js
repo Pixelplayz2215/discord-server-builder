@@ -872,12 +872,16 @@ function noteAlways(botId, status, err = null) {
 // Copies what the portal did into the app, so its pages show it (and the app carries on from there
 // if 24/7 is turned off).
 function mergeAlways(botId, status) {
+  // Pages are told only about what changed, so they don't redraw every minute for nothing.
+  const changed = { announcements: false, polls: false, stats: false };
   for (const [guildId, s] of Object.entries(status.servers || {})) {
     if (!s.on) continue;
     const config = store.getGuildConfig(botId, guildId);
     const patch = always.mergeServer(config, s) || {};
     if (patch.polls) patch.polls = trimPolls(patch.polls);
     if (Object.keys(patch).length) store.setGuildConfig(botId, guildId, patch);
+    if (patch.announcements) changed.announcements = true;
+    if (patch.polls) changed.polls = true;
 
     const problems = s.problems || {};
     const note = (map, key, problem) => (problem ? map.set(key, problem) : map.delete(key));
@@ -886,18 +890,26 @@ function mergeAlways(botId, status) {
     note(greetingProblems, `${botId}:${guildId}:goodbye`, problems.goodbye);
     note(logErrors, `${botId}:${guildId}`, problems.logs);
     for (const p of config.reactionRoles || []) note(panelProblems, p.id, problems[`panel:${p.id}`]);
-    for (const p of patch.polls || config.polls || []) note(pollProblems, p.id, problems[`poll:${p.id}`]);
-    if (s.stats) statsState.set(`${botId}:${guildId}`, s.stats);
+    for (const p of patch.polls || config.polls || []) {
+      if ((pollProblems.get(p.id) || null) !== (problems[`poll:${p.id}`] || null)) changed.polls = true; // shown on the Polls page
+      note(pollProblems, p.id, problems[`poll:${p.id}`]);
+    }
+    if (s.stats && JSON.stringify(s.stats) !== JSON.stringify(statsState.get(`${botId}:${guildId}`))) {
+      statsState.set(`${botId}:${guildId}`, s.stats);
+      changed.stats = true;
+    }
   }
 
   // YouTube alerts: what was seen and posted.
   const { alerts, changed: alertsChanged } = always.mergeAlerts(store.getSocial().alerts, botId, status.servers);
   if (alertsChanged) store.saveSocial({ alerts });
 
-  rebuildPollIndex();
-  send('polls:changed');
-  send('announce:changed', {});
-  send('stats:changed', { botId });
+  if (changed.polls) {
+    rebuildPollIndex();
+    send('polls:changed');
+  }
+  if (changed.announcements) send('announce:changed', {});
+  if (changed.stats) send('stats:changed', { botId });
   if (alertsChanged) send('social:changed', {});
 }
 
@@ -2245,7 +2257,14 @@ if (!app.requestSingleInstanceLock()) {
     setTimeout(runAutoBackups, 60 * 1000);
     setInterval(runAutoBackups, 30 * 60 * 1000);
     // Social alerts: YouTube channels are checked every 5 minutes and Twitch every minute (the watcher paces itself).
-    const checkSocial = () => socialWatcher.tick().then(() => send('social:changed', {}), (err) => console.error('Social alerts:', err.message));
+    // The Social alerts page is told only when a check changed something.
+    const checkSocial = () => {
+      const before = JSON.stringify(store.getSocial());
+      return socialWatcher.tick().then(
+        () => JSON.stringify(store.getSocial()) !== before && send('social:changed', {}),
+        (err) => console.error('Social alerts:', err.message),
+      );
+    };
     setTimeout(checkSocial, 15 * 1000);
     setInterval(checkSocial, 60 * 1000);
     // 24/7: save anything that didn't reach the portal last time, then read back what it did.

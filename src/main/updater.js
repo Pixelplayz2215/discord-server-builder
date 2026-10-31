@@ -94,22 +94,24 @@ async function checkForUpdate() {
   };
 }
 
-// Watches GitHub for a new release while the app runs, in the tray too. Each look sends the ETag of
-// the last answer, so while nothing changes GitHub answers "not modified", which is quick and doesn't
-// count against its rate limit. onNewVersion(version) is called once for each newer version.
-const WATCH_EVERY_MS = 5 * 60 * 1000;
+// Watches GitHub for a new release while the app runs, in the tray too. Each look asks the release
+// page (github.com/…/releases/latest), which redirects to the newest release's tag: one small request
+// that's never cached and doesn't count against GitHub's API rate limit, unlike the API (whose
+// answers can be a minute old, and which allows 60 requests an hour). onNewVersion(version) is called
+// once for each newer version.
+const WATCH_EVERY_MS = 2 * 60 * 1000;
 function createReleaseWatcher({ onNewVersion, current = () => app.getVersion(), fetchImpl = fetch, everyMs = WATCH_EVERY_MS, firstLookMs = 20 * 1000 }) {
-  let etag = null;
   let told = null;
   let timer = null;
   let first = null;
 
   async function look() {
     try {
-      const res = await fetchImpl(`https://api.github.com/repos/${REPO}/releases/latest`, { headers: etag ? { ...HEADERS, 'If-None-Match': etag } : HEADERS });
-      if (!res.ok) return; // not modified, rate limited or offline: look again next time
-      etag = res.headers.get('etag') || null;
-      const version = String((await res.json()).tag_name || '').replace(/^v/i, '');
+      const res = await fetchImpl(RELEASES_PAGE, { method: 'HEAD', redirect: 'manual', headers: { 'User-Agent': HEADERS['User-Agent'] } });
+      // No release yet (it redirects to the releases list), or offline: look again next time.
+      const tag = String(res.headers.get('location') || '').match(/\/releases\/tag\/([^/?#]+)$/)?.[1];
+      if (!tag) return;
+      const version = decodeURIComponent(tag).replace(/^v/i, '');
       if (version && version !== told && isNewer(version, current())) {
         told = version;
         onNewVersion(version);
