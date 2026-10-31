@@ -1,20 +1,28 @@
-// Answers the mod slash commands (src/main/commands.js) for a bot whose Interactions Endpoint URL
+// Answers the slash commands (src/main/commands.js) for a bot whose Interactions Endpoint URL
 // points at this portal's /interactions. Discord signs every request; unsigned ones are refused.
-// Each command goes through the same checks as the app (guard.js): the mod's own Discord
+// Each mod command goes through the same checks as the app (guard.js): the mod's own Discord
 // permissions, and only members ranked below them. Member actions are recorded in #mod-cases.
+// /poll is for anyone who can post polls in the channel.
 const crypto = require('crypto');
 const { purgeMessages, setChannelLock } = require('../src/main/builder');
 const { DURATIONS, DELETE_WINDOWS, SLOWMODES, labelFor } = require('../src/main/commands');
 const { auditReason, P } = require('./guard');
 const { createCases, notifyUser, warnMember, TYPES, escapeMarkdown } = require('../src/main/cases');
+const { normalizePoll, pollMessage, parseEmojiInput, emojiChoices, MAX_OPTIONS } = require('../src/main/polls');
+const { emojiPath } = require('../src/main/reactionroles');
 
-const INTERACTION = { PING: 1, COMMAND: 2 };
-const RESPONSE = { PONG: 1, MESSAGE: 4, DEFERRED: 5 };
+const INTERACTION = { PING: 1, COMMAND: 2, AUTOCOMPLETE: 4 };
+const RESPONSE = { PONG: 1, MESSAGE: 4, DEFERRED: 5, CHOICES: 8 };
 const EPHEMERAL = 1 << 6;
 const THREAD_TYPES = new Set([10, 11, 12]);
 const MAX_CLOCK_SKEW_S = 300;
 const SHOWN_CASES = 15;
 const DMS_CLOSED = "Their DMs are closed, so they weren't told.";
+const EMOJI_CACHE_MS = 60000;
+// Channel permissions /poll reads from the interaction itself (the member's and the bot's).
+const CAN = { ADD_REACTIONS: 1n << 6n, VIEW_CHANNEL: 1n << 10n, SEND_MESSAGES: 1n << 11n, EMBED_LINKS: 1n << 14n, READ_HISTORY: 1n << 16n, SEND_IN_THREADS: 1n << 38n, SEND_POLLS: 1n << 49n };
+
+const avatarUrl = (u) => (u.avatar ? `https://cdn.discordapp.com/avatars/${u.id}/${u.avatar}.png?size=64` : `https://cdn.discordapp.com/embed/avatars/${Number((BigInt(u.id) >> 22n) % 6n)}.png`);
 
 const fail = (message, status = 400) => Object.assign(new Error(message), { status });
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -62,9 +70,23 @@ function createInteractions({ rest, guard, caseLog = createCases(rest, { botId: 
       channelId: interaction.channel_id,
       channelType: interaction.channel?.type,
       user: { id: u.id, username: u.username, global_name: u.global_name || null },
+      shownAs: { name: interaction.member.nick || u.global_name || u.username, icon: avatarUrl(u) },
+      // The member's and the bot's permissions in this channel, as Discord worked them out.
+      permissions: BigInt(interaction.member.permissions || 0),
+      appPermissions: BigInt(interaction.app_permissions || 0),
       options: Object.fromEntries((interaction.data.options || []).map((o) => [o.name, o.value])),
       resolved: interaction.data.resolved || {},
     };
+  }
+
+  // A server's own emojis, for /poll, kept for a minute.
+  const emojiCache = new Map();
+  async function serverEmojis(guildId) {
+    const hit = emojiCache.get(guildId);
+    if (hit && hit.expires > Date.now()) return hit.list;
+    const list = await rest.request('GET', `/guilds/${guildId}/emojis`);
+    emojiCache.set(guildId, { list, expires: Date.now() + EMOJI_CACHE_MS });
+    return list;
   }
 
   const audit = (ctx) => auditReason(ctx.options.reason, ctx.user, `/${ctx.command}`);
@@ -208,7 +230,46 @@ function createInteractions({ rest, guard, caseLog = createCases(rest, { botId: 
       await rest.request('PATCH', `/channels/${channel.id}`, { body: { rate_limit_per_user: seconds }, reason: audit(ctx) });
       return seconds ? `🐢 Slowmode in <#${channel.id}> is now ${labelFor(SLOWMODES, seconds)}.` : `Slowmode is off in <#${channel.id}>.`;
     },
+
+    // Posts a reaction poll here as the bot. The app fills in its bars as votes come in.
+    async poll(ctx) {
+      const send = THREAD_TYPES.has(ctx.channelType) ? CAN.SEND_IN_THREADS : CAN.SEND_MESSAGES;
+      if (!(ctx.permissions & send) || !(ctx.permissions & CAN.SEND_POLLS)) throw fail("You can't post polls in this channel.", 403);
+      const botNeeds = [[CAN.VIEW_CHANNEL, 'View Channel'], [send, 'Send Messages'], [CAN.EMBED_LINKS, 'Embed Links'], [CAN.ADD_REACTIONS, 'Add Reactions'], [CAN.READ_HISTORY, 'Read Message History']];
+      const missing = botNeeds.filter(([bit]) => !(ctx.appPermissions & bit)).map(([, name]) => name);
+      if (missing.length) throw fail(`The bot needs ${missing.join(', ')} in this channel to post a poll.`);
+
+      const emojis = await serverEmojis(ctx.guildId).catch(() => []);
+      const options = [];
+      for (let n = 1; n <= MAX_OPTIONS; n++) {
+        const emoji = ctx.options[`emoji${n}`];
+        const label = String(ctx.options[`option${n}`] ?? '').trim();
+        if (emoji == null && !label) continue;
+        if (emoji == null || !label) throw fail(`Option ${n} needs both an emoji and its text.`);
+        options.push({ emoji: parseEmojiInput(emoji, emojis), label });
+      }
+      const poll = normalizePoll({ guildId: ctx.guildId, channelId: ctx.channelId, title: ctx.options.message, multiple: true, by: ctx.shownAs, options });
+
+      const path = `/channels/${ctx.channelId}/messages`;
+      const message = await rest.request('POST', path, { body: pollMessage(poll) });
+      try {
+        for (const o of poll.options) await rest.request('PUT', `${path}/${message.id}/reactions/${emojiPath(o.emoji)}/@me`);
+      } catch (err) {
+        // A poll missing a reaction can't be voted on properly, so take it down again.
+        await rest.request('DELETE', `${path}/${message.id}`).catch(() => {});
+        if (err.code === 10014) throw fail("The bot can't use one of those emojis. Use a standard emoji or one from this server.");
+        throw err;
+      }
+      return `📊 Posted your poll: https://discord.com/channels/${ctx.guildId}/${ctx.channelId}/${message.id}`;
+    },
   };
+
+  // Suggestions while someone types in one of /poll's emoji boxes.
+  async function suggest(interaction) {
+    const focused = (interaction.data?.options || []).find((o) => o.focused);
+    if (interaction.data?.name !== 'poll' || !/^emoji\d$/.test(focused?.name || '') || !interaction.guild_id) return [];
+    return emojiChoices(focused.value, await serverEmojis(interaction.guild_id).catch(() => []));
+  }
 
   // Does the command's work after Discord has been told to wait, then fills in the reply.
   async function run(interaction, handler) {
@@ -241,6 +302,7 @@ function createInteractions({ rest, guard, caseLog = createCases(rest, { botId: 
       return { status: 400, body: { error: 'Invalid JSON.' } };
     }
     if (interaction.type === INTERACTION.PING) return { status: 200, body: { type: RESPONSE.PONG } };
+    if (interaction.type === INTERACTION.AUTOCOMPLETE) return { status: 200, body: { type: RESPONSE.CHOICES, data: { choices: await suggest(interaction).catch(() => []) } } };
     if (interaction.type !== INTERACTION.COMMAND) return reply('The mod portal only handles slash commands.');
     const handler = Object.hasOwn(handlers, interaction.data?.name) ? handlers[interaction.data.name] : null;
     if (!handler) return reply("This mod portal doesn't know that command yet. The bot owner can update it (Sync fork on GitHub).");

@@ -12,6 +12,7 @@ const INVOKE = new Set([
   'social:get', 'social:setClientId', 'social:twitchLoginStart', 'social:twitchLoginWait', 'social:twitchLoginCancel', 'social:twitchLogout',
   'social:resolve', 'social:saveAlert', 'social:setEnabled', 'social:removeAlert', 'social:test',
   'rr:list', 'rr:save', 'rr:delete', 'rr:sync',
+  'polls:list', 'polls:save', 'polls:end', 'polls:delete', 'polls:emojiColor',
   'presence:set', 'rest', 'members:all', 'channel:purge', 'channel:lock',
   'builder:run', 'builder:clone',
   'templates:list', 'templates:save', 'templates:delete', 'templates:export', 'templates:import',
@@ -19,7 +20,7 @@ const INVOKE = new Set([
   'update:check', 'update:install',
   'open:external', 'app:info',
 ]);
-const EVENTS = new Set(['presence:state', 'builder:event', 'update:progress', 'cases:error', 'raid:progress', 'backup:event', 'backups:changed', 'social:changed']);
+const EVENTS = new Set(['presence:state', 'builder:event', 'update:progress', 'cases:error', 'raid:progress', 'backup:event', 'backups:changed', 'social:changed', 'polls:changed']);
 
 contextBridge.exposeInMainWorld('bridge', {
   // Read synchronously so theme.js can style the page before its first paint.

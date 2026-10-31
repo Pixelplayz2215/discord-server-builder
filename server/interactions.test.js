@@ -77,6 +77,9 @@ function fakeDiscord() {
       }
       if (path === '/users/@me/channels') return { id: `9${opts.body.recipient_id.slice(1)}` };
       if ((m = path.match(/^\/channels\/(\d+)$/)) && method === 'GET') return channels.find((c) => c.id === m[1]) || { id: m[1], guild_id: G, type: 0, permission_overwrites: [] };
+      if (path === `/guilds/${G}/emojis`) return [{ id: '800000000000000001', name: 'pepe', animated: false }, { id: '800000000000000002', name: 'party_parrot', animated: true }];
+      // An emoji from a server the bot isn't in.
+      if (method === 'PUT' && /\/reactions\/ghost%3A\d+\/@me$/.test(path)) throw error(400, 10014, 'Unknown Emoji');
       if ((m = path.match(/^\/webhooks\/\d+\/([^/]+)\/messages\/@original$/))) {
         replies[m[1]] = opts.body;
         return {};
@@ -103,7 +106,7 @@ async function startPortal() {
 
   let count = 0;
   // Sends a slash command and waits for the portal's follow-up reply.
-  const run = async (name, options = {}, { by = MOD, channel = { id: CH, type: 0 } } = {}) => {
+  const run = async (name, options = {}, { by = MOD, channel = { id: CH, type: 0 }, permissions, appPermissions } = {}) => {
     const token = `tok-${++count}`;
     const users = {};
     const resolvedMembers = {};
@@ -121,7 +124,8 @@ async function startPortal() {
       guild_id: G,
       channel_id: channel.id,
       channel,
-      member: { user: { id: by, username: `user${by.slice(-1)}` }, roles: [] },
+      member: { user: { id: by, username: `user${by.slice(-1)}` }, roles: [], permissions },
+      app_permissions: appPermissions,
       data: { name, options: Object.entries(options).map(([key, value]) => ({ name: key, value })), resolved: { users, members: resolvedMembers } },
     });
     assert.equal(status, 200);
@@ -142,11 +146,12 @@ test('command definitions are valid for Discord', () => {
     assert.ok(!names.has(c.name), `duplicate /${c.name}`);
     names.add(c.name);
     assert.ok(c.description.length >= 1 && c.description.length <= 100, `/${c.name} description is ${c.description.length} characters`);
-    assert.match(c.default_member_permissions, /^\d+$/);
+    if (c.default_member_permissions !== null) assert.match(c.default_member_permissions, /^\d+$/);
     let optionalSeen = false;
     for (const o of c.options) {
-      assert.match(o.name, /^[a-z_-]{1,32}$/);
+      assert.match(o.name, /^[a-z0-9_-]{1,32}$/);
       assert.ok(o.description.length <= 100, `/${c.name} ${o.name} description too long`);
+      assert.ok(!(o.autocomplete && o.choices), `/${c.name} ${o.name} can't have both autocomplete and choices`);
       if (o.required) assert.ok(!optionalSeen, `/${c.name}: required option ${o.name} after an optional one`);
       else optionalSeen = true;
       if (o.choices) {
@@ -268,6 +273,59 @@ test('/cases shows a member\'s history, newest first', async () => {
     assert.match(text, /1 × Timeout · 1 × Warn/);
     assert.ok(text.indexOf('#2 Timeout** (10 minutes)') < text.indexOf('#1 Warn'), 'newest case should come first');
     assert.doesNotMatch(text, /someone else/);
+  } finally {
+    server.close();
+  }
+});
+
+test('/poll posts a reaction poll for anyone who can post polls, with the bot reacting in order', async () => {
+  const { discord, server, run } = await startPortal();
+  const member = { by: MEMBER, permissions: perms(1n << 11n, 1n << 49n), appPermissions: perms(1n << 6n, 1n << 10n, 1n << 11n, 1n << 14n, 1n << 16n) };
+  try {
+    const posted = await run('poll', { message: 'Friday game?', emoji1: '🔥', option1: 'Minecraft', emoji2: '<:pepe:800000000000000001>', option2: 'Valorant', emoji3: ':party_parrot:', option3: 'Board games' }, member);
+    assert.match(posted.content, /^📊 Posted your poll: https:\/\/discord\.com\/channels\/\d+\/300000000000000001\/\d+$/);
+    const [msg] = discord.messages[CH];
+    assert.equal(msg.embeds[0].title, 'Friday game?');
+    assert.equal(msg.embeds[0].author.name, 'Poll by user5');
+    assert.match(msg.embeds[0].description, /^\*Select one or more answers\*\n\n🔥 \*\*Minecraft\*\*\n⬛{10} \*\*0%\*\* · 0 votes\n\n<:pepe:800000000000000001> \*\*Valorant\*\*/);
+    assert.match(msg.embeds[0].description, /<a:party_parrot:800000000000000002> \*\*Board games\*\*/);
+    assert.equal(msg.embeds[0].footer.text, '📊 0 votes · React to vote');
+    const reactions = discord.calls.filter((c) => c.method === 'PUT' && c.path.includes(`/messages/${msg.id}/reactions/`)).map((c) => decodeURIComponent(c.path.split('/reactions/')[1]));
+    assert.deepEqual(reactions, ['🔥/@me', 'pepe:800000000000000001/@me', 'party_parrot:800000000000000002/@me']);
+
+    // Members who can't post polls there, a bot missing permissions, and bad answers.
+    assert.match((await run('poll', { message: 'x', emoji1: '🔥', option1: 'a', emoji2: '💧', option2: 'b' }, { ...member, permissions: perms(1n << 11n) })).content, /^✗ You can't post polls in this channel\.$/);
+    assert.match((await run('poll', { message: 'x', emoji1: '🔥', option1: 'a', emoji2: '💧', option2: 'b' }, { ...member, appPermissions: perms(1n << 10n, 1n << 11n) })).content, /^✗ The bot needs Embed Links, Add Reactions, Read Message History in this channel/);
+    assert.match((await run('poll', { message: 'x', emoji1: 'hello there', option1: 'a', emoji2: '💧', option2: 'b' }, member)).content, /isn't an emoji/);
+    assert.match((await run('poll', { message: 'x', emoji1: '🔥', option1: 'a', emoji2: '🔥', option2: 'b' }, member)).content, /its own emoji/);
+    assert.match((await run('poll', { message: 'x', emoji1: '🔥', option1: 'a', emoji2: '💧', option2: 'b', emoji3: '🌊' }, member)).content, /Option 3 needs both an emoji and its text/);
+
+    // An emoji the bot can't use: the half-made poll is taken down again.
+    const before = discord.messages[CH].length;
+    assert.match((await run('poll', { message: 'x', emoji1: '🔥', option1: 'a', emoji2: '<:ghost:800000000000000009>', option2: 'b' }, member)).content, /can't use one of those emojis/);
+    const ghost = discord.messages[CH][0];
+    assert.equal(discord.messages[CH].length, before + 1);
+    assert.ok(discord.calls.some((c) => c.method === 'DELETE' && c.path === `/channels/${CH}/messages/${ghost.id}`), 'the broken poll should be deleted');
+  } finally {
+    server.close();
+  }
+});
+
+test('/poll emoji boxes suggest server emojis and standard ones as you type', async () => {
+  const { server, post } = await startPortal();
+  const ask = async (value, name = 'emoji2') => {
+    const { json } = await post({ type: 4, guild_id: G, channel_id: CH, member: { user: { id: MEMBER } }, data: { name: 'poll', options: [{ name: 'message', value: 'q' }, { name, value, focused: true }] } });
+    assert.equal(json.type, 8);
+    return json.data.choices;
+  };
+  try {
+    const all = await ask('');
+    assert.deepEqual(all.slice(0, 2).map((c) => c.value), ['<:pepe:800000000000000001>', '<a:party_parrot:800000000000000002>']);
+    assert.ok(all.some((c) => c.value === '👍') && all.length <= 25);
+    const fire = await ask('fire');
+    assert.ok(fire.some((c) => c.value === '🔥'));
+    assert.deepEqual((await ask('par')).map((c) => c.value)[0], '<a:party_parrot:800000000000000002>');
+    assert.deepEqual(await ask('x', 'option1'), []);
   } finally {
     server.close();
   }

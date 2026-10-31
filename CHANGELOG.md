@@ -6,6 +6,11 @@ To release: add your changes as `- ` lines under **Unreleased**, then run `npm r
 
 ## Unreleased
 
+- **Polls.** A new Polls page (bars in the left rail) posts a question with 2 to 4 answers, each with a server emoji or a standard one. Members vote by reacting, and the bot draws a coloured bar under each answer like Discord's own polls: the bar matches its emoji's colour, or pick your own, and the card colour is yours too. Let members pick one answer or several, and end a poll to show the final results with the winner marked.
+- **/poll.** Anyone who can post polls in a channel can run `/poll message emoji1 option1 emoji2 option2` (up to 4 options) in Discord. The emoji boxes suggest the server's own emojis and standard ones as you type. Polls posted this way show up on the Polls page, and their bars fill in while the app is open or in the tray. Press **Turn on** under **Add slash commands** on the Home page again to add it (update your portal first with **Sync fork**).
+- **Fixed: YouTube alerts failing with "HTTP 500" or "didn't return this channel's videos".** YouTube's channel feeds often fail for a moment, even for channels that exist. The app now tries again before giving up, **Check** works while the feed is down, and an alert only shows a problem after it has failed for 15 minutes. Videos posted during a failure are still announced when the feed comes back.
+- **Fixed:** the "log in with Twitch" warning showed when adding or editing a YouTube alert.
+
 ## 1.0.7 (2026-10-30)
 
 - **Reaction roles.** A new Reaction roles page (smiley in the left rail) posts a message members react to, to give themselves roles. Pick any of the server's own emojis or a standard one for each role, write your own message as a card or plain text, and put up to 20 reaction roles on one message. Choose whether members can pick any number of roles, only one, or add-only (for rules or verification). The bot hands roles out while the app is open or in the tray, and catches up on reactions it missed when it starts.

@@ -14,6 +14,7 @@ A Windows desktop app (Electron) in the Pixelplayz2215 theme for running Discord
 - **Server logs.** The bot posts joins (new accounts flagged), leaves, bans, timeouts, role and nickname changes, deleted and edited messages, and channel and role changes to a log channel while the app runs.
 - **Social alerts** (megaphone in the left rail). Post in a channel of your choice when a YouTube channel uploads (or starts a stream) or a Twitch channel goes live, with an optional @everyone, @here or role ping and your own message. YouTube needs no login: paste any channel's link. Twitch uses **Log in with Twitch**. Checks run while the app is open or in the tray (YouTube every 5 minutes, Twitch every minute). X / Twitter isn't supported, because X charges for every API read since February 2026.
 - **Reaction roles** (smiley in the left rail). Post a message members react to, to give themselves roles: up to 20 emoji-and-role pairs per message, using the server's own uploaded emojis or standard ones (or any pasted emoji), with your own message as a card or plain text and a live preview. Members can pick any number of roles, only one (picking another swaps it), or add-only for rules and verification. The bot hands roles out while the app is open or in the tray, catches up on reactions it missed when it starts, and puts its reactions back if a mod clears them.
+- **Polls** (bars in the left rail). Ask a question with 2 to 4 answers, each with its own emoji (server or standard). Members vote by reacting, and the bot draws a coloured bar under each answer like Discord's own polls, in a colour that matches the emoji (or one you pick), with your own message and card colour. Choose whether members can pick one answer or several, and end a poll to show the final results. Anyone who can post polls in a channel can also use `/poll message emoji1 option1 emoji2 option2 …` in Discord (with the mod portal's slash commands on); its emoji boxes suggest the server's emojis as you type. Bars update while the app is open or in the tray.
 - **Keeps running in the tray.** The close button hides the app to the tray so bots stay online and logs and backups keep going. Quit from the tray icon. This can be turned off in Settings.
 - **Channels.** Send a message as the bot, purge up to 1000 recent messages, lock or unlock, set slowmode, rename, delete, or create channels.
 - **Audit log.** Recent actions, with filters.
@@ -120,10 +121,12 @@ Notes:
 src/main/       Electron main process
   main.js         window, tray + IPC handlers
   discord.js      REST client with rate-limit handling
-  gateway.js      gateway connection (keeps bots "online", receives events for server logs)
+  gateway.js      gateway connection (keeps bots "online", receives events for server logs, reaction roles and polls)
   logs.js         server logs: gateway events → batched embeds in a log channel
   social.js       social alerts: YouTube feeds, Log in with Twitch, the watcher
   reactionroles.js reaction roles: posting panels, handing out roles, catching up
+  polls.js        reaction polls: the message with its bars, redrawing as votes come in (shared with server/)
+  emojicolors.js  the bar colour for each standard emoji
   backup.js       server snapshots and restore
   cases.js        #mod-cases case log, warnings (shared with server/)
   builder.js      template → server builder, clone, purge, lock, member paging
@@ -148,6 +151,7 @@ src/renderer/   UI (plain HTML/CSS/JS, no bundler)
   js/serverlogs.js server logs settings (Logs tab)
   js/social.js    Social alerts page
   js/reactionroles.js Reaction roles page and emoji picker (standard emojis in js/emojis.js)
+  js/polls.js     Polls page
   js/builder.js   Builder tab
   js/templates.js built-in server templates
 scripts/        make-icon.js (draws the logo → build/icon.png/.ico), copy-fonts.js, release.js + changelog.js
@@ -162,6 +166,7 @@ server/         mod portal (not part of the .exe)
 test/features.test.js  cases, backups and server logs tests (not packaged)
 test/social.test.js    social alerts tests (not packaged)
 test/reactionroles.test.js  reaction roles tests (not packaged)
+test/polls.test.js     polls tests (not packaged)
 test/release.test.js   changelog handling tests (not packaged)
 docs/MOD-PORTAL.md  how to deploy the portal and give mods access
 render.yaml     Render blueprint for the portal

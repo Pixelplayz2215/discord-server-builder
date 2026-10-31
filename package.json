@@ -22,7 +22,7 @@
     "dist:mod": "node scripts/build-mod-view.js",
     "release": "node scripts/release.js",
     "portal": "node server/index.js",
-    "test": "node --test server/portal.test.js server/interactions.test.js test/features.test.js test/social.test.js test/release.test.js test/reactionroles.test.js",
+    "test": "node --test server/portal.test.js server/interactions.test.js test/features.test.js test/social.test.js test/release.test.js test/reactionroles.test.js test/polls.test.js",
     "test:portal": "node --test server/portal.test.js server/interactions.test.js"
   },
   "dependencies": {

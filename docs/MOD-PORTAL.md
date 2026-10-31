@@ -117,10 +117,13 @@ Mods who don't use the app can moderate right in Discord. Your portal answers th
 | `/purge count [reason]` | Manage Messages | Deletes up to 500 recent messages in the channel |
 | `/lock`, `/unlock [channel] [reason]` | Manage Channels | Stops members sending messages, or lets them again |
 | `/slowmode interval [channel]` | Manage Channels | Sets slowmode, from off to 6 hours |
+| `/poll message emoji1 option1 emoji2 option2 [emoji3 option3] [emoji4 option4]` | Anyone who can post polls in the channel | Posts a poll members vote on by reacting. The emoji boxes suggest the server's own emojis and standard ones as you type |
+
+- **Polls.** `/poll` is for everyone, not just mods: anyone with Send Messages and Create Polls in the channel can use it. The bot needs View Channel, Send Messages, Embed Links, Add Reactions and Read Message History there. The bars under each answer fill in while the app is open or in the tray (on the bot owner's PC), and the poll shows up on the app's **Polls** page, where it can be ended.
 
 - **Cases.** Warnings, timeouts, kicks, bans and unbans are recorded as numbered cases in a private `#mod-cases` channel. The bot creates it the first time. Only roles with Kick, Ban or Timeout permission can read it, and only the bot posts there. Don't rename it. `/cases` reads it back.
 - **Same rules as the app.** Each command checks the mod's own Discord permissions and rank, and shows in the audit log as `<reason> — by <mod> (<id>) via /<command>`. Replies are only visible to the mod who ran the command.
-- **Who sees them.** Discord only shows each command to members with the permission it needs. To change that, go to **Server Settings → Integrations → your bot**.
+- **Who sees them.** Discord only shows each mod command to members with the permission it needs, and `/poll` to everyone. To change that, go to **Server Settings → Integrations → your bot**.
 
 **Turn them on:** on the app's **Home** page, under **Give your mods & admins access**, paste your portal address, pick your bot in **Add slash commands** and press **Turn on**. The app points your bot's **Interactions Endpoint URL** at `<your portal>/interactions` and adds the commands. Discord checks the portal answers for your bot before it saves anything. **Turn off** removes them again.
 

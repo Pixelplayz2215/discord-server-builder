@@ -295,6 +295,7 @@ const SocialPage = {
     const messageHint = h('div', { class: 'hint' });
     let shorts = draft.shorts !== false;
     const shortsRow = h('div', null, switchEl(shorts, (v) => (shorts = v), 'Include Shorts'));
+    const twitchWarning = h('div', { class: 'callout warn' }, icon('alert'), h('div', null, 'Twitch alerts need you to log in with Twitch first (Accounts, above).'));
     const platformParts = () => {
       const p = PLATFORMS[draft.platform];
       sourceInput.placeholder = p.placeholder;
@@ -302,6 +303,7 @@ const SocialPage = {
       messageHint.textContent = `Leave empty for the message shown. You can use {name}, {title}, {url}${draft.platform === 'twitch' ? ' and {game}. Twitch alerts also get a card with the stream title, game and preview, so you don\'t need {url}.' : '. A {url} shows YouTube\'s video preview.'}`;
       shortsRow.style.display = draft.platform === 'youtube' ? '' : 'none';
       mine.style.display = draft.platform === 'twitch' && d.twitch.account ? '' : 'none';
+      twitchWarning.style.display = draft.platform === 'twitch' && !d.twitch.loggedIn ? '' : 'none';
     };
     const platformSel = selectEl([['youtube', 'YouTube: a channel posts a video or starts a stream'], ['twitch', 'Twitch: a channel goes live']], draft.platform, (v) => {
       draft.platform = v;
@@ -311,8 +313,6 @@ const SocialPage = {
       platformParts();
     });
     platformParts();
-
-    const twitchWarning = !d.twitch.loggedIn ? h('div', { class: 'callout warn' }, icon('alert'), h('div', null, 'Twitch alerts need you to log in with Twitch first (Accounts, above).')) : null;
 
     return openModal({
       title: alert ? `Edit alert for ${alert.source.name}` : 'Add a social alert',

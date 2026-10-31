@@ -38,6 +38,40 @@ test('YouTube channels resolve from IDs, links and @handles', async () => {
   await assert.rejects(social.resolveYouTubeChannel('@nobody', fetchImpl), /no YouTube channel/);
 });
 
+test('YouTube\'s feed is tried again when it blinks, and Check still works while it is down', async () => {
+  const waits = [];
+  const sleep = async (ms) => waits.push(ms);
+  const answers = [404, 500, 200];
+  let calls = 0;
+  const flaky = async () => {
+    const status = answers[calls++];
+    return reply(status, status === 200 ? feed([{ id: 'v1', at: 0 }]) : '');
+  };
+  assert.equal((await social.fetchYouTubeFeed(UC, flaky, { sleep })).videos[0].id, 'v1');
+  assert.equal(calls, 3);
+  assert.deepEqual(waits, [1500, 4000]);
+
+  // A request YouTube refuses outright isn't tried again.
+  let refused = 0;
+  await assert.rejects(social.fetchYouTubeFeed(UC, async () => (refused++, reply(400, '')), { sleep }), /isn't answering right now \(HTTP 400\)/);
+  assert.equal(refused, 1);
+
+  // Feed down: the channel's page confirms it exists and gives its name.
+  const pages = [];
+  const feedDown = async (url) => {
+    pages.push(url);
+    if (url.includes('/feeds/videos.xml')) return reply(500, '');
+    if (url === `https://www.youtube.com/channel/${UC}`) return reply(200, '<meta property="og:title" content="Pixel &amp; Co">');
+    return reply(404, '');
+  };
+  assert.deepEqual(await social.resolveYouTubeChannel(UC, feedDown, { sleep }), { id: UC, name: 'Pixel & Co', url: `https://www.youtube.com/channel/${UC}` });
+  await assert.rejects(social.resolveYouTubeChannel('UCzzzzzzzzzzzzzzzzzzzzzz', feedDown, { sleep }), /no YouTube channel at that link/);
+
+  // An @handle page already has the name, so the feed isn't needed at all.
+  const handle = async (url) => (url === 'https://www.youtube.com/@pixel' ? reply(200, `<meta property="og:title" content="Pixel"><script>{"externalId":"${UC}"}</script>`) : reply(500, ''));
+  assert.deepEqual(await social.resolveYouTubeChannel('@pixel', handle, { sleep }), { id: UC, name: 'Pixel', url: `https://www.youtube.com/channel/${UC}` });
+});
+
 function harness(alerts, { fetchImpl, twitch = null, failPost = false } = {}) {
   let clock = 1_000_000_000_000;
   const posts = [];
@@ -52,6 +86,7 @@ function harness(alerts, { fetchImpl, twitch = null, failPost = false } = {}) {
     getTwitch: () => twitch,
     fetchImpl,
     now: () => clock,
+    sleep: async () => {},
   });
   return { watcher, posts, store, advance: (ms) => (clock += ms), now: () => clock };
 }
@@ -90,9 +125,16 @@ test('YouTube Shorts can be left out, and feed or post problems show on the aler
   await h.watcher.tick();
   assert.equal(h.posts.length, 0);
 
+  // A failed check is often YouTube's feed blinking, so the problem only shows from the third in a row.
   const broken = harness([{ id: 'b', platform: 'youtube', source: { id: UC, name: 'P' }, createdAt: 0 }], { fetchImpl: async () => reply(404, '') });
   await broken.watcher.tick();
-  assert.match(broken.store[0].state.error, /didn't return this channel's videos/);
+  assert.equal(broken.store[0].state.error, null);
+  assert.equal(broken.store[0].state.failures, 1);
+  for (let i = 0; i < 2; i++) {
+    broken.advance(5 * 60e3);
+    await broken.watcher.tick();
+  }
+  assert.match(broken.store[0].state.error, /video feed for this channel isn't answering right now \(HTTP 404\)/);
 
   const noAccess = harness([{ id: 'c', platform: 'youtube', source: { id: UC, name: 'P' }, createdAt: 1_000_000_000_000 }], { fetchImpl, failPost: true });
   noAccess.advance(200_000);

@@ -190,7 +190,7 @@ const HomePage = {
     );
     const copyAddress = () => (origin() ? copyText(origin(), 'Portal address copied') : toast('Paste your portal address first.', 'error'));
 
-    // Slash commands: the chosen bot's interactions go to the portal, which answers the mod commands.
+    // Slash commands: the chosen bot's interactions go to the portal, which answers the mod commands and /poll.
     const ownerBots = App.bots.filter((b) => b.type !== 'mod');
     const slashStatus = h('div', { class: 'subtle', style: { fontSize: 'calc(12rem / 14)' } });
     let lastStatus = null;
@@ -199,7 +199,7 @@ const HomePage = {
       if (!s) return;
       const here = origin() && s.endpoint === `${origin()}/interactions`;
       let text;
-      if (here && s.registered === s.total) text = `✓ On. Your portal answers all ${s.total} mod commands.`;
+      if (here && s.registered === s.total) text = `✓ On. Your portal answers all ${s.total} commands.`;
       else if (here) text = `On, but ${s.total - s.registered} of the commands are missing. Press Turn on again to add them.`;
       else if (s.endpoint) text = `Off. This bot's commands go to ${s.endpoint}.`;
       else text = s.registered ? 'Off, but the mod commands are still listed in Discord. Press Turn off to remove them.' : 'Off.';
@@ -313,7 +313,7 @@ const HomePage = {
           h(
             'p',
             null,
-            'Mods can also moderate right in Discord with /warn, /timeout, /kick, /ban, /unban, /cases, /purge, /lock, /unlock and /slowmode. Your portal answers them with the same permission rules, and records warnings and actions in a private #mod-cases channel.',
+            'Mods can also moderate right in Discord with /warn, /timeout, /kick, /ban, /unban, /cases, /purge, /lock, /unlock and /slowmode. Your portal answers them with the same permission rules, and records warnings and actions in a private #mod-cases channel. Everyone also gets /poll, which posts a poll with coloured bars (shown on the Polls page).',
           ),
           botSelect
             ? h('div', { class: 'stack', style: { gap: '8px', marginTop: '12px' } }, h('div', { class: 'row wrap' }, botSelect, enableBtn, disableBtn), slashStatus)

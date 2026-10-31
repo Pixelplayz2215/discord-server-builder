@@ -15,6 +15,7 @@ const backups = require('./backup');
 const { createServerLogger, intentsFor: logIntents, normalizeConfig: normalizeLogConfig } = require('./logs');
 const social = require('./social');
 const reactionRoles = require('./reactionroles');
+const polls = require('./polls');
 const pkg = require('../../package.json');
 
 const DEV = process.argv.includes('--dev');
@@ -243,8 +244,14 @@ function presenceFor(botId) {
     const onEvent = (type, data) => {
       loggerFor(botId).handle(type, data);
       reactionsFor(botId).handle(type, data)?.catch?.(() => {});
-      // Reconnected: hand out roles for reactions made while the bot was away.
-      if (type === 'READY') setTimeout(() => catchUpPanels(botId), 5000);
+      pollsFor(botId).handle(type, data)?.catch?.(() => {});
+      // Reconnected: hand out roles for reactions made while the bot was away, and redraw polls.
+      if (type === 'READY') {
+        setTimeout(() => {
+          catchUpPanels(botId);
+          catchUpPolls(botId);
+        }, 5000);
+      }
     };
     presences.set(botId, new PresenceConnection(store.getToken(botId), onState, onEvent));
   }
@@ -303,6 +310,123 @@ async function catchUpPanels(botId) {
   }
 }
 
+/* ---------- Polls (bars redrawn while the app runs, including in the tray) ---------- */
+// Polls are kept per server in servers.json with their latest votes, both the ones posted from the
+// app and the ones found from /poll. This index finds one by its message.
+const MAX_POLLS = 50; // per server: past this the oldest go, ended ones first
+let pollIndex = null; // messageId -> poll (with botId)
+const pollEngines = new Map(); // botId -> polls engine
+const pollProblems = new Map(); // poll id -> latest problem
+const emojiColors = new Map(); // server emoji id -> bar colour
+
+function allPolls() {
+  return store.listGuildConfigs().flatMap(({ botId, guildId, config }) => (config.polls || []).map((p) => ({ ...p, botId, guildId })));
+}
+
+function rebuildPollIndex() {
+  pollIndex = new Map(allPolls().filter((p) => p.messageId).map((p) => [p.messageId, p]));
+}
+
+const botPolls = (botId) => {
+  if (!pollIndex) rebuildPollIndex();
+  return [...pollIndex.values()].filter((p) => p.botId === botId);
+};
+
+// Changes one stored poll (or drops it when change returns null) and tells the Polls page.
+function updatePoll(botId, guildId, id, change) {
+  const list = store.getGuildConfig(botId, guildId).polls || [];
+  store.setGuildConfig(botId, guildId, { polls: list.flatMap((p) => (p.id === id ? [change(p)].filter(Boolean) : [p])) });
+  rebuildPollIndex();
+  send('polls:changed');
+}
+
+function trimPolls(list) {
+  const kept = [...list];
+  while (kept.length > MAX_POLLS) {
+    const byAge = [...kept].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    kept.splice(kept.indexOf(byAge.find((p) => p.ended) || byAge[0]), 1);
+  }
+  return kept;
+}
+
+// The bar colour matching an answer's emoji: standard emojis from a table, server emojis from their image.
+async function emojiBarColor(emoji, index) {
+  if (!emoji?.id) return polls.defaultColor(emoji, index);
+  if (!emojiColors.has(emoji.id)) {
+    try {
+      const res = await fetch(`https://cdn.discordapp.com/emojis/${emoji.id}.png?size=32`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const image = nativeImage.createFromBuffer(Buffer.from(await res.arrayBuffer()));
+      emojiColors.set(emoji.id, polls.dominantColor(image.toBitmap(), { bgra: true }));
+    } catch {
+      return polls.defaultColor(emoji, index); // try again next time
+    }
+  }
+  return emojiColors.get(emoji.id) || polls.defaultColor(emoji, index);
+}
+
+// Someone posted a poll with /poll: keep it, so its bars fill in and it shows on the Polls page.
+async function addFoundPoll(botId, found) {
+  const rest = restFor(botId);
+  const [channel, guild, options] = await Promise.all([
+    rest.request('GET', `/channels/${found.channelId}`).catch(() => null),
+    rest.request('GET', `/guilds/${found.guildId}`).catch(() => null),
+    Promise.all(found.options.map(async (o, i) => ({ ...o, color: await emojiBarColor(o.emoji, i) }))),
+  ]);
+  const list = store.getGuildConfig(botId, found.guildId).polls || [];
+  if (list.some((p) => p.messageId === found.messageId)) return; // posted from the app, or found already
+  const poll = { ...found, options, id: crypto.randomUUID(), source: 'command', guildName: guild?.name || '', channelName: channel?.name || '', counts: options.map(() => 0) };
+  store.setGuildConfig(botId, found.guildId, { polls: trimPolls([...list, poll]) });
+  rebuildPollIndex();
+  send('polls:changed');
+}
+
+function pollsFor(botId) {
+  if (!pollEngines.has(botId)) {
+    pollEngines.set(
+      botId,
+      polls.createPolls({
+        rest: restFor(botId),
+        botId,
+        pollFor: (messageId) => {
+          if (!pollIndex) rebuildPollIndex();
+          const poll = pollIndex.get(messageId);
+          return poll?.botId === botId ? poll : null;
+        },
+        discover: (found) => addFoundPoll(botId, found),
+        saved: (poll, counts) => {
+          const stored = pollIndex?.get(poll.messageId);
+          if (stored && !!stored.ended === !!poll.ended && JSON.stringify(stored.counts) === JSON.stringify(counts)) return;
+          updatePoll(botId, poll.guildId, poll.id, (p) => ({ ...p, counts, ended: !!poll.ended, endedAt: poll.ended ? p.endedAt || Date.now() : null }));
+        },
+        forget: (poll) => {
+          pollProblems.delete(poll.id);
+          updatePoll(botId, poll.guildId, poll.id, () => null);
+        },
+        report: (poll, problem) => {
+          if (problem) pollProblems.set(poll.id, problem);
+          else pollProblems.delete(poll.id);
+        },
+      }),
+    );
+  }
+  return pollEngines.get(botId);
+}
+
+const pollsCatchingUp = new Set();
+async function catchUpPolls(botId) {
+  if (pollsCatchingUp.has(botId)) return;
+  pollsCatchingUp.add(botId);
+  try {
+    await pollsFor(botId).catchUp(botPolls(botId));
+  } finally {
+    pollsCatchingUp.delete(botId);
+  }
+}
+
+// Reactions are watched for reaction roles, open polls, and polls anyone may post with /poll.
+const watchesReactions = (botId) => botPanels(botId).length > 0 || botPolls(botId).some((p) => !p.ended) || !!store.getBot(botId)?.slashCommands;
+
 /* ---------- Server logs (posted while the app runs, including in the tray) ---------- */
 const logConfigs = new Map(); // `${botId}:${guildId}` -> logs config
 const logErrors = new Map(); // `${botId}:${guildId}` -> last posting problem
@@ -336,22 +460,22 @@ function loggerFor(botId) {
   return loggers.get(botId).logger;
 }
 
-// Whether a bot needs its gateway connection for server logs or reaction roles.
-const needsGateway = (botId) => activeLogs(botId).length > 0 || botPanels(botId).length > 0;
+// Whether a bot needs its gateway connection for server logs, reaction roles or polls.
+const needsGateway = (botId) => activeLogs(botId).length > 0 || watchesReactions(botId);
 
 // One gateway connection per bot: it keeps the bot online (when presence is on) and receives the
-// events for server logs and reaction roles. With those on but presence off, it connects invisibly.
+// events for server logs, reaction roles and polls. With those on but presence off, it connects invisibly.
 function syncConnection(botId) {
   const bot = store.getBot(botId);
   if (!bot || bot.type === 'mod') return;
   const logs = activeLogs(botId);
-  const panels = botPanels(botId).length;
+  const reactions = watchesReactions(botId);
   const conn = presenceFor(botId);
   loggerFor(botId);
   loggers.get(botId).content = !!bot.intents?.content;
-  conn.setIntents((logs.length ? logIntents(logs, bot.intents) : 0) | (panels ? reactionRoles.RR_INTENTS : 0));
+  conn.setIntents((logs.length ? logIntents(logs, bot.intents) : 0) | (reactions ? reactionRoles.RR_INTENTS : 0));
   if (bot.presence?.enabled) conn.start(bot.presence);
-  else if (logs.length || panels) conn.start({ status: 'invisible', text: '' });
+  else if (logs.length || reactions) conn.start({ status: 'invisible', text: '' });
   else conn.stop();
 }
 
@@ -403,7 +527,19 @@ async function slashStatus(rest) {
     registered: registered.filter((c) => commands.NAMES.has(c.name)).length,
     total: commands.COMMANDS.length,
     others: registered.filter((c) => !commands.NAMES.has(c.name)).map((c) => c.name),
+    poll: registered.some((c) => c.name === 'poll'),
   };
+}
+
+// Polls posted with /poll only get their bars while the bot's gateway connection runs, so the app
+// remembers which bots have it and connects them.
+function noteSlashCommands(botId, status) {
+  const on = !!status.endpoint && status.poll;
+  if (!!store.getBot(botId)?.slashCommands !== on) {
+    store.updateBot(botId, { slashCommands: on });
+    syncConnection(botId);
+  }
+  return status;
 }
 
 const handlers = {
@@ -417,6 +553,7 @@ const handlers = {
     clients.delete(bot.id);
     caseLogs.delete(bot.id);
     reactionEngines.delete(bot.id);
+    pollEngines.delete(bot.id);
     loggers.delete(bot.id);
     presences.get(bot.id)?.stop();
     presences.delete(bot.id);
@@ -449,9 +586,9 @@ const handlers = {
     return url;
   },
 
-  'commands:status': (botId) => {
+  'commands:status': async (botId) => {
     if (isMod(botId)) ownerOnly();
-    return slashStatus(restFor(botId));
+    return noteSlashCommands(botId, await slashStatus(restFor(botId)));
   },
 
   // Points the bot's Interactions Endpoint URL at the portal (Discord checks it answers, signed as
@@ -469,7 +606,7 @@ const handlers = {
       throw new Error("Discord couldn't verify your portal. Make sure it runs this bot's token and has the latest code: on GitHub, press Sync fork, then wait for Render to finish deploying.");
     }
     await commands.registerCommands(rest, application.id);
-    return slashStatus(rest);
+    return noteSlashCommands(botId, await slashStatus(rest));
   },
 
   // Removes the mod commands, and stops sending interactions to the portal if they go there.
@@ -485,7 +622,7 @@ const handlers = {
     }
     if (ours) await rest.request('PATCH', '/applications/@me', { body: { interactions_endpoint_url: null } });
     await commands.removeCommands(rest, application.id);
-    return slashStatus(rest);
+    return noteSlashCommands(botId, await slashStatus(rest));
   },
 
   'bots:update': (botId, patch) => {
@@ -501,6 +638,7 @@ const handlers = {
     clients.delete(botId);
     caseLogs.delete(botId);
     reactionEngines.delete(botId);
+    pollEngines.delete(botId);
     loggers.delete(botId);
     store.removeBot(botId);
   },
@@ -615,6 +753,62 @@ const handlers = {
     if (!panel) throw new Error("That panel isn't posted yet.");
     return reactionsFor(botId).catchUp(panel);
   },
+
+  // Every poll of the owner's bots, newest first, with its latest problem (if any).
+  'polls:list': () =>
+    allPolls()
+      .filter((p) => store.getBot(p.botId) && !isMod(p.botId))
+      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+      .map((p) => ({ ...p, problem: pollProblems.get(p.id) || null })),
+
+  // Posts a poll from the app, or updates one that's still open.
+  'polls:save': async (botId, input) => {
+    if (!store.getBot(botId)) throw new Error('That bot is no longer in the app.');
+    if (isMod(botId)) ownerOnly();
+    const poll = polls.normalizePoll(input);
+    const list = store.getGuildConfig(botId, poll.guildId).polls || [];
+    const previous = poll.id ? list.find((p) => p.id === poll.id) || null : null;
+    if (previous?.ended) throw new Error("This poll has ended, so it can't be changed.");
+    const saved = { ...poll, id: previous?.id || crypto.randomUUID(), source: previous?.source || 'app', by: previous?.by || null, createdAt: previous?.createdAt || Date.now(), ended: false };
+    Object.assign(saved, await polls.publishPoll(restFor(botId), saved, previous));
+    // The bot's own reactions may have shown the new message to the /poll finder already: keep one.
+    const others = (store.getGuildConfig(botId, poll.guildId).polls || []).filter((p) => p.id !== saved.id && p.messageId !== saved.messageId);
+    store.setGuildConfig(botId, poll.guildId, { polls: trimPolls([...others, saved]) });
+    pollProblems.delete(saved.id);
+    rebuildPollIndex();
+    syncConnection(botId);
+    return handlers['polls:list']();
+  },
+
+  // Draws the final results and stops counting votes.
+  'polls:end': async (botId, guildId, id) => {
+    if (isMod(botId)) ownerOnly();
+    const poll = botPolls(botId).find((p) => p.id === id && p.guildId === guildId);
+    if (!poll) throw new Error("That poll isn't in the app any more.");
+    try {
+      await pollsFor(botId).end(poll);
+    } catch (err) {
+      if (err.code === 10008) throw new Error('Its message was deleted in Discord, so the poll was removed.');
+      throw err;
+    }
+    syncConnection(botId);
+    return handlers['polls:list']();
+  },
+
+  'polls:delete': async (botId, guildId, id, deleteMessage) => {
+    if (isMod(botId)) ownerOnly();
+    const list = store.getGuildConfig(botId, snowflake(guildId, 'server')).polls || [];
+    const poll = list.find((p) => p.id === id);
+    if (poll?.messageId && deleteMessage) await restFor(botId).request('DELETE', `/channels/${poll.channelId}/messages/${poll.messageId}`).catch(() => {});
+    store.setGuildConfig(botId, guildId, { polls: list.filter((p) => p.id !== id) });
+    pollProblems.delete(id);
+    rebuildPollIndex();
+    syncConnection(botId);
+    return handlers['polls:list']();
+  },
+
+  // The bar colour that goes with an emoji, for the poll editor.
+  'polls:emojiColor': (emoji, index) => emojiBarColor(reactionRoles.cleanEmoji(emoji), Number(index) || 0),
 
   'social:get': () => socialStatus(),
 

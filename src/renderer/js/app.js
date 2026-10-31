@@ -45,6 +45,7 @@ const App = {
     else if (this.route.page === 'settings') content = SettingsPage.render();
     else if (this.route.page === 'social') content = SocialPage.render();
     else if (this.route.page === 'reactionroles') content = ReactionRolesPage.render();
+    else if (this.route.page === 'polls') content = PollsPage.render();
     else content = HomePage.render();
     document.getElementById('page').replaceChildren(content);
     this.renderCrumb();
@@ -67,6 +68,7 @@ const App = {
     if (this.route.page === 'settings') return crumb.append(h('b', null, 'Settings'));
     if (this.route.page === 'social') return crumb.append(h('b', null, 'Social alerts'));
     if (this.route.page === 'reactionroles') return crumb.append(h('b', null, 'Reaction roles'));
+    if (this.route.page === 'polls') return crumb.append(h('b', null, 'Polls'));
     if (this.route.page !== 'bot') return;
     const bot = this.bot(this.route.botId);
     const view = this.view(bot.id);
@@ -143,6 +145,7 @@ const App = {
       item('rail-home', 'Home', h('button', { class: 'rail-btn', onclick: () => this.go({ page: 'home' }) }, icon('home')), isHome),
       item('rail-social', 'Social alerts', h('button', { class: 'rail-btn', onclick: () => this.go({ page: 'social' }) }, icon('megaphone')), this.route.page === 'social'),
       item('rail-rr', 'Reaction roles', h('button', { class: 'rail-btn', onclick: () => this.go({ page: 'reactionroles' }) }, icon('smile')), this.route.page === 'reactionroles'),
+      item('rail-polls', 'Polls', h('button', { class: 'rail-btn', onclick: () => this.go({ page: 'polls' }) }, icon('poll')), this.route.page === 'polls'),
       h('div', { class: 'rail-sep' }),
       ...botItems,
       item(

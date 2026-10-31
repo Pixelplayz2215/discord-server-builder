@@ -33,16 +33,17 @@ function panelMessage(panel) {
 
 const isUnknown = (err, code) => err?.code === code || err?.status === 404;
 
-// Posts or updates a panel's message and its reactions. `previous` is the panel as it was last
-// published (or null). Returns the message id.
-async function publishPanel(rest, panel, previous) {
-  const body = panelMessage(panel);
-  const create = () => rest.request('POST', `/channels/${panel.channelId}/messages`, { body: body.content ? body : { ...body, content: undefined } });
+// Posts or updates a message that members react to, with the bot's own reaction on each emoji.
+// item: { channelId, body, emojis }; previous: { channelId, messageId, emojis } as last published,
+// or null. Returns the message id.
+async function publishMessage(rest, item, previous) {
+  const { channelId, body, emojis } = item;
+  const create = () => rest.request('POST', `/channels/${channelId}/messages`, { body: body.content ? body : { ...body, content: undefined } });
   let messageId = null;
-  const moved = previous && previous.channelId !== panel.channelId;
+  const moved = previous && previous.channelId !== channelId;
   if (previous?.messageId && !moved) {
     try {
-      await rest.request('PATCH', `/channels/${panel.channelId}/messages/${previous.messageId}`, { body });
+      await rest.request('PATCH', `/channels/${channelId}/messages/${previous.messageId}`, { body });
       messageId = previous.messageId;
     } catch (err) {
       if (!isUnknown(err, 10008)) throw err; // the old message was deleted: post a new one
@@ -50,21 +51,30 @@ async function publishPanel(rest, panel, previous) {
   }
   if (!messageId) {
     messageId = (await create()).id;
-    // The panel moved to another channel: the old message would only confuse people.
+    // It moved to another channel: the old message would only confuse people.
     if (moved && previous.messageId) await rest.request('DELETE', `/channels/${previous.channelId}/messages/${previous.messageId}`).catch(() => {});
   }
   // Take the bot's own reaction off emojis that were removed, then add every current one (adding
-  // one that's already there changes nothing). Members' roles from removed emojis are left alone.
+  // one that's already there changes nothing). Members' reactions on removed emojis are left alone.
   if (messageId === previous?.messageId) {
-    for (const old of previous.pairs) {
-      if (!panel.pairs.some((p) => sameEmoji(p.emoji, old.emoji))) {
-        await rest.request('DELETE', `/channels/${panel.channelId}/messages/${messageId}/reactions/${emojiPath(old.emoji)}/@me`).catch(() => {});
+    for (const old of previous.emojis) {
+      if (!emojis.some((e) => sameEmoji(e, old))) {
+        await rest.request('DELETE', `/channels/${channelId}/messages/${messageId}/reactions/${emojiPath(old)}/@me`).catch(() => {});
       }
     }
   }
-  for (const p of panel.pairs) await rest.request('PUT', `/channels/${panel.channelId}/messages/${messageId}/reactions/${emojiPath(p.emoji)}/@me`);
+  for (const e of emojis) await rest.request('PUT', `/channels/${channelId}/messages/${messageId}/reactions/${emojiPath(e)}/@me`);
   return messageId;
 }
+
+// Posts or updates a panel's message and its reactions. `previous` is the panel as it was last
+// published (or null). Returns the message id.
+const publishPanel = (rest, panel, previous) =>
+  publishMessage(
+    rest,
+    { channelId: panel.channelId, body: panelMessage(panel), emojis: panel.pairs.map((p) => p.emoji) },
+    previous && { channelId: previous.channelId, messageId: previous.messageId, emojis: previous.pairs.map((p) => p.emoji) },
+  );
 
 // Handles one bot's reaction events. panelFor(messageId) finds a published panel; report(panel,
 // problem) records the latest problem (or null when things work) so the app can show it.
@@ -168,15 +178,20 @@ function createReactionRoles({ rest, botId, panelFor, report = () => {} }) {
   return { handle, catchUp };
 }
 
+const snowflake = (v, what) => {
+  if (!/^\d{15,21}$/.test(String(v || ''))) throw new Error(`Pick a ${what}.`);
+  return String(v);
+};
+
+// An emoji from the app as { id, name, animated } (server emoji) or { name } (standard emoji).
+const cleanEmoji = (e = {}) =>
+  e.id ? { id: snowflake(e.id, 'server emoji'), name: String(e.name || 'emoji').replace(/[^\w]/g, '').slice(0, 32) || 'emoji', animated: !!e.animated } : { name: String(e.name || '').trim().slice(0, 32) };
+
 // Checks and tidies a panel from the app before it's saved.
 function normalizePanel(input) {
-  const id = (v, what) => {
-    if (!/^\d{15,21}$/.test(String(v || ''))) throw new Error(`Pick a ${what}.`);
-    return String(v);
-  };
+  const id = snowflake;
   const pairs = (Array.isArray(input?.pairs) ? input.pairs : []).map((p) => {
-    const e = p?.emoji || {};
-    const emoji = e.id ? { id: id(e.id, 'server emoji'), name: String(e.name || 'emoji').replace(/[^\w]/g, '').slice(0, 32) || 'emoji', animated: !!e.animated } : { name: String(e.name || '').trim().slice(0, 32) };
+    const emoji = cleanEmoji(p?.emoji);
     if (!emoji.name) throw new Error('Every reaction needs an emoji.');
     return { emoji, roleId: id(p.roleId, 'role for every reaction'), roleName: String(p.roleName || '').slice(0, 100), description: String(p.description || '').trim().slice(0, 100) };
   });
@@ -202,4 +217,4 @@ function normalizePanel(input) {
   };
 }
 
-module.exports = { createReactionRoles, publishPanel, panelMessage, normalizePanel, sameEmoji, emojiPath, emojiText, RR_INTENTS, MAX_PAIRS };
+module.exports = { createReactionRoles, publishPanel, publishMessage, panelMessage, normalizePanel, cleanEmoji, snowflake, isUnknown, sameEmoji, emojiPath, emojiText, RR_INTENTS, MAX_PAIRS };

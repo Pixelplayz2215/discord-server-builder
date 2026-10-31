@@ -1,4 +1,4 @@
-// Standard emojis for the reaction-role picker, by category, each with words to search by.
+// Standard emojis for the emoji picker (reaction roles and polls), by category, each with words to search by.
 // Server emojis are loaded from Discord separately; any other emoji can be pasted in the picker.
 
 const STANDARD_EMOJIS = [
@@ -63,3 +63,6 @@ const STANDARD_EMOJIS = [
     ['🇮🇳', 'india'], ['🇦🇺', 'australia'], ['🇳🇱', 'netherlands'], ['🇵🇱', 'poland'], ['🇸🇪', 'sweden'], ['🇵🇭', 'philippines'],
   ]],
 ];
+
+// The mod portal and the main process use the same list (for /poll suggestions and bar colours).
+if (typeof module === 'object') module.exports = { STANDARD_EMOJIS };

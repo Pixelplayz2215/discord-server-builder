@@ -14,6 +14,12 @@ const TWITCH_EVERY_MS = 60 * 1000;
 const CATCH_UP_MS = 2 * 86400000;
 const MAX_SEEN = 60;
 const COLORS = { youtube: 0xff0033, twitch: 0x9146ff };
+// YouTube's feed sometimes answers 404 or a 5xx for a channel that exists, then works again moments
+// later. A failed read is tried again after these waits, and an alert only shows a problem once this
+// many checks in a row have failed (a missed video is still in the feed at the next check).
+const FEED_RETRY_MS = [1500, 4000];
+const FAILS_BEFORE_ERROR = 3;
+const realSleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const DEFAULT_MESSAGES = {
   youtube: '**{name}** posted a new video: {url}',
@@ -47,16 +53,38 @@ function parseYouTubeFeed(xml) {
   return { name: tag(author, 'name') || tag(head, 'title'), videos };
 }
 
-async function fetchYouTubeFeed(channelId, fetchImpl) {
-  const res = await fetchImpl(YT_FEED + channelId, { headers: { 'User-Agent': BROWSER_UA } });
-  if (!res.ok) throw new Error(res.status === 404 ? "YouTube didn't return this channel's videos right now (it may be private, deleted, or YouTube is having a hiccup)." : `YouTube returned HTTP ${res.status}.`);
-  return parseYouTubeFeed(await res.text());
+async function fetchYouTubeFeed(channelId, fetchImpl, { sleep = realSleep } = {}) {
+  let problem = '';
+  for (let attempt = 0; attempt <= FEED_RETRY_MS.length; attempt++) {
+    if (attempt) await sleep(FEED_RETRY_MS[attempt - 1]);
+    let res;
+    try {
+      res = await fetchImpl(YT_FEED + channelId, { headers: { 'User-Agent': BROWSER_UA } });
+    } catch (err) {
+      problem = `couldn't reach YouTube: ${err.message}`;
+      continue;
+    }
+    if (res.ok) return parseYouTubeFeed(await res.text());
+    problem = `HTTP ${res.status}`;
+    if (res.status !== 404 && res.status !== 429 && res.status < 500) break; // trying again won't change it
+  }
+  throw new Error(`YouTube's video feed for this channel isn't answering right now (${problem}). It comes back on its own, and the app keeps checking and posts anything it missed.`);
 }
 
+async function fetchChannelPage(page, fetchImpl) {
+  // The cookie skips YouTube's cookie-consent page, which some regions show first.
+  const res = await fetchImpl(page, { headers: { 'User-Agent': BROWSER_UA, 'Accept-Language': 'en', Cookie: 'SOCS=CAI' } });
+  if (!res.ok) throw new Error(res.status === 404 ? "There's no YouTube channel at that link." : `YouTube returned HTTP ${res.status}.`);
+  return res.text();
+}
+
+const channelPageName = (html) => decode(html.match(/<meta property="og:title" content="([^"]*)"/)?.[1] || '').trim();
+
 // Accepts a channel link (/channel/UC…, /@handle, /c/name or /user/name), an @handle or a UC… ID.
-async function resolveYouTubeChannel(input, fetchImpl) {
+async function resolveYouTubeChannel(input, fetchImpl, options) {
   const text = String(input || '').trim();
   let id = text.match(/(?:^|\/channel\/)(UC[\w-]{22})(?=[/?#]|$)/)?.[1] || null;
+  let name = '';
   if (!id) {
     let page = null;
     if (/^@[\w.-]{3,100}$/.test(text)) page = `https://www.youtube.com/${text}`;
@@ -70,15 +98,21 @@ async function resolveYouTubeChannel(input, fetchImpl) {
       }
     }
     if (!page) throw new Error('Paste a YouTube channel link, like https://www.youtube.com/@name.');
-    // The cookie skips YouTube's cookie-consent page, which some regions show first.
-    const res = await fetchImpl(page, { headers: { 'User-Agent': BROWSER_UA, 'Accept-Language': 'en', Cookie: 'SOCS=CAI' } });
-    if (!res.ok) throw new Error(res.status === 404 ? "There's no YouTube channel at that link." : `YouTube returned HTTP ${res.status}.`);
-    const html = await res.text();
+    const html = await fetchChannelPage(page, fetchImpl);
     id = (html.match(/"externalId":"(UC[\w-]{22})"/) || html.match(/<meta itemprop="identifier" content="(UC[\w-]{22})"/) || html.match(/<link rel="canonical" href="https:\/\/www\.youtube\.com\/channel\/(UC[\w-]{22})"/))?.[1];
     if (!id) throw new Error("Couldn't find that channel on YouTube.");
+    name = channelPageName(html);
   }
-  const feed = await fetchYouTubeFeed(id, fetchImpl);
-  return { id, name: feed.name || id, url: `https://www.youtube.com/channel/${id}` };
+  if (!name) {
+    try {
+      name = (await fetchYouTubeFeed(id, fetchImpl, options)).name;
+    } catch (err) {
+      // The feed is having a moment: the channel's own page still shows it exists, and its name.
+      name = channelPageName(await fetchChannelPage(`https://www.youtube.com/channel/${id}`, fetchImpl));
+      if (!name) throw err;
+    }
+  }
+  return { id, name: name || id, url: `https://www.youtube.com/channel/${id}` };
 }
 
 /* ---------------- Twitch ---------------- */
@@ -224,7 +258,7 @@ function twitchMessage(alert, stream, now = Date.now()) {
 // alerts: [{ id, botId, guildId, channelId, platform: 'youtube'|'twitch', source: { id, name, login?, url },
 //   message, mention, shorts, enabled, createdAt, state: { seen, live, checkedAt, error, lastPostAt } }]
 // post(alert, message) sends to Discord; updateState(id, state) saves an alert's state.
-function createSocialWatcher({ getAlerts, updateState, post, getTwitch, fetchImpl, now = Date.now }) {
+function createSocialWatcher({ getAlerts, updateState, post, getTwitch, fetchImpl, now = Date.now, sleep = realSleep }) {
   let running = false;
   let twitchCheckedAt = 0;
 
@@ -244,13 +278,16 @@ function createSocialWatcher({ getAlerts, updateState, post, getTwitch, fetchImp
     for (const [channelId, group] of byChannel) {
       let feed;
       try {
-        feed = await fetchYouTubeFeed(channelId, fetchImpl);
+        feed = await fetchYouTubeFeed(channelId, fetchImpl, { sleep });
       } catch (err) {
-        for (const a of group) updateState(a.id, { ...a.state, checkedAt: now(), error: err.message });
+        for (const a of group) {
+          const failures = (a.state?.failures || 0) + 1;
+          updateState(a.id, { ...a.state, checkedAt: now(), failures, error: failures >= FAILS_BEFORE_ERROR ? err.message : a.state?.error || null });
+        }
         continue;
       }
       for (const a of group) {
-        const state = { ...a.state, checkedAt: now(), error: null };
+        const state = { ...a.state, checkedAt: now(), error: null, failures: 0 };
         const seen = new Set(state.seen || []);
         const since = Math.max(a.createdAt || 0, now() - CATCH_UP_MS);
         const fresh = feed.videos.filter((v) => !seen.has(v.id) && Date.parse(v.published) >= since && (a.shorts !== false || !v.isShort)).reverse(); // oldest first

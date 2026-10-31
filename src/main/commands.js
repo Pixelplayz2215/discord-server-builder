@@ -1,5 +1,6 @@
-// Slash commands for moderators, answered by the mod portal (server/interactions.js). The app
-// registers them on the owner's bot; the portal handles them with the same permission rules as the app.
+// Slash commands for moderators, plus /poll for everyone, answered by the mod portal
+// (server/interactions.js). The app registers them on the owner's bot; the portal handles them with
+// the same permission rules as the app.
 const PERMS = {
   KICK_MEMBERS: 1n << 1n,
   BAN_MEMBERS: 1n << 2n,
@@ -20,13 +21,17 @@ const user = (name, description) => ({ type: OPTION.USER, name, description, req
 const reason = (description = 'Why (shown in the audit log and #mod-cases)', required = false) => ({ type: OPTION.STRING, name: 'reason', description, required, max_length: 400 });
 const channel = (types) => ({ type: OPTION.CHANNEL, name: 'channel', description: 'Which channel (default: this one)', channel_types: types });
 const LOCKABLE = [CHANNEL.TEXT, CHANNEL.VOICE, CHANNEL.ANNOUNCEMENT, CHANNEL.STAGE, CHANNEL.FORUM];
+// /poll's emoji boxes suggest the server's own emojis and standard ones as you type.
+const pollEmoji = (n, required) => ({ type: OPTION.STRING, name: `emoji${n}`, description: `Emoji for option ${n} (type to search, server emojis too)`, required, autocomplete: true, max_length: 100 });
+const pollOption = (n, required) => ({ type: OPTION.STRING, name: `option${n}`, description: `Option ${n}`, required, max_length: 55 });
 
-// default_member_permissions hides a command from members without that permission. Server admins can
-// change who sees it under Server Settings → Integrations; the portal checks permissions either way.
+// default_member_permissions hides a command from members without that permission (null: everyone).
+// Server admins can change who sees it under Server Settings → Integrations; the portal checks
+// permissions either way.
 const command = (name, description, need, options) => ({
   name,
   description,
-  default_member_permissions: String(need),
+  default_member_permissions: need == null ? null : String(need),
   contexts: [0],
   integration_types: [0],
   options,
@@ -60,6 +65,17 @@ const COMMANDS = [
   command('slowmode', 'Set how often members can send messages in a channel', PERMS.MANAGE_CHANNELS, [
     { type: OPTION.INTEGER, name: 'interval', description: 'Time between messages', required: true, choices: SLOWMODES },
     channel([CHANNEL.TEXT, CHANNEL.VOICE, CHANNEL.FORUM]),
+  ]),
+  command('poll', 'Post a poll members vote on by reacting', null, [
+    { type: OPTION.STRING, name: 'message', description: 'The question', required: true, max_length: 256 },
+    pollEmoji(1, true),
+    pollOption(1, true),
+    pollEmoji(2, true),
+    pollOption(2, true),
+    pollEmoji(3, false),
+    pollOption(3, false),
+    pollEmoji(4, false),
+    pollOption(4, false),
   ]),
 ];
 const NAMES = new Set(COMMANDS.map((c) => c.name));
