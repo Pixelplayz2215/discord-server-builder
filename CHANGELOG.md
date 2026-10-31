@@ -6,6 +6,8 @@ To release: add your changes as `- ` lines under **Unreleased**, then run `npm r
 
 ## Unreleased
 
+## 1.2.2 (2026-10-31)
+
 - **New versions show up sooner.** The background check now looks every 2 minutes, at GitHub's release page instead of its API (whose answers could be a minute old, and which limits how often it's asked), so the "new version" popup appears within about 2 minutes of a release.
 - **Pages stop flickering.** Social alerts, Announcements, Polls and Server stats no longer redraw every minute when nothing changed, and when something does change, the page updates in place instead of fading in again as if it had reloaded.
 
