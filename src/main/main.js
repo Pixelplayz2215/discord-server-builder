@@ -19,6 +19,9 @@ const polls = require('./polls');
 const welcome = require('./welcome');
 const tickets = require('./tickets');
 const stats = require('./stats');
+const autoRoles = require('./autoroles');
+const announce = require('./announce');
+const always = require('./always');
 const WelcomeCard = require('../shared/welcomecard');
 const pkg = require('../../package.json');
 
@@ -208,7 +211,7 @@ async function postAlert(alert, message) {
 }
 
 const socialWatcher = social.createSocialWatcher({
-  getAlerts: () => store.getSocial().alerts,
+  getAlerts: () => store.getSocial().alerts.filter((a) => !(a.platform === 'youtube' && alwaysOn(a.botId))), // the portal checks those
   updateState: (id, state) => updateAlert(id, { state }),
   post: postAlert,
   getTwitch,
@@ -269,6 +272,7 @@ const connectionStates = new Map(); // botId -> { state, detail }
 function presenceFor(botId) {
   if (!presences.has(botId)) {
     const onState = (state, detail) => {
+      if (alwaysOn(botId)) return; // the portal keeps it online; its state comes from there
       connectionStates.set(botId, { state, detail });
       // Connected only for server logs or reaction roles: the bot stays invisible to members.
       const shown = state === 'online' && !store.getBot(botId)?.presence?.enabled ? 'invisible' : state;
@@ -279,6 +283,7 @@ function presenceFor(botId) {
       reactionsFor(botId).handle(type, data)?.catch?.(() => {});
       pollsFor(botId).handle(type, data)?.catch?.(() => {});
       welcomerFor(botId).handle(type, data);
+      autoRolesFor(botId).handle(type, data)?.catch?.(() => {});
       // Ticket buttons come here only when the bot has no interactions endpoint (no mod portal).
       if (type === 'INTERACTION_CREATE') answerInteraction(botId, data).catch(() => {});
       // Reconnected: hand out roles for reactions made while the bot was away, and redraw polls.
@@ -558,16 +563,18 @@ const ticketEngines = new Map(); // botId -> tickets engine (for answering witho
 const userNames = new Map(); // user id -> name, for ticket history
 
 const ticketPanelsOf = (botId) => store.listGuildConfigs().flatMap(({ botId: b, guildId, config }) => (b === botId ? (config.ticketPanels || []).map((p) => ({ ...p, botId, guildId })) : []));
-// The app answers ticket buttons only for bots whose interactions don't go to a portal.
-const answersTickets = (botId) => ticketPanelsOf(botId).length > 0 && !store.getBot(botId)?.slashCommands;
+// The app answers ticket and Verify buttons only for bots whose interactions don't go to a portal.
+const hasVerifyButton = (botId) => store.listGuildConfigs().some(({ botId: b, config }) => b === botId && config.autoroles?.verify?.enabled);
+const answersTickets = (botId) => (ticketPanelsOf(botId).length > 0 || hasVerifyButton(botId)) && !store.getBot(botId)?.slashCommands;
 
 function ticketsFor(botId) {
   if (!ticketEngines.has(botId)) ticketEngines.set(botId, tickets.createTickets({ rest: restFor(botId), botId }));
   return ticketEngines.get(botId);
 }
+const verifyFor = (botId) => autoRoles.createVerify({ rest: restFor(botId) });
 
 async function answerInteraction(botId, i) {
-  const handled = await ticketsFor(botId).interaction(i);
+  const handled = (await ticketsFor(botId).interaction(i)) || (await verifyFor(botId).interaction(i));
   if (!handled) return;
   await restFor(botId).request('POST', `/interactions/${i.id}/${i.token}/callback`, { body: handled.response });
   await handled.after?.();
@@ -610,6 +617,75 @@ async function ticketTranscript(botId, logChannelId, messageId) {
   return { name: file.filename, html: await res.text() };
 }
 
+/* ---------- Auto roles (given while the app runs, including in the tray) ---------- */
+// Settings are kept per server in servers.json as autoroles.
+const autoRoleEngines = new Map(); // botId -> auto roles engine
+const autoRoleProblems = new Map(); // `${botId}:${guildId}` -> latest problem
+
+const autoRolesOn = (botId) => store.listGuildConfigs().some(({ botId: b, config }) => b === botId && config.autoroles?.enabled);
+
+function autoRolesFor(botId) {
+  if (!autoRoleEngines.has(botId)) {
+    autoRoleEngines.set(
+      botId,
+      autoRoles.createAutoRoles({
+        rest: restFor(botId),
+        settingsFor: (guildId) => store.getGuildConfig(botId, guildId).autoroles || null,
+        report: (guildId, problem) => {
+          if (problem) autoRoleProblems.set(`${botId}:${guildId}`, problem);
+          else autoRoleProblems.delete(`${botId}:${guildId}`);
+        },
+      }),
+    );
+  }
+  return autoRoleEngines.get(botId);
+}
+
+/* ---------- Announcements (scheduled ones are sent while the app runs, including in the tray) ---------- */
+// Kept per server in servers.json as announcements. Pictures picked from the PC are copied into the
+// app's data folder and attached when the message is sent.
+const ANNOUNCE_IMAGE_TYPES = CARD_IMAGE_TYPES;
+const MAX_ANNOUNCE_IMAGE_BYTES = 8 * 1024 * 1024;
+const announceDir = () => path.join(app.getPath('userData'), 'announcements');
+
+function allAnnouncements() {
+  return store
+    .listGuildConfigs()
+    .filter(({ botId }) => store.getBot(botId) && !isMod(botId))
+    .flatMap(({ botId, guildId, config }) => (config.announcements || []).map((a) => ({ ...a, botId, guildId })));
+}
+
+function updateAnnouncement(botId, guildId, id, patch) {
+  const list = store.getGuildConfig(botId, guildId).announcements || [];
+  store.setGuildConfig(botId, guildId, { announcements: list.map((a) => (a.id === id ? { ...a, ...patch } : a)) });
+  send('announce:changed', {});
+}
+
+function announceImage(file) {
+  if (!file) return null;
+  const full = path.join(announceDir(), path.basename(file));
+  const type = ANNOUNCE_IMAGE_TYPES[path.extname(full).slice(1).toLowerCase()];
+  return type && fs.existsSync(full) ? { name: path.basename(full), data: fs.readFileSync(full), type } : null;
+}
+
+// Posts an announcement, or edits the message it posted last (edit: true).
+async function postAnnouncement(a, { edit = false } = {}) {
+  const { body, files } = announce.buildMessage(a, announceImage(a.embed.imageFile));
+  const rest = restFor(a.botId);
+  if (edit) {
+    if (!a.lastMessageId) throw new Error("This announcement hasn't been sent yet.");
+    // Editing replaces the attachments, so the picture is sent again (or removed if it was taken out).
+    return rest.request('PATCH', `/channels/${a.lastChannelId || a.channelId}/messages/${a.lastMessageId}`, { body: files ? body : { ...body, attachments: [] }, files });
+  }
+  return rest.request('POST', `/channels/${a.channelId}/messages`, { body, files });
+}
+
+const announcer = announce.createScheduler({
+  list: () => allAnnouncements().filter((a) => a.schedule?.on && !alwaysOn(a.botId)),
+  send: (a) => postAnnouncement(a),
+  update: (a, patch) => updateAnnouncement(a.botId, a.guildId, a.id, patch),
+});
+
 /* ---------- Server stats (counter channels renamed while the app runs, including in the tray) ---------- */
 // Settings are kept per server in servers.json as stats.
 const statsEngines = new Map(); // botId -> stats engine
@@ -636,7 +712,7 @@ function statsFor(botId) {
 
 async function tickStats() {
   for (const bot of store.listBots()) {
-    if (bot.type !== 'mod' && statsServers(bot.id).length) await statsFor(bot.id).tick().catch(() => {});
+    if (bot.type !== 'mod' && !alwaysOn(bot.id) && statsServers(bot.id).length) await statsFor(bot.id).tick().catch(() => {});
   }
 }
 
@@ -673,17 +749,231 @@ function loggerFor(botId) {
   return loggers.get(botId).logger;
 }
 
+/* ---------- 24/7 (the mod portal runs the community features around the clock) ---------- */
+// With 24/7 on, this app saves each server's settings for the portal in a private #bot-settings
+// channel (src/main/always.js) whenever they change, stops running those features itself, and reads
+// back what the portal did every minute (votes, announcements sent, videos seen, problems).
+// Twitch alerts and automatic backups stay with the app.
+const ALWAYS_PULL_MS = 60 * 1000;
+const alwaysTimers = new Map(); // botId -> pending save
+const alwaysSaves = new Map(); // botId -> the save running now
+const alwaysStatus = new Map(); // botId -> { status, error, checkedAt }
+const alwaysShown = new Map(); // botId -> the presence last shown for it
+
+function alwaysOn(botId) {
+  const bot = store.getBot(botId);
+  return !!bot && bot.type !== 'mod' && !!bot.always?.on;
+}
+
+// A picture the settings use: a card background or an announcement picture.
+function alwaysFile(name) {
+  const base = path.basename(String(name || ''));
+  const file = [cardsDir(), announceDir()].map((dir) => path.join(dir, base)).find((f) => fs.existsSync(f));
+  return file ? fs.readFileSync(file) : null;
+}
+
+// Servers with settings in the app, plus ones saved for the portal before (to tell it they're off).
+function alwaysServerIds(botId) {
+  const ids = new Set(store.listGuildConfigs().filter((c) => c.botId === botId).map((c) => c.guildId));
+  for (const a of store.getSocial().alerts) if (a.botId === botId && a.platform === 'youtube') ids.add(a.guildId);
+  for (const id of Object.keys(store.getBot(botId)?.always?.saved || {})) ids.add(id);
+  return [...ids].filter((id) => /^\d{15,21}$/.test(id));
+}
+
+const alwaysBundle = (botId, guildId, on) =>
+  always.makeBundle({ guildId, config: store.getGuildConfig(botId, guildId), alerts: store.getSocial().alerts.filter((a) => a.botId === botId), bot: store.getBot(botId), youtubeKey: store.getYouTubeKey(), on });
+
+// A signed request to the bot's portal.
+async function callPortal(botId, route, body = {}) {
+  const url = store.getBot(botId)?.always?.portalUrl;
+  if (!url) throw new Error('Turn on slash commands first: 24/7 runs on the same mod portal.');
+  const text = JSON.stringify(body);
+  let res;
+  try {
+    res = await fetch(url + route, { method: 'POST', headers: always.signedHeaders(store.getToken(botId), text), body: text, signal: AbortSignal.timeout(90000) });
+  } catch (err) {
+    throw new Error(`Can't reach your mod portal (${err.cause?.code || err.name}). If it was asleep, it can take a minute to wake up.`);
+  }
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401) throw new Error("Your portal runs a different bot. On Render, set DISCORD_BOT_TOKEN to this bot's token (Environment), then try again.");
+  if (res.status === 404) throw new Error('Your portal needs updating: on GitHub, open your fork and press Sync fork, then wait for Render to finish deploying.');
+  if (!res.ok) throw new Error(data.error || `Your portal answered HTTP ${res.status}.`);
+  return data;
+}
+
+// Saves the settings of every server whose settings changed since they were last saved.
+// on: false tells the portal to stop. force: save them all.
+function saveAlways(botId, { on = true, force = false } = {}) {
+  const run = (alwaysSaves.get(botId) || Promise.resolve())
+    .catch(() => {})
+    .then(async () => {
+      const bot = store.getBot(botId);
+      if (!bot || bot.type === 'mod') return {};
+      const saved = { ...bot.always?.saved };
+      const changedIds = [];
+      for (const guildId of alwaysServerIds(botId)) {
+        const bundle = alwaysBundle(botId, guildId, on);
+        if (!bundle.used && !saved[guildId]) continue; // nothing to run there, and nothing saved before
+        const hash = always.bundleHash(bundle);
+        if (!force && saved[guildId]?.hash === hash) continue;
+        try {
+          const { channelId } = await always.saveBundle({ rest: restFor(botId), token: store.getToken(botId), guildId, botUserId: botId, bundle, readFile: alwaysFile });
+          saved[guildId] = { hash, at: Date.now(), channelId, problem: null };
+          changedIds.push(guildId);
+        } catch (err) {
+          saved[guildId] = { ...saved[guildId], hash: null, problem: err.code === 10004 ? "The bot isn't in this server any more." : err.message };
+        }
+      }
+      if (JSON.stringify(saved) !== JSON.stringify(store.getBot(botId).always?.saved || {})) store.updateBot(botId, { always: { ...store.getBot(botId).always, saved } });
+      // Tell the portal to read them now, rather than within 10 minutes.
+      if (changedIds.length) await callPortal(botId, '/always/reload', { guildIds: changedIds }).then((s) => noteAlways(botId, s), (err) => noteAlways(botId, null, err));
+      send('always:changed', { botId });
+      return saved;
+    });
+  alwaysSaves.set(botId, run);
+  return run;
+}
+
+function scheduleAlwaysSave(botId, delay = 2000) {
+  if (!alwaysOn(botId)) return;
+  clearTimeout(alwaysTimers.get(botId));
+  alwaysTimers.set(
+    botId,
+    setTimeout(() => saveAlways(botId).catch((err) => console.error('24/7 save:', err.message)), delay),
+  );
+}
+
+store.onChange(({ botId, social }) => {
+  if (social) for (const bot of store.listBots()) scheduleAlwaysSave(bot.id);
+  else if (botId) scheduleAlwaysSave(botId);
+});
+
+// Shows the portal's connection as the bot's online status.
+function noteAlways(botId, status, err = null) {
+  const before = alwaysStatus.get(botId);
+  alwaysStatus.set(botId, { status: status || before?.status || null, error: err ? err.message : null, checkedAt: Date.now() });
+  if (!alwaysOn(botId)) return;
+  const gw = (status || before?.status)?.gateway;
+  let shown;
+  if (err) shown = { state: 'offline', detail: `24/7: ${err.message}` };
+  else if (gw?.state === 'online') shown = { state: store.getBot(botId)?.presence?.enabled ? 'online' : 'invisible', detail: 'Online 24/7 through your mod portal' };
+  else shown = { state: gw?.state === 'error' ? 'error' : 'connecting', detail: gw?.detail ? `Mod portal: ${gw.detail}` : 'Your mod portal is connecting the bot' };
+  connectionStates.set(botId, shown);
+  if (JSON.stringify(alwaysShown.get(botId)) !== JSON.stringify(shown)) {
+    alwaysShown.set(botId, shown);
+    send('presence:state', { botId, ...shown });
+  }
+}
+
+// Copies what the portal did into the app, so its pages show it (and the app carries on from there
+// if 24/7 is turned off).
+function mergeAlways(botId, status) {
+  for (const [guildId, s] of Object.entries(status.servers || {})) {
+    if (!s.on) continue;
+    const config = store.getGuildConfig(botId, guildId);
+    const patch = always.mergeServer(config, s) || {};
+    if (patch.polls) patch.polls = trimPolls(patch.polls);
+    if (Object.keys(patch).length) store.setGuildConfig(botId, guildId, patch);
+
+    const problems = s.problems || {};
+    const note = (map, key, problem) => (problem ? map.set(key, problem) : map.delete(key));
+    note(autoRoleProblems, `${botId}:${guildId}`, problems.autoroles);
+    note(greetingProblems, `${botId}:${guildId}:welcome`, problems.welcome);
+    note(greetingProblems, `${botId}:${guildId}:goodbye`, problems.goodbye);
+    note(logErrors, `${botId}:${guildId}`, problems.logs);
+    for (const p of config.reactionRoles || []) note(panelProblems, p.id, problems[`panel:${p.id}`]);
+    for (const p of patch.polls || config.polls || []) note(pollProblems, p.id, problems[`poll:${p.id}`]);
+    if (s.stats) statsState.set(`${botId}:${guildId}`, s.stats);
+  }
+
+  // YouTube alerts: what was seen and posted.
+  const { alerts, changed: alertsChanged } = always.mergeAlerts(store.getSocial().alerts, botId, status.servers);
+  if (alertsChanged) store.saveSocial({ alerts });
+
+  rebuildPollIndex();
+  send('polls:changed');
+  send('announce:changed', {});
+  send('stats:changed', { botId });
+  if (alertsChanged) send('social:changed', {});
+}
+
+async function pullAlways(botId) {
+  try {
+    const status = await callPortal(botId, '/always/status');
+    noteAlways(botId, status);
+    mergeAlways(botId, status);
+    return status;
+  } catch (err) {
+    noteAlways(botId, null, err);
+    return null;
+  } finally {
+    send('always:changed', { botId });
+  }
+}
+
+const pullAllAlways = () => Promise.all(store.listBots().filter((b) => alwaysOn(b.id)).map((b) => pullAlways(b.id)));
+
+// The bot's server names, read again every 10 minutes.
+const guildNameCache = new Map(); // botId -> { at, names }
+async function guildNames(botId) {
+  const cached = guildNameCache.get(botId);
+  if (cached && Date.now() - cached.at < 10 * 60 * 1000) return cached.names;
+  const guilds = await restFor(botId)
+    .request('GET', '/users/@me/guilds')
+    .catch(() => null);
+  if (!guilds) return cached?.names || new Map();
+  const names = new Map(guilds.map((g) => [g.id, g.name]));
+  guildNameCache.set(botId, { at: Date.now(), names });
+  return names;
+}
+
+// What the Home page shows about 24/7 for a bot.
+async function alwaysReport(botId) {
+  const bot = store.getBot(botId);
+  const s = alwaysStatus.get(botId);
+  const names = await guildNames(botId);
+  const portalServers = s?.status?.servers || {};
+  const servers = Object.entries(bot.always?.saved || {}).map(([guildId, saved]) => {
+    const p = portalServers[guildId];
+    return {
+      guildId,
+      name: names.get(guildId) || guildId,
+      savedAt: saved.at || null,
+      saveProblem: saved.problem || null,
+      on: !!p?.on,
+      loadedAt: p?.loadedAt || null,
+      problem: p?.problem || null,
+      problems: Object.values(p?.problems || {}).filter(Boolean),
+    };
+  });
+  return {
+    on: !!bot.always?.on,
+    portalUrl: bot.always?.portalUrl || null,
+    since: bot.always?.since || null,
+    checkedAt: s?.checkedAt || null,
+    error: s?.error || null,
+    portal: s?.status ? { running: s.status.running, gateway: s.status.gateway, startedAt: s.status.startedAt, loadedAt: s.status.loadedAt, cards: s.status.cards } : null,
+    servers,
+  };
+}
+
 // Whether a bot needs its gateway connection for server logs, reaction roles, polls or welcome cards.
-const needsGateway = (botId) => activeLogs(botId).length > 0 || watchesReactions(botId) || greetingsOn(botId) || answersTickets(botId);
+const needsGateway = (botId) => activeLogs(botId).length > 0 || watchesReactions(botId) || greetingsOn(botId) || autoRolesOn(botId) || answersTickets(botId);
 
 // One gateway connection per bot: it keeps the bot online (when presence is on) and receives the
 // events for server logs, reaction roles and polls. With those on but presence off, it connects invisibly.
 function syncConnection(botId) {
   const bot = store.getBot(botId);
   if (!bot || bot.type === 'mod') return;
+  // 24/7: the portal has the bot's connection and runs these features instead.
+  if (alwaysOn(botId)) {
+    presences.get(botId)?.stop();
+    return;
+  }
   const logs = activeLogs(botId);
   const reactions = watchesReactions(botId);
-  const greetings = greetingsOn(botId);
+  // Welcome cards and auto roles both follow members joining.
+  const greetings = greetingsOn(botId) || autoRolesOn(botId);
   const ticketButtons = answersTickets(botId); // button presses arrive whatever the intents
   const conn = presenceFor(botId);
   loggerFor(botId);
@@ -771,6 +1061,7 @@ const handlers = {
     caseLogs.delete(bot.id);
     reactionEngines.delete(bot.id);
     pollEngines.delete(bot.id);
+    autoRoleEngines.delete(bot.id);
     welcomers.delete(bot.id);
     ticketEngines.delete(bot.id);
     statsEngines.delete(bot.id);
@@ -778,6 +1069,8 @@ const handlers = {
     presences.get(bot.id)?.stop();
     presences.delete(bot.id);
     if (needsGateway(bot.id)) syncConnection(bot.id);
+    // A new token means a new key for the 24/7 settings: save them again.
+    if (alwaysOn(bot.id)) saveAlways(bot.id, { force: true }).catch(() => {});
     return bot;
   },
 
@@ -787,6 +1080,7 @@ const handlers = {
       const updated = store.updateBot(botId, await describeBot(restFor(botId)));
       // Privileged intents may have been switched on or off in the Developer Portal since.
       if (needsGateway(botId)) syncConnection(botId);
+      scheduleAlwaysSave(botId, 500);
       return updated;
     }
     const me = await portal.call(bot.portalUrl, '/api/me', { token: store.getToken(botId) });
@@ -832,6 +1126,7 @@ const handlers = {
   // Removes the mod commands, and stops sending interactions to the portal if they go there.
   'commands:disable': async (botId, portalUrl) => {
     if (isMod(botId)) ownerOnly();
+    if (alwaysOn(botId)) throw new Error('Turn 24/7 off first (below): it runs on the same mod portal.');
     const rest = restFor(botId);
     const application = await rest.request('GET', '/applications/@me');
     let ours = false;
@@ -845,6 +1140,52 @@ const handlers = {
     return noteSlashCommands(botId, await slashStatus(rest));
   },
 
+  // pull: ask the portal now, else what it said last.
+  'always:status': async (botId, { pull = true } = {}) => {
+    if (!store.getBot(botId)) throw new Error('That bot is no longer in the app.');
+    if (isMod(botId)) ownerOnly();
+    if (pull && alwaysOn(botId)) await pullAlways(botId);
+    return alwaysReport(botId);
+  },
+
+  // Hands the community features to the bot's mod portal: checks it's new enough and runs this bot,
+  // saves every server's settings for it, then stops running them here.
+  'always:enable': async (botId) => {
+    if (!store.getBot(botId)) throw new Error('That bot is no longer in the app.');
+    if (isMod(botId)) ownerOnly();
+    const application = await restFor(botId).request('GET', '/applications/@me');
+    const endpoint = application.interactions_endpoint_url || '';
+    if (!endpoint.endsWith('/interactions')) throw new Error('Turn on slash commands first (above): 24/7 runs on the same mod portal.');
+    const portalUrl = endpoint.slice(0, -'/interactions'.length);
+    const health = await portal.call(portalUrl, '/health');
+    if (!(health.always >= always.VERSION)) throw new Error('Your mod portal needs updating first. On GitHub, open your fork and press Sync fork, wait for Render to finish deploying (a few minutes), then try again.');
+    store.updateBot(botId, { always: { ...store.getBot(botId).always, portalUrl } });
+    await callPortal(botId, '/always/status'); // proves the portal runs this bot's token
+    store.updateBot(botId, { always: { ...store.getBot(botId).always, on: true, since: Date.now() } });
+    alwaysShown.delete(botId);
+    syncConnection(botId);
+    await saveAlways(botId, { force: true });
+    await pullAlways(botId);
+    return alwaysReport(botId);
+  },
+
+  // Takes the features back: keeps what the portal did, tells it to stop, and runs them here again.
+  'always:disable': async (botId) => {
+    if (!store.getBot(botId)) throw new Error('That bot is no longer in the app.');
+    if (isMod(botId)) ownerOnly();
+    if (alwaysOn(botId)) await pullAlways(botId);
+    clearTimeout(alwaysTimers.get(botId));
+    await saveAlways(botId, { on: false, force: true });
+    store.updateBot(botId, { always: { ...store.getBot(botId).always, on: false, since: null } });
+    alwaysStatus.delete(botId);
+    alwaysShown.delete(botId);
+    connectionStates.delete(botId);
+    const bot = store.getBot(botId);
+    if (bot.presence?.enabled || needsGateway(botId)) syncConnection(botId);
+    else send('presence:state', { botId, state: 'offline' });
+    return alwaysReport(botId);
+  },
+
   'bots:update': (botId, patch) => {
     const allowed = {};
     if ('label' in patch) allowed.label = String(patch.label || '').slice(0, 40);
@@ -853,12 +1194,15 @@ const handlers = {
   },
 
   'bots:remove': (botId) => {
+    clearTimeout(alwaysTimers.get(botId));
+    alwaysStatus.delete(botId);
     presences.get(botId)?.stop();
     presences.delete(botId);
     clients.delete(botId);
     caseLogs.delete(botId);
     reactionEngines.delete(botId);
     pollEngines.delete(botId);
+    autoRoleEngines.delete(botId);
     welcomers.delete(botId);
     ticketEngines.delete(botId);
     statsEngines.delete(botId);
@@ -872,6 +1216,7 @@ const handlers = {
     if (isMod(botId)) ownerOnly();
     const bot = store.updateBot(botId, { presence });
     syncConnection(botId);
+    scheduleAlwaysSave(botId, 500);
     return bot;
   },
 
@@ -1094,6 +1439,132 @@ const handlers = {
   },
 
   'welcome:image': (name) => cardBackground(name),
+
+  // Every server with auto roles, with its latest problem.
+  'autoroles:list': () =>
+    store
+      .listBots()
+      .filter((b) => b.type !== 'mod')
+      .flatMap((b) =>
+        store
+          .listGuildConfigs()
+          .filter(({ botId, config }) => botId === b.id && config.autoroles)
+          .map(({ guildId, config }) => ({ ...config.autoroles, botId: b.id, guildId, problem: autoRoleProblems.get(`${b.id}:${guildId}`) || null, membersIntent: !!b.intents?.members, answeredBy: b.slashCommands ? 'portal' : 'app' })),
+      ),
+
+  // Saves a server's auto roles, and posts, updates or removes the Verify message.
+  'autoroles:save': async (botId, input) => {
+    if (!store.getBot(botId)) throw new Error('That bot is no longer in the app.');
+    if (isMod(botId)) ownerOnly();
+    const s = autoRoles.normalizeSettings(input);
+    if (!s.guildId) throw new Error('Pick the server.');
+    const rest = restFor(botId);
+    const previous = store.getGuildConfig(botId, s.guildId).autoroles?.verify || null;
+    const old = previous?.messageId ? { channelId: previous.channelId, messageId: previous.messageId, emojis: [] } : null;
+    if (s.verify.enabled) {
+      s.verify.messageId = await reactionRoles.publishMessage(rest, { channelId: s.verify.channelId, body: autoRoles.verifyMessage(s.verify), emojis: [] }, old);
+    } else {
+      if (old) await rest.request('DELETE', `/channels/${old.channelId}/messages/${old.messageId}`).catch(() => {});
+      s.verify.messageId = '';
+    }
+    store.setGuildConfig(botId, s.guildId, { autoroles: s });
+    autoRoleProblems.delete(`${botId}:${s.guildId}`);
+    syncConnection(botId);
+    return handlers['autoroles:list']();
+  },
+
+  'autoroles:remove': async (botId, guildId) => {
+    if (isMod(botId)) ownerOnly();
+    const id = snowflake(guildId, 'server');
+    const v = store.getGuildConfig(botId, id).autoroles?.verify;
+    if (v?.messageId) await restFor(botId).request('DELETE', `/channels/${v.channelId}/messages/${v.messageId}`).catch(() => {});
+    store.setGuildConfig(botId, id, { autoroles: null });
+    autoRoleProblems.delete(`${botId}:${id}`);
+    syncConnection(botId);
+    return handlers['autoroles:list']();
+  },
+
+  // Gives the roles to members who don't have them yet, with progress.
+  'autoroles:giveExisting': (botId, guildId) => {
+    if (isMod(botId)) ownerOnly();
+    const id = snowflake(guildId, 'server');
+    return autoRolesFor(botId).giveExisting(id, (done, total) => send('autoroles:progress', { botId, guildId: id, done, total }));
+  },
+
+  // Every announcement of the owner's bots: scheduled first (soonest first), then the newest.
+  'announce:list': () =>
+    allAnnouncements().sort((a, b) => {
+      const soon = (x) => (x.schedule?.on && x.schedule.nextAt ? x.schedule.nextAt : Infinity);
+      return soon(a) - soon(b) || (b.lastSentAt || b.createdAt || 0) - (a.lastSentAt || a.createdAt || 0);
+    }),
+
+  // Saves an announcement (and its schedule). With send: true it goes out right away as well.
+  'announce:save': async (botId, input, { send: sendNow = false } = {}) => {
+    if (!store.getBot(botId)) throw new Error('That bot is no longer in the app.');
+    if (isMod(botId)) ownerOnly();
+    const a = announce.normalize(input);
+    if (!a.guildId || !a.channelId) throw new Error('Pick the server and channel.');
+    const list = store.getGuildConfig(botId, a.guildId).announcements || [];
+    const previous = a.id ? list.find((x) => x.id === a.id) : null;
+    const saved = { ...previous, ...a, id: previous?.id || crypto.randomUUID(), createdAt: previous?.createdAt || Date.now(), missedAt: null, problem: null };
+    store.setGuildConfig(botId, a.guildId, { announcements: previous ? list.map((x) => (x.id === saved.id ? saved : x)) : [...list, saved] });
+    if (sendNow) {
+      const message = await postAnnouncement({ ...saved, botId });
+      updateAnnouncement(botId, a.guildId, saved.id, { lastSentAt: Date.now(), lastMessageId: message.id, lastChannelId: saved.channelId });
+    }
+    return handlers['announce:list']();
+  },
+
+  'announce:send': async (botId, guildId, id) => {
+    if (isMod(botId)) ownerOnly();
+    const a = allAnnouncements().find((x) => x.botId === botId && x.guildId === guildId && x.id === id);
+    if (!a) throw new Error("That announcement isn't in the app any more.");
+    const message = await postAnnouncement(a);
+    const schedule = a.schedule?.on && a.schedule.repeat === 'once' ? { ...a.schedule, on: false, nextAt: null } : a.schedule;
+    updateAnnouncement(botId, guildId, id, { lastSentAt: Date.now(), lastMessageId: message.id, lastChannelId: a.channelId, missedAt: null, problem: null, schedule });
+    return handlers['announce:list']();
+  },
+
+  // Edits the message it posted last to match what's saved now.
+  'announce:update': async (botId, guildId, id) => {
+    if (isMod(botId)) ownerOnly();
+    const a = allAnnouncements().find((x) => x.botId === botId && x.guildId === guildId && x.id === id);
+    if (!a) throw new Error("That announcement isn't in the app any more.");
+    try {
+      await postAnnouncement(a, { edit: true });
+    } catch (err) {
+      if (err.code === 10008) throw new Error('The message it posted was deleted in Discord. Send it again instead.');
+      throw err;
+    }
+    return handlers['announce:list']();
+  },
+
+  'announce:delete': async (botId, guildId, id, deleteMessage) => {
+    if (isMod(botId)) ownerOnly();
+    const list = store.getGuildConfig(botId, snowflake(guildId, 'server')).announcements || [];
+    const a = list.find((x) => x.id === id);
+    if (a?.lastMessageId && deleteMessage) await restFor(botId).request('DELETE', `/channels/${a.lastChannelId || a.channelId}/messages/${a.lastMessageId}`).catch(() => {});
+    store.setGuildConfig(botId, guildId, { announcements: list.filter((x) => x.id !== id) });
+    return handlers['announce:list']();
+  },
+
+  'announce:pickImage': async () => {
+    const { canceled, filePaths } = await dialog.showOpenDialog(win, { title: 'Choose a picture', filters: [{ name: 'Images', extensions: Object.keys(ANNOUNCE_IMAGE_TYPES) }], properties: ['openFile'] });
+    if (canceled || !filePaths[0]) return null;
+    const ext = path.extname(filePaths[0]).slice(1).toLowerCase();
+    if (!ANNOUNCE_IMAGE_TYPES[ext]) throw new Error('Pick a PNG, JPG, WebP or GIF image.');
+    if (fs.statSync(filePaths[0]).size > MAX_ANNOUNCE_IMAGE_BYTES) throw new Error('That image is over 8 MB. Pick a smaller one.');
+    const name = `${crypto.randomUUID()}.${ext}`;
+    fs.mkdirSync(announceDir(), { recursive: true });
+    fs.copyFileSync(filePaths[0], path.join(announceDir(), name));
+    const image = announceImage(name);
+    return { file: name, dataUrl: `data:${image.type};base64,${image.data.toString('base64')}` };
+  },
+
+  'announce:image': (file) => {
+    const image = announceImage(file);
+    return image ? `data:${image.type};base64,${image.data.toString('base64')}` : null;
+  },
 
   // Every server with stats counters, with its latest counts.
   'stats:list': () =>
@@ -1739,12 +2210,21 @@ if (!app.requestSingleInstanceLock()) {
     // Server stats: each server is refreshed every 5 minutes (the engine paces itself).
     setTimeout(tickStats, 30 * 1000);
     setInterval(tickStats, 60 * 1000);
+    // Scheduled announcements go out within half a minute of their time.
+    setTimeout(() => announcer.tick().catch(() => {}), 10 * 1000);
+    setInterval(() => announcer.tick().catch(() => {}), 30 * 1000);
     setTimeout(runAutoBackups, 60 * 1000);
     setInterval(runAutoBackups, 30 * 60 * 1000);
     // Social alerts: YouTube channels are checked every 5 minutes and Twitch every minute (the watcher paces itself).
     const checkSocial = () => socialWatcher.tick().then(() => send('social:changed', {}), (err) => console.error('Social alerts:', err.message));
     setTimeout(checkSocial, 15 * 1000);
     setInterval(checkSocial, 60 * 1000);
+    // 24/7: save anything that didn't reach the portal last time, then read back what it did.
+    setTimeout(() => {
+      for (const bot of store.listBots()) if (alwaysOn(bot.id)) saveAlways(bot.id).catch(() => {});
+      pullAllAlways();
+    }, 8 * 1000);
+    setInterval(pullAllAlways, ALWAYS_PULL_MS);
   });
   app.on('window-all-closed', () => {
     for (const conn of presences.values()) conn.stop();

@@ -22,11 +22,12 @@
     "dist:mod": "node scripts/build-mod-view.js",
     "release": "node scripts/release.js",
     "portal": "node server/index.js",
-    "test": "node --test server/portal.test.js server/interactions.test.js test/features.test.js test/social.test.js test/release.test.js test/reactionroles.test.js test/polls.test.js test/welcome.test.js test/tickets.test.js test/stats.test.js",
-    "test:portal": "node --test server/portal.test.js server/interactions.test.js"
+    "test": "node --test server/portal.test.js server/interactions.test.js test/features.test.js test/social.test.js test/release.test.js test/reactionroles.test.js test/polls.test.js test/welcome.test.js test/tickets.test.js test/stats.test.js test/autoroles.test.js test/announce.test.js test/always.test.js",
+    "test:portal": "node --test server/portal.test.js server/interactions.test.js test/always.test.js"
   },
   "dependencies": {
-    "ws": "8.18.3"
+    "@napi-rs/canvas": "1.0.11",
+    "ws": "8.22.0"
   },
   "devDependencies": {
     "@fontsource/poppins": "5.2.6",
@@ -45,7 +46,8 @@
     "files": [
       "src/**/*",
       "build/icon.png",
-      "package.json"
+      "package.json",
+      "!node_modules/@napi-rs/**"
     ],
     "win": {
       "icon": "build/icon.ico",

@@ -139,9 +139,30 @@ With slash commands on, your portal also answers the buttons of the app's **Tick
 - **The transcript stays in Discord.** The portal doesn't store anything. If you change `SESSION_SECRET`, old **View transcript** buttons stop working, but the transcript file on each log message is still there to download.
 - **Update first.** If your portal was set up before tickets existed, open your fork on GitHub, press **Sync fork**, and wait for Render to finish deploying.
 
+### 8. Verify button (optional)
+
+With slash commands on, your portal also answers the **Verify** button from the app's **Auto roles** page (**Community → Auto roles**), so members get their roles around the clock. The roles it gives are part of the button itself, so the portal stores nothing. If your portal was set up before auto roles existed, press **Sync fork** on your fork first. Roles on join still need the app open or in the tray.
+
+### 9. Run 24/7 (optional)
+
+With slash commands on, your portal can also run your community features around the clock, so they keep going when your PC is off: welcome & goodbye cards, auto roles, reaction roles, poll bars, server logs, server stats, scheduled announcements and YouTube alerts.
+
+1. **Update first.** If your portal was set up before 24/7 existed, open your fork on GitHub, press **Sync fork**, and wait for Render to finish deploying. Nothing else changes on Render.
+2. **Turn it on.** In the app, go to the Home page → **Run 24/7** and press **Turn on 24/7**. The app checks your portal is up to date and runs this bot, saves each server's settings for it, and stops running those features itself.
+3. **Keep setting things up in the app.** Changes you make are saved for the portal within a few seconds. The Home page shows whether the portal is running, when each server's settings were saved, and any problems.
+
+How it works:
+
+- **#bot-settings.** Each server with something set up gets a private #bot-settings channel. Only the bot can see it (server admins can see it exists). The settings and pictures there are what the portal reads, and the settings are encrypted with a key made from your bot token, so nobody else can read them. Please leave the channel there; the bot needs Manage Channels to make it.
+- **What it did.** The portal saves back what it did there too (votes, posts sent, videos seen), so a restart or deploy picks up where it left off. The app reads it every minute and shows it on its pages.
+- **Staying awake.** While 24/7 is on, the portal visits its own `/health` page every 10 minutes so Render's free plan doesn't put it to sleep. That uses Render's free instance hours: 750 a month, enough for one service running all month. Other free services in the same Render workspace share those hours; if they run out, Render pauses your free services until the next month.
+- **Still in the app.** Twitch alerts and automatic backups need the app running. **Send now**, **Give to existing members** and setting things up all work from the app as before.
+- **Welcome cards.** The portal draws cards with the same code as the app. Fonts only Windows has (Segoe UI, Arial Black, Georgia, Impact, Comic Sans, Consolas) are drawn with Poppins there.
+- **Turning it off.** Press **Turn off** on the Home page: the app keeps what the portal did and runs the features again itself.
+
 ## Good to know
 
-- **Free plan sleeps.** Render's free plan sleeps after 15 minutes without traffic, and the first request after that takes about a minute. Discord only waits 3 seconds for a slash command, so the first command after a quiet spell fails with "The application did not respond". To keep the portal awake, point a free uptime monitor at `<your portal>/health` every 10 minutes (the free plan's 750 hours a month cover one service running all month), or upgrade the service to a paid instance.
+- **Free plan sleeps.** Render's free plan sleeps after 15 minutes without traffic, and the first request after that takes about a minute. Discord only waits 3 seconds for a slash command, so the first command after a quiet spell fails with "The application did not respond". With **Run 24/7** on, the portal keeps itself awake. Otherwise, point a free uptime monitor at `<your portal>/health` every 10 minutes (the free plan's 750 hours a month cover one service running all month), or upgrade the service to a paid instance.
 - **Signing everyone out.** Sessions last 7 days. To sign everyone out at once, change `SESSION_SECRET` in Render and redeploy.
 - **Your token.** The bot token only lives in Render's environment settings. It is not in the repo or the app.
 - **Mod privacy.** The portal only learns a mod's Discord ID, name and avatar (the `identify` scope).

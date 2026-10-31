@@ -27,6 +27,9 @@ Windows may show a SmartScreen warning the first time because the app isn't code
 - **Social alerts.** Post when a YouTube channel uploads or a Twitch channel goes live.
 - **Reaction roles.** Members react to a message to give themselves roles, with your server's own emojis or standard ones.
 - **Tickets.** Members open a private support channel with one button. Staff claim and close it, and every closed ticket is saved as a transcript, images included.
+- **Run 24/7.** Your mod portal can keep welcome cards, auto roles, reaction roles, polls, server logs, server stats, scheduled announcements and YouTube alerts running when your PC is off. One click on the Home page.
+- **Auto roles.** Give roles to everyone who joins, right away or after a wait, and post a Verify button members press to get access.
+- **Announcements.** Build a message with a card, pictures, fields and link buttons, then send it now or schedule it once or every day, week or month.
 - **Server stats.** Live member, user, bot, channel and role counts as channels at the top of your server, named however you like.
 - **Welcome & goodbye cards.** Greet new members with a card made for them, and say goodbye when someone leaves. Design the background, font, colours and text yourself, for free.
 - **Polls.** Members vote by reacting, and each answer gets a bar in its emoji's colour, like Discord's own polls. Post them from the app or with `/poll` in Discord.

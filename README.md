@@ -12,13 +12,16 @@ A Windows desktop app (Electron) in the Pixelplayz2215 theme for running Discord
 - **AutoMod.** Add and edit Discord's built-in AutoMod rules: blocked words, common bad words, spam and mass mentions, with block, alert and timeout actions and exempt roles and channels. Discord enforces them itself, even when the app is closed.
 - **Backups.** Save an exact copy of a server's roles, channels, permissions and settings to your PC, by hand or automatically every day. Restoring recreates what was deleted and puts permissions, layout and (optionally) settings back, without deleting anything. Preview the changes first, and export or import backups as files.
 - **Server logs.** The bot posts joins (new accounts flagged), leaves, bans, timeouts, channel locks and unlocks (with who and why), role and nickname changes, deleted and edited messages, and channel and role changes to a log channel while the app runs.
-- **Community page** (grid button in the left rail). Welcome cards, reaction roles, tickets, polls and social alerts live together here, with a menu to move between them.
+- **Community page** (grid button in the left rail). Welcome cards, auto roles, reaction roles, tickets, announcements, polls, server stats and social alerts live together here, with a menu to move between them.
 - **Social alerts** (Community page). Post in a channel of your choice when a YouTube channel uploads (or starts a stream) or a Twitch channel goes live, with an optional @everyone, @here or role ping and your own message. YouTube needs no login: paste any channel's link. YouTube's free feed is often down, so for dependable alerts add a free YouTube Data API key under Accounts (kept encrypted on your PC); checks then go through the API. Twitch uses **Log in with Twitch**. Checks run while the app is open or in the tray (YouTube every 5 minutes, Twitch every minute). X / Twitter isn't supported, because X charges for every API read since February 2026.
 - **Reaction roles** (Community page). Post a message members react to, to give themselves roles: up to 20 emoji-and-role pairs per message, using the server's own uploaded emojis or standard ones (or any pasted emoji), with your own message as a card or plain text and a live preview. Members can pick any number of roles, only one (picking another swaps it), or add-only for rules and verification. The bot hands roles out while the app is open or in the tray, catches up on reactions it missed when it starts, and puts its reactions back if a mod clears them.
 - **Polls** (Community page). Ask a question with 2 to 4 answers, each with its own emoji (server or standard). Members vote by reacting, and the bot draws a coloured bar under each answer like Discord's own polls, in a colour that matches the emoji (or one you pick), with your own message and card colour. Choose whether members can pick one answer or several, and end a poll to show the final results. Anyone who can post polls in a channel can also use `/poll message emoji1 option1 emoji2 option2 …` in Discord (with the mod portal's slash commands on); its emoji boxes suggest the server's emojis as you type. Bars update while the app is open or in the tray.
 - **Tickets** (Community page). Post a panel with your own text and an "open a ticket" button (your label, emoji and colour). Pressing it gives the member a private channel that only they, your support roles and admins can see, with your own message telling them what to write. Staff press **Claim** to take it, and **Close** asks for a reason, saves the whole conversation as a transcript (images copied in, so they keep working) to a private ticket log channel with a **View transcript** link, then deletes the channel. The Tickets page lists open tickets and closed ones, and shows any transcript in the app. With slash commands on, your mod portal answers the buttons around the clock; otherwise the app does while it runs.
+- **Auto roles** (Community page). Give roles to everyone who joins, right away or after a wait (1 minute to 1 hour), with separate roles for bots. With Discord's rules screening on, roles wait until the member accepts the rules. **Give to existing members** catches up everyone who joined before. A **Verify button** message (your own text, colour, label and emoji) gives up to 4 roles to whoever presses it, with a reply only they see. Joins need the Server Members Intent and are handled while the app is open or in the tray; with slash commands on, your mod portal answers the Verify button around the clock.
+- **Announcements** (Community page). Build a message with a live preview: text with an optional @everyone, @here or role ping, a card (title, link, author, a picture from your PC or a link, thumbnail, up to 25 fields, footer, timestamp and colour) and up to 5 link buttons. Send it now or schedule it for a date and time, once or every day, week or month in your PC's time. Sent announcements can be edited and updated in Discord in place. Scheduled posts go out while the app is open or in the tray; one missed by under an hour still goes out when the app starts, and an older one is marked missed for you to send.
 - **Server stats** (Community page). Live counts as channels at the top of a server: members, users, bots, channels and roles, each with a name you choose (`{count}` marks the number) and full or short numbers (1.2K). They're voice channels members can see but not join, updated about every 5 minutes while the app runs, the most Discord allows. Users and Bots need the Server Members Intent.
 - **Welcome & goodbye cards** (Community page). When someone joins or leaves, the bot posts your message with a card made for them: their avatar and name over a gradient, a colour or your own background image (with a darken slider). Every part is yours to change: the layout, the font (8 to pick from, including a pixel font), three lines of text with their own words, colour and size, the avatar ring and the text shadow, or start from a quick style. Placeholders like {user}, {server} and {count} fill in, the welcome can ping the new member, and a live preview and **Send a test** show exactly what members will see. Free, with no premium tier. Needs the Server Members Intent; posts while the app is open or in the tray.
+- **Run 24/7** (Home page, needs the mod portal). Hand welcome cards, auto roles, reaction roles, polls, server logs, server stats, scheduled announcements and YouTube alerts to your mod portal, so they keep running when your PC is off. You keep setting everything up in the app: it saves each server's settings in a private #bot-settings channel there, encrypted with a key made from your bot token, so only the app and your portal can read them. The portal reads them, runs the same code as the app (welcome cards are drawn the same way), saves back what it did, and keeps itself awake on Render's free plan while 24/7 is on. The Home page shows whether it's running and any problems per server. Twitch alerts and automatic backups stay in the app.
 - **Keeps running in the tray.** The close button hides the app to the tray so bots stay online and logs and backups keep going. Quit from the tray icon. This can be turned off in Settings.
 - **Channels.** Send a message as the bot, purge up to 1000 recent messages, lock or unlock, set slowmode, rename, delete, or create channels.
 - **Audit log.** Recent actions, with filters.
@@ -34,7 +37,7 @@ A Windows desktop app (Electron) in the Pixelplayz2215 theme for running Discord
 
 ## Your data stays on your PC
 
-Bots, settings, saved templates, per-server settings, social alerts and backups are stored only in `%APPDATA%\Discord Server Builder` (`bots.json`, `settings.json`, `templates.json`, `servers.json`, `social.json` and the `backups` folder). The Twitch login is encrypted the same way as bot tokens. Bot tokens are encrypted with Windows DPAPI (Electron `safeStorage`). None of this is in the project folder, the GitHub repo or the built .exe, so every copy of the app starts empty. `.gitignore` also blocks those file names in case one gets copied into the project. The UI never sees a token, and every Discord call runs in the main process.
+Bots, settings, saved templates, per-server settings, social alerts and backups are stored only in `%APPDATA%\Discord Server Builder` (`bots.json`, `settings.json`, `templates.json`, `servers.json`, `social.json` and the `backups` folder). The Twitch login is encrypted the same way as bot tokens. Bot tokens are encrypted with Windows DPAPI (Electron `safeStorage`). None of this is in the project folder, the GitHub repo or the built .exe, so every copy of the app starts empty. The one exception is **Run 24/7**, which you turn on yourself: then each server's community settings (and the YouTube API key, if a server has YouTube alerts) are also kept in a private #bot-settings channel in that server, encrypted with AES-256 using a key made from the bot token, so your mod portal can read them. `.gitignore` also blocks those file names in case one gets copied into the project. The UI never sees a token, and every Discord call runs in the main process.
 
 ## Run it
 
@@ -125,13 +128,16 @@ Notes:
 src/main/       Electron main process
   main.js         window, tray + IPC handlers
   discord.js      REST client with rate-limit handling
-  gateway.js      gateway connection (keeps bots "online", receives events for server logs, reaction roles and polls)
+  gateway.js      gateway connection (keeps bots "online", receives events for server logs, welcome cards, auto roles, reaction roles and polls)
   logs.js         server logs: gateway events → batched embeds in a log channel
   social.js       social alerts: YouTube feeds, Log in with Twitch, the watcher
   reactionroles.js reaction roles: posting panels, handing out roles, catching up
   welcome.js      welcome and goodbye messages: joins and leaves → message + card
   tickets.js      tickets: panels, open/claim/close, transcripts (shared with server/)
   stats.js        server stats: counts and counter channels, renamed within Discord's limit
+  autoroles.js    auto roles on join and the Verify button (the button is shared with server/)
+  announce.js     announcements: the message, next run times and the scheduler
+  always.js       24/7: encrypted settings in #bot-settings, signed requests to the portal (shared with server/)
   polls.js        reaction polls: the message with its bars, redrawing as votes come in (shared with server/)
   emojicolors.js  the bar colour for each standard emoji
   backup.js       server snapshots and restore
@@ -165,6 +171,8 @@ src/renderer/   UI (plain HTML/CSS/JS, no bundler)
   js/tickets.js   Tickets page: panel editor, open tickets, transcript viewer
   js/community.js the Community page and its menu
   js/stats.js     Server stats page
+  js/autoroles.js Auto roles page: roles on join, Verify button editor
+  js/announce.js  Announcements page: builder, preview and schedule
   card.html + js/cardpage.js  hidden page the bot draws cards in
   js/builder.js   Builder tab
   js/templates.js built-in server templates
@@ -175,6 +183,8 @@ server/         mod portal (not part of the .exe)
   auth.js         Discord OAuth sign-in + signed sessions
   guard.js        per-request permission and role-hierarchy checks
   interactions.js signed slash command endpoint and the command handlers
+  always.js       24/7: reads the settings, runs the gateway and the engines, saves what it did
+  cards.js        draws welcome cards for 24/7 (@napi-rs/canvas, kept out of the .exe)
   portal.test.js  tests with a fake Discord
   interactions.test.js  slash command tests with a fake Discord
 test/features.test.js  cases, backups and server logs tests (not packaged)
@@ -184,6 +194,9 @@ test/polls.test.js     polls tests (not packaged)
 test/welcome.test.js   welcome and goodbye tests (not packaged)
 test/tickets.test.js   tickets tests (not packaged)
 test/stats.test.js     server stats tests (not packaged)
+test/autoroles.test.js auto roles and Verify button tests (not packaged)
+test/announce.test.js  announcements and schedule tests (not packaged)
+test/always.test.js    24/7 tests: encryption, the settings channel, the portal running features (not packaged)
 test/release.test.js   changelog handling tests (not packaged)
 docs/MOD-PORTAL.md  how to deploy the portal and give mods access
 render.yaml     Render blueprint for the portal

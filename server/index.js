@@ -11,6 +11,10 @@ const { createGuard, auditReason } = require('./guard');
 const { createInteractions, once } = require('./interactions');
 const { createCases, caseFromCall, warnMember } = require('../src/main/cases');
 const { createTickets, transcriptSignature, checkTranscriptSignature } = require('../src/main/tickets');
+const { createVerify } = require('../src/main/autoroles');
+const Always = require('../src/main/always');
+const { createAlways } = require('./always');
+const { createCards } = require('./cards');
 
 const MAX_BODY = 64 * 1024;
 const MAX_INTERACTION_BODY = 1024 * 1024;
@@ -83,8 +87,9 @@ function createLimiter(limit, windowMs) {
 // Transcripts can't run anything: no scripts are allowed on the page.
 const TRANSCRIPT_CSP = "default-src 'none'; img-src data: https://cdn.discordapp.com https://media.discordapp.net; style-src 'unsafe-inline'";
 
-// interactions is optional: without it the portal doesn't answer slash commands.
-function createPortal({ config, rest, auth, guard, interactions, fetchImpl = fetch, caseLog = createCases(rest, { botId: once(async () => (await rest.request('GET', '/users/@me')).id) }) }) {
+// interactions is optional: without it the portal doesn't answer slash commands. always (24/7) is
+// optional too: without it /always/* isn't there.
+function createPortal({ config, rest, auth, guard, interactions, always = null, fetchImpl = fetch, caseLog = createCases(rest, { botId: once(async () => (await rest.request('GET', '/users/@me')).id) }) }) {
   const limitUser = createLimiter(120, 60000);
   const limitIp = createLimiter(30, 60000);
   let botUser = null;
@@ -232,7 +237,32 @@ function createPortal({ config, rest, auth, guard, interactions, fetchImpl = fet
       return sendTranscript(res, transcript[1], transcript[2], url.searchParams.get('sig'));
     }
 
-    if (req.method === 'GET' && url.pathname === '/health') return sendJson(res, 200, { ok: true });
+    // always: the app checks this before turning 24/7 on, to know the portal is new enough.
+    if (req.method === 'GET' && url.pathname === '/health') return sendJson(res, 200, { ok: true, always: always ? Always.VERSION : 0 });
+
+    // 24/7: the app asks how it's going, or to read the settings again after saving them. Only
+    // requests signed with this portal's bot token are answered.
+    if (req.method === 'POST' && (url.pathname === '/always/status' || url.pathname === '/always/reload') && always) {
+      try {
+        limitIp(`always:${ip}`);
+        const raw = (await readBody(req)).toString('utf8');
+        if (!Always.checkSigned(config.botToken, raw, req.headers)) return sendJson(res, 401, { error: "That request wasn't signed with this portal's bot token." });
+        let body = {};
+        try {
+          body = raw ? JSON.parse(raw) : {};
+        } catch {
+          throw httpError(400, 'Invalid JSON.');
+        }
+        if (url.pathname === '/always/reload') {
+          const ids = Array.isArray(body.guildIds) ? body.guildIds.map(String).filter((id) => /^d{15,21}$/.test(id)) : null;
+          await always.reload(ids?.length ? ids : null);
+        }
+        return sendJson(res, 200, always.status());
+      } catch (err) {
+        if (err.status !== 429) console.error(`POST ${url.pathname}:`, err);
+        return sendJson(res, err.status || 500, { error: err.message || 'Something went wrong.' });
+      }
+    }
     if (req.method === 'GET' && url.pathname === '/') {
       return sendPage(res, 200, 'Mod portal is running', 'Moderators: open Discord Server Builder, choose "Sign in with Discord" and paste this page\'s address.');
     }
@@ -308,8 +338,22 @@ if (require.main === module) {
   const botId = once(async () => (await rest.request('GET', '/users/@me')).id);
   const caseLog = createCases(rest, { botId });
   const tickets = createTickets({ rest, botId, transcriptLink: (channelId, messageId) => `${config.publicUrl}/transcripts/${channelId}/${messageId}?sig=${transcriptSignature(config.sessionSecret, channelId, messageId)}` });
-  const server = createPortal({ config, rest, auth: createAuth(config), guard, caseLog, interactions: createInteractions({ rest, guard, caseLog, tickets }) });
-  server.listen(config.port, () => console.log(`Mod portal listening on port ${config.port} (${config.publicUrl})`));
+  // 24/7: reads its settings now and runs if the owner turned it on in the app.
+  let always = null;
+  const cards = createCards({ fileData: (name) => always.fileData(name) });
+  always = createAlways({ rest, token: config.botToken, publicUrl: config.publicUrl, cards });
+  const server = createPortal({ config, rest, auth: createAuth(config), guard, caseLog, always, interactions: createInteractions({ rest, guard, caseLog, tickets, verify: createVerify({ rest }) }) });
+  server.listen(config.port, () => {
+    console.log(`Mod portal listening on port ${config.port} (${config.publicUrl})`);
+    always.start().catch((err) => console.error('24/7: reading the settings failed:', err.message));
+  });
+  // Render stops the portal on a deploy or when it sleeps: save what 24/7 did first.
+  process.on('SIGTERM', () => {
+    always
+      .close()
+      .catch(() => {})
+      .finally(() => process.exit(0));
+  });
 }
 
 module.exports = { createPortal };

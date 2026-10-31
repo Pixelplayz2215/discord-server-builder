@@ -2,7 +2,8 @@
 // points at this portal's /interactions. Discord signs every request; unsigned ones are refused.
 // Each mod command goes through the same checks as the app (guard.js): the mod's own Discord
 // permissions, and only members ranked below them. Member actions are recorded in #mod-cases.
-// /poll is for anyone who can post polls in the channel. Ticket buttons go to src/main/tickets.js.
+// /poll is for anyone who can post polls in the channel. Ticket buttons go to src/main/tickets.js and
+// Verify buttons to src/main/autoroles.js.
 const crypto = require('crypto');
 const { purgeMessages, lockWithNotice } = require('../src/main/builder');
 const { DURATIONS, DELETE_WINDOWS, SLOWMODES, labelFor } = require('../src/main/commands');
@@ -55,9 +56,9 @@ const once = (fn) => {
 
 const reply = (content) => ({ status: 200, body: { type: RESPONSE.MESSAGE, data: { content, flags: EPHEMERAL, allowed_mentions: { parse: [] } } } });
 
-// caseLog: the portal's shared case log (one is made if it isn't passed). tickets: answers ticket
-// buttons and forms (src/main/tickets.js), when given.
-function createInteractions({ rest, guard, tickets = null, caseLog = createCases(rest, { botId: once(async () => (await rest.request('GET', '/users/@me')).id) }) }) {
+// caseLog: the portal's shared case log (one is made if it isn't passed). tickets and verify answer
+// ticket buttons and forms and Verify buttons, when given.
+function createInteractions({ rest, guard, tickets = null, verify = null, caseLog = createCases(rest, { botId: once(async () => (await rest.request('GET', '/users/@me')).id) }) }) {
   const application = once(async () => {
     const app = await rest.request('GET', '/applications/@me');
     return { id: app.id, key: publicKey(app.verify_key) };
@@ -306,7 +307,7 @@ function createInteractions({ rest, guard, tickets = null, caseLog = createCases
     if (interaction.type === INTERACTION.PING) return { status: 200, body: { type: RESPONSE.PONG } };
     if (interaction.type === INTERACTION.AUTOCOMPLETE) return { status: 200, body: { type: RESPONSE.CHOICES, data: { choices: await suggest(interaction).catch(() => []) } } };
     if (interaction.type === INTERACTION.COMPONENT || interaction.type === INTERACTION.MODAL) {
-      const handled = tickets ? await tickets.interaction(interaction) : null;
+      const handled = (tickets && (await tickets.interaction(interaction))) || (verify && (await verify.interaction(interaction)));
       if (handled) return { status: 200, body: handled.response, after: handled.after };
       return reply("This mod portal doesn't know that button. The bot owner can update it (Sync fork on GitHub).");
     }

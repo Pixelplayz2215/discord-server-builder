@@ -33,7 +33,23 @@ function decrypt(record) {
 
 const publicBot = ({ secret, ...bot }) => bot;
 
+// Told when a server's settings or the social alerts change (24/7 saves them for the portal).
+const listeners = [];
+const changed = (what) => {
+  for (const fn of listeners) {
+    try {
+      fn(what);
+    } catch {
+      // a listener's problem never stops a save
+    }
+  }
+};
+
 const store = {
+  onChange(fn) {
+    listeners.push(fn);
+  },
+
   listBots() {
     return readJson('bots.json', []).map(publicBot);
   },
@@ -116,6 +132,7 @@ const store = {
     const key = `${botId}:${guildId}`;
     all[key] = { ...all[key], ...patch };
     writeJson('servers.json', all);
+    changed({ botId, guildId });
     return all[key];
   },
 
@@ -141,10 +158,12 @@ const store = {
     if (key) all.youtubeKey = encrypt(key);
     else delete all.youtubeKey;
     writeJson('social.json', all);
+    changed({ social: true });
   },
 
   saveSocial(patch) {
     writeJson('social.json', { ...readJson('social.json', {}), ...patch });
+    changed({ social: true });
   },
 
   getTwitchTokens() {

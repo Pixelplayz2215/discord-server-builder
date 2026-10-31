@@ -206,7 +206,12 @@ const HomePage = {
       if (s.others.length) text += ` This bot also has other commands (/${s.others.join(', /')}), which only work while this is off.`;
       slashStatus.textContent = text;
     };
-    const botSelect = ownerBots.length ? selectEl(ownerBots.map((b) => [b.id, displayName(b)]), ownerBots[0].id, () => loadStatus()) : null;
+    const botSelect = ownerBots.length
+      ? selectEl(ownerBots.map((b) => [b.id, displayName(b)]), ownerBots[0].id, () => {
+          loadStatus();
+          loadAlways();
+        })
+      : null;
     const loadStatus = async () => {
       lastStatus = null;
       slashStatus.textContent = 'Checking…';
@@ -257,7 +262,114 @@ const HomePage = {
         toast('Slash commands are off');
       }),
     );
-    if (botSelect) loadStatus();
+    // 24/7: the portal runs the community features around the clock, even with this PC off.
+    const alwaysInfo = h('div', { class: 'subtle', style: { fontSize: 'calc(12rem / 14)' } });
+    const alwaysServers = h('div', { class: 'stack always-servers' });
+    let alwaysState = null;
+    const alwaysOnBtn = h('button', { class: 'btn sm teal' }, icon('power'), 'Turn on 24/7');
+    const alwaysOffBtn = h('button', { class: 'btn sm ghost' }, 'Turn off');
+    const alwaysCheckBtn = h('button', { class: 'btn sm ghost' }, icon('refresh'), 'Check');
+    const showAlways = () => {
+      const s = alwaysState;
+      alwaysServers.replaceChildren();
+      // Buttons set their own display, so the hidden attribute alone wouldn't hide them.
+      alwaysOnBtn.style.display = s?.on ? 'none' : '';
+      alwaysOffBtn.style.display = alwaysCheckBtn.style.display = s?.on ? '' : 'none';
+      if (!s) return;
+      if (!s.on) {
+        alwaysInfo.textContent = 'Off. Welcome cards, auto roles and the rest run while this app is open or in the tray.';
+        return;
+      }
+      const gw = s.portal?.gateway;
+      const running = s.servers.filter((srv) => srv.on).length;
+      if (s.error) alwaysInfo.textContent = `✗ ${s.error}`;
+      else if (gw?.state === 'online') alwaysInfo.textContent = `✓ On. Your portal runs ${running} ${running === 1 ? 'server' : 'servers'} around the clock, even with this PC off.`;
+      else if (s.portal && !s.portal.running) alwaysInfo.textContent = 'On, but none of your servers have anything for the portal to run yet.';
+      else alwaysInfo.textContent = `On. Your portal is connecting the bot${gw?.detail ? `: ${gw.detail}` : '…'}`;
+      if (s.checkedAt) alwaysInfo.textContent += ` Checked ${fmtRelative(s.checkedAt)}.`;
+      if (s.portal && !s.portal.cards) alwaysServers.append(h('div', { class: 'callout warn' }, icon('alert'), h('div', null, "Your portal can't draw welcome cards, so welcomes go without them. On Render, choose Manual Deploy → Clear build cache & deploy.")));
+      for (const srv of s.servers) {
+        const problems = [srv.saveProblem && `Couldn't save its settings: ${srv.saveProblem}`, srv.problem, ...srv.problems].filter(Boolean);
+        alwaysServers.append(
+          h(
+            'div',
+            { class: 'always-server' },
+            h('span', { class: `badge ${problems.length ? 'coral' : 'teal'}` }, problems.length ? 'Check' : srv.on ? '24/7' : 'Off'),
+            h('b', null, srv.name),
+            h('span', { class: 'subtle' }, problems.length ? problems.join(' ') : srv.on ? `Settings saved ${srv.savedAt ? fmtRelative(srv.savedAt) : ''}` : 'Nothing to run here'),
+          ),
+        );
+      }
+    };
+    // pull: ask the portal now (the app also does every minute and says so with always:changed).
+    const loadAlways = async ({ pull = true } = {}) => {
+      if (pull) {
+        alwaysState = null;
+        showAlways();
+        alwaysInfo.textContent = 'Checking…';
+      }
+      try {
+        alwaysState = await api('always:status', botSelect.value, { pull });
+        showAlways();
+      } catch (err) {
+        alwaysInfo.textContent = `✗ ${err.message}`;
+      }
+    };
+    HomePage.onAlwaysChanged = ({ botId }) => {
+      if (botSelect && botId === botSelect.value && document.body.contains(alwaysInfo)) loadAlways({ pull: false });
+    };
+    alwaysOnBtn.addEventListener(
+      'click',
+      withBusy(alwaysOnBtn, async () => {
+        const bot = ownerBots.find((b) => b.id === botSelect.value);
+        const ok = await confirmDialog({
+          title: 'Run 24/7 on your mod portal?',
+          message: h(
+            'div',
+            { class: 'stack', style: { gap: '10px' } },
+            h('p', null, `Your portal will run welcome & goodbye cards, auto roles, reaction roles, polls, server logs, server stats, scheduled announcements and YouTube alerts for ${displayName(bot)}, even when this PC is off. This app stops running them while 24/7 is on.`),
+            h('p', null, 'Each server gets a private #bot-settings channel where the settings are kept for the portal, encrypted with your bot token. Only the bot can see it, and server admins can see it exists. Please leave it there.'),
+            h('div', { class: 'callout' }, icon('alert'), h('div', null, h('b', null, 'Render free plan: '), "while 24/7 is on, the portal keeps itself awake. That uses Render's 750 free hours a month, enough for one service all month. Other free services on the same Render account share those hours.")),
+            h('p', { class: 'subtle' }, 'Twitch alerts and automatic backups still need this app running.'),
+          ),
+          confirmLabel: 'Turn on 24/7',
+        });
+        if (!ok) return;
+        alwaysInfo.textContent = 'Turning on… (saving each server\'s settings; a sleeping portal can take up to a minute)';
+        try {
+          alwaysState = await api('always:enable', botSelect.value);
+          noteAlwaysOn(true);
+          showAlways();
+          toast('24/7 is on');
+        } catch (err) {
+          alwaysInfo.textContent = `✗ ${err.message}`;
+        }
+      }),
+    );
+    alwaysOffBtn.addEventListener(
+      'click',
+      withBusy(alwaysOffBtn, async () => {
+        alwaysInfo.textContent = 'Turning off…';
+        try {
+          alwaysState = await api('always:disable', botSelect.value);
+          noteAlwaysOn(false);
+          showAlways();
+          toast('24/7 is off. This app runs your community features again.');
+        } catch (err) {
+          alwaysInfo.textContent = `✗ ${err.message}`;
+        }
+      }),
+    );
+    alwaysCheckBtn.addEventListener('click', withBusy(alwaysCheckBtn, () => loadAlways()));
+    // The Community page says where its features run.
+    const noteAlwaysOn = (on) => {
+      const bot = App.bots.find((b) => b.id === botSelect.value);
+      if (bot) bot.always = { ...bot.always, on };
+    };
+    if (botSelect) {
+      loadStatus();
+      loadAlways();
+    }
 
     return [
       h(
@@ -321,8 +433,21 @@ const HomePage = {
           h(
             'p',
             { class: 'subtle', style: { marginTop: '8px', fontSize: 'calc(12rem / 14)' } },
-            'On Render\'s free plan, the first command after 15 quiet minutes can fail while the portal wakes up. A free uptime monitor that opens your portal\'s /health page every 10 minutes keeps it awake.',
+            'On Render\'s free plan, the first command after 15 quiet minutes can fail while the portal wakes up. Turning on 24/7 (next) keeps it awake, or a free uptime monitor can open your portal\'s /health page every 10 minutes.',
           ),
+        ),
+        h(
+          'div',
+          { class: 'card step' },
+          h('h3', null, 'Run 24/7 (optional)'),
+          h(
+            'p',
+            null,
+            'Keep welcome cards, auto roles, reaction roles, polls, server logs, server stats, scheduled announcements and YouTube alerts going when this PC is off. Your portal runs them around the clock with the settings you make here. Turn on slash commands first; it uses the same portal.',
+          ),
+          botSelect
+            ? h('div', { class: 'stack', style: { gap: '8px', marginTop: '12px' } }, h('div', { class: 'row wrap' }, alwaysOnBtn, alwaysOffBtn, alwaysCheckBtn), alwaysInfo, alwaysServers)
+            : h('p', { class: 'subtle', style: { marginTop: '8px' } }, 'Connect your bot with its token above first.'),
         ),
       ),
     ];
@@ -361,3 +486,5 @@ const HomePage = {
     return h('div', { class: 'card step' }, h('h3', null, title), h('p', null, text), action ? h('div', { style: { marginTop: '12px' } }, action) : null);
   },
 };
+
+onEvent('always:changed', (e) => HomePage.onAlwaysChanged?.(e));
