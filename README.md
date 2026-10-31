@@ -48,44 +48,14 @@ Bots, settings, saved templates, per-server settings, social alerts and backups 
 
 > ⚠️ The only official download is the GitHub release page above. Copies from anywhere else could be changed to steal your bot token. Windows may show a SmartScreen warning the first time because the app isn't code-signed. Click **More info → Run anyway**.
 
-**From VS Code:** open this folder (`File → Open Folder…`), then:
-
-| What | How |
-| --- | --- |
-| Run the app | Run and Debug → **Run App** (F5). It installs dependencies first. |
-| Debug main and UI | Run and Debug → **Debug Main + Renderer** |
-| Build the portable .exe | `Ctrl+Shift+B` (task **Build portable EXE**) → `dist\` |
-| Build an installer | Terminal → Run Task → **Build installer EXE** |
-
-**From a terminal:**
+**From the source:**
 
 ```bash
 npm install
 npm start          # run the app
 npm run dev        # run with DevTools open
 npm run dist       # portable .exe in dist/
-npm run release    # build + publish a new GitHub release (see below)
 ```
-
-## Publishing an update
-
-Every version gets **its own GitHub release** (tag `v1.0.7` and so on), whose page starts with that version's changes from [CHANGELOG.md](CHANGELOG.md). The newest one is marked latest, so the `releases/latest` links and download links always give the newest build. The app's update check reads the latest release from the repository named in `package.json` → `updateRepo`, which must be public. Its `version.json` tells the app which version the files are and what changed lately, which the "New version found" popup lists.
-
-1. Add what changed as `- ` lines under **Unreleased** in `CHANGELOG.md`. Commit and push.
-2. Run `npm run release`, or in VS Code: Terminal → Run Task → **Publish GitHub release**. That raises the last number (1.0.9 → 1.0.10). For a bigger step, run `npm run release -- minor` (1.0.10 → 1.1.0), `npm run release -- major` (→ 2.0.0) or name the version, like `npm run release -- 1.2.0`.
-
-The script:
-- stops if there are uncommitted or unpushed changes, or nothing under **Unreleased**
-- bumps the patch version in `package.json` if the current one is already published, moves the **Unreleased** lines into that version's section, and commits and pushes both as "Release x.y.z"
-- builds `DiscordServerBuilder-setup.exe` (installer) and `DiscordServerBuilder-portable.exe`, plus a private `mod-view.exe` when you have a `mod-view.json` (see below)
-- tags the commit `vx.y.z` and creates its release with the installer, the portable exe and `version.json`. The notes are the version's changes followed by `RELEASE_NOTES.md`, the standing description.
-- keeps copies in `releases\`
-
-If a run stops partway (for example the build fails), run it again: it carries on with the same version.
-
-Running copies of the app notice it within a few minutes and show the "new version available" popup. Clicking it, then **Reload to update**, updates them in place.
-
-The installer's own pages (credit to Pixelplayz2215, the official-download warning, the finish and uninstall text) are in `build/installer.nsh`.
 
 ## Mod portal
 
@@ -121,85 +91,3 @@ Notes:
 - Announcement and Stage channels need a **Community** server. When the server isn't one, the builder creates them as text and voice channels instead, and the log says so.
 - A bot can only manage roles and members below its own highest role.
 - Bulk delete skips pinned messages and messages older than 14 days, because Discord does not allow deleting those in bulk.
-
-## Project layout
-
-```
-src/main/       Electron main process
-  main.js         window, tray + IPC handlers
-  discord.js      REST client with rate-limit handling
-  gateway.js      gateway connection (keeps bots "online", receives events for server logs, welcome cards, auto roles, reaction roles and polls)
-  logs.js         server logs: gateway events → batched embeds in a log channel
-  social.js       social alerts: YouTube feeds, Log in with Twitch, the watcher
-  reactionroles.js reaction roles: posting panels, handing out roles, catching up
-  welcome.js      welcome and goodbye messages: joins and leaves → message + card
-  tickets.js      tickets: panels, open/claim/close, transcripts (shared with server/)
-  stats.js        server stats: counts and counter channels, renamed within Discord's limit
-  autoroles.js    auto roles on join and the Verify button (the button is shared with server/)
-  announce.js     announcements: the message, next run times and the scheduler
-  always.js       24/7: encrypted settings in #bot-settings, signed requests to the portal (shared with server/)
-  polls.js        reaction polls: the message with its bars, redrawing as votes come in (shared with server/)
-  emojicolors.js  the bar colour for each standard emoji
-  backup.js       server snapshots and restore
-  cases.js        #mod-cases case log, warnings (shared with server/)
-  builder.js      template → server builder, clone, purge, lock, member paging
-  updater.js      GitHub release check, download, restart into the new .exe
-  portal.js       "Sign in with Discord" client for moderators (talks to server/)
-  commands.js     mod slash command definitions + registering them on a bot (shared with server/)
-  store.js        encrypted token/session, settings and saved-template storage
-  preload.js      narrow IPC bridge
-src/shared/
-  appearance.js   theme presets + settings defaults/validation (used by main and UI)
-  modlog.js       reads locks and "by … via /command" reasons back from Discord (main, portal and UI)
-  welcomecard.js  welcome/goodbye card settings and drawing (the app's preview and the bot's cards)
-src/renderer/   UI (plain HTML/CSS/JS, no bundler)
-  js/theme.js     applies appearance settings as CSS variables (loaded in <head>)
-  js/settings.js  Settings page
-  js/updates.js   update check, the "new version available" popup and the update screen
-  js/core.js      element helper, icons, modals, toasts
-  js/home.js      Home page / connect a bot
-  js/bot.js       per-bot page + dashboard
-  js/server.js    server header and Overview/Members/Moderation/Channels/Logs tabs, cases
-  js/raid.js      Raid tab (lockdown, pause invites/DMs, recent joins)
-  js/automod.js   AutoMod tab
-  js/backups.js   Backups tab
-  js/serverlogs.js server logs settings (Logs tab)
-  js/social.js    Social alerts page
-  js/reactionroles.js Reaction roles page and emoji picker (standard emojis in js/emojis.js)
-  js/polls.js     Polls page
-  js/welcome.js   Welcome & goodbye page and card designer
-  js/tickets.js   Tickets page: panel editor, open tickets, transcript viewer
-  js/community.js the Community page and its menu
-  js/stats.js     Server stats page
-  js/autoroles.js Auto roles page: roles on join, Verify button editor
-  js/announce.js  Announcements page: builder, preview and schedule
-  card.html + js/cardpage.js  hidden page the bot draws cards in
-  js/builder.js   Builder tab
-  js/templates.js built-in server templates
-scripts/        make-icon.js (draws the logo → build/icon.png/.ico), copy-fonts.js, release.js + changelog.js
-CHANGELOG.md    what changed in each version (feeds the release pages and the update popup)
-server/         mod portal (not part of the .exe)
-  index.js        HTTP server: sign-in, moderation-only API, /interactions
-  auth.js         Discord OAuth sign-in + signed sessions
-  guard.js        per-request permission and role-hierarchy checks
-  interactions.js signed slash command endpoint and the command handlers
-  always.js       24/7: reads the settings, runs the gateway and the engines, saves what it did
-  cards.js        draws welcome cards for 24/7 (@napi-rs/canvas, kept out of the .exe)
-  portal.test.js  tests with a fake Discord
-  interactions.test.js  slash command tests with a fake Discord
-test/features.test.js  cases, backups and server logs tests (not packaged)
-test/social.test.js    social alerts tests (not packaged)
-test/reactionroles.test.js  reaction roles tests (not packaged)
-test/polls.test.js     polls tests (not packaged)
-test/welcome.test.js   welcome and goodbye tests (not packaged)
-test/tickets.test.js   tickets tests (not packaged)
-test/stats.test.js     server stats tests (not packaged)
-test/autoroles.test.js auto roles and Verify button tests (not packaged)
-test/announce.test.js  announcements and schedule tests (not packaged)
-test/always.test.js    24/7 tests: encryption, the settings channel, the portal running features (not packaged)
-test/release.test.js   changelog handling tests (not packaged)
-docs/MOD-PORTAL.md  how to deploy the portal and give mods access
-render.yaml     Render blueprint for the portal
-```
-
-The theme colours come from pixelplayz.org: navy `#0f0c22`, teal `#0bbfbc`, coral `#fc354c` and magenta `#a41d70`, set in Poppins and Silkscreen.
