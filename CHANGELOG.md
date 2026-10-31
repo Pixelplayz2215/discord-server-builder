@@ -6,6 +6,8 @@ To release: add your changes as `- ` lines under **Unreleased**, then run `npm r
 
 ## Unreleased
 
+## 1.2.1 (2026-10-31)
+
 - **What 24/7 did while you were away.** When you open the app, the Home page's **Run 24/7** card shows what your mod portal did for each server while the app was closed: welcomes, goodbyes, members given auto roles, reaction roles, votes, announcements, YouTube posts and log entries. Update your portal with **Sync fork** to start counting.
 - **Scheduled announcements on time.** They now go out within a few seconds of their time, instead of up to 30 seconds late, from the app and from your portal.
 - **Bots and Users counters keep up.** When a bot joins or leaves, the Bots and Users counters change at the next update instead of up to half an hour later, and a new bot is no longer counted as a user in the meantime. Counters also update about a minute after anyone joins or leaves, though Discord still lets each counter channel be renamed only about once every 5 minutes.
