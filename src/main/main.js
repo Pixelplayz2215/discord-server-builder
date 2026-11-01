@@ -914,7 +914,10 @@ function mergeAlways(botId, status) {
 }
 
 // What the portal did while the app was closed: its running totals at the first answer after the
-// app starts, against the last ones the app saw (kept in bots.json as always.seen).
+// app starts, against the last ones the app saw (kept in bots.json as always.seen). The time they
+// were seen is kept fresh every 10 minutes, so "while the app was closed" starts about when it
+// closed, even when it didn't get to say so (a crash, or Windows shutting down).
+const SEEN_FRESH_MS = 10 * 60 * 1000;
 function noteActivity(botId, status) {
   const seen = store.getBot(botId).always?.seen || null;
   const totals = {};
@@ -924,7 +927,15 @@ function noteActivity(botId, status) {
     for (const [guildId, now] of Object.entries(totals)) if (seen?.totals?.[guildId]) servers[guildId] = always.activitySince(seen.totals[guildId], now);
     alwaysAway.set(botId, seen ? { from: seen.at, to: Date.now(), servers } : null);
   }
-  if (JSON.stringify(totals) !== JSON.stringify(seen?.totals || {})) store.updateBot(botId, { always: { ...store.getBot(botId).always, seen: { at: Date.now(), totals } } });
+  const stale = !seen || Date.now() - seen.at > SEEN_FRESH_MS;
+  if (stale || JSON.stringify(totals) !== JSON.stringify(seen.totals || {})) store.updateBot(botId, { always: { ...store.getBot(botId).always, seen: { at: Date.now(), totals } } });
+}
+
+// The app is closing: it saw the portal's totals until now (the start of "while the app was closed").
+function noteClosing() {
+  for (const bot of store.listBots()) {
+    if (bot.always?.on && bot.always.seen) store.updateBot(bot.id, { always: { ...bot.always, seen: { ...bot.always.seen, at: Date.now() } } });
+  }
 }
 
 async function pullAlways(botId) {
@@ -2205,6 +2216,7 @@ function createWindow() {
   // The close button hides the window to the tray so bots stay online; Quit is in the tray menu.
   createTray();
   win.on('closed', closeCardWindow); // or the hidden card window would keep the app running
+  win.on('session-end', noteClosing); // Windows shutting down or signing out skips before-quit
   win.on('close', (event) => {
     if (quitting || !settings.closeToTray) return;
     event.preventDefault();
@@ -2239,10 +2251,7 @@ if (!app.requestSingleInstanceLock()) {
   });
   app.on('before-quit', () => {
     quitting = true;
-    // 24/7: the app saw the portal's totals until now (the start of "while the app was closed").
-    for (const bot of store.listBots()) {
-      if (bot.always?.on && bot.always.seen) store.updateBot(bot.id, { always: { ...bot.always, seen: { ...bot.always.seen, at: Date.now() } } });
-    }
+    noteClosing();
   });
   Menu.setApplicationMenu(null);
   app.whenReady().then(() => {

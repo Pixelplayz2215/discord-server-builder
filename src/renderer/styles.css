@@ -724,7 +724,13 @@ input[type='range'] { width: 100%; accent-color: var(--accent); cursor: pointer;
 .always-servers { gap: 10px; }
 .always-server { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; font-size: calc(13rem / 14); }
 .always-server .subtle { font-size: calc(12rem / 14); }
-.always-away { flex-basis: 100%; padding-left: 2px; color: var(--muted); font-size: calc(12rem / 14); line-height: 1.45; }
+.away-slot { display: grid; gap: 12px; margin-bottom: 16px; }
+.away-slot:empty { display: none; }
+.away-card { padding: 16px 20px; border-color: var(--accent-line); background: color-mix(in srgb, var(--accent) 6%, var(--surface)); }
+.away-card .card-head { margin-bottom: 8px; flex-wrap: wrap; }
+.away-card .card-head .subtle { font-size: calc(12rem / 14); }
+.away-card p { margin: 4px 0 0; color: var(--muted); font-size: calc(13rem / 14); line-height: 1.5; }
+.away-card p b { color: var(--text); font-weight: 600; }
 .community-link { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 10px; border: 1px solid transparent; border-radius: var(--radius-sm); background: none; color: var(--muted); font: inherit; text-align: left; cursor: pointer; }
 .community-link svg { width: 18px; height: 18px; flex-shrink: 0; }
 .community-link b { display: block; color: var(--text); font-size: calc(13.5rem / 14); font-weight: 600; }

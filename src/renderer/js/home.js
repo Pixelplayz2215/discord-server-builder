@@ -93,6 +93,7 @@ const HomePage = {
         App.bots.length
           ? [
               h('div', { class: 'section-title' }, h('h2', null, 'Your bots'), h('span', { class: 'badge pixel teal' }, `${App.bots.length} connected`)),
+              HomePage.awaySlot(),
               h(
                 'div',
                 { class: 'grid cols-3' },
@@ -290,7 +291,6 @@ const HomePage = {
       if (s.portal && !s.portal.cards) alwaysServers.append(h('div', { class: 'callout warn' }, icon('alert'), h('div', null, "Your portal can't draw welcome cards, so welcomes go without them. On Render, choose Manual Deploy → Clear build cache & deploy.")));
       for (const srv of s.servers) {
         const problems = [srv.saveProblem && `Couldn't save its settings: ${srv.saveProblem}`, srv.problem, ...srv.problems].filter(Boolean);
-        const away = srv.away && s.away ? HomePage.awayText(srv.away, s.away) : null;
         alwaysServers.append(
           h(
             'div',
@@ -298,7 +298,6 @@ const HomePage = {
             h('span', { class: `badge ${problems.length ? 'coral' : 'teal'}` }, problems.length ? 'Check' : srv.on ? '24/7' : 'Off'),
             h('b', null, srv.name),
             h('span', { class: 'subtle' }, problems.length ? problems.join(' ') : srv.on ? `Settings saved ${srv.savedAt ? fmtRelative(srv.savedAt) : ''}` : 'Nothing to run here'),
-            away ? h('div', { class: 'always-away' }, away) : null,
           ),
         );
       }
@@ -488,9 +487,71 @@ const HomePage = {
     return h('div', { class: 'card step' }, h('h3', null, title), h('p', null, text), action ? h('div', { style: { marginTop: '12px' } }, action) : null);
   },
 
-  // What the portal did for one server while the app was closed, in words, or null when there's
+  /* ---------- While the app was closed (24/7) ---------- */
+  awayDismissed: new Set(), // `${botId}:${from}` of the cards closed with Got it
+  awayEl: null,
+
+  // Where the cards go, filled in once the app has heard from each 24/7 bot's portal.
+  awaySlot() {
+    HomePage.awayEl = h('div', { class: 'away-slot' });
+    HomePage.fillAway();
+    return HomePage.awayEl;
+  },
+
+  async fillAway() {
+    const slot = HomePage.awayEl;
+    if (!slot) return;
+    const bots = App.bots.filter((b) => b.type !== 'mod' && b.always?.on);
+    const reports = await Promise.all(bots.map((b) => api('always:status', b.id, { pull: false }).catch(() => null)));
+    const cards = bots.map((bot, i) => reports[i] && HomePage.awayCard(bot, reports[i])).filter(Boolean);
+    const key = JSON.stringify(cards.map((c) => c.textContent));
+    if (slot.dataset.key === key) return; // unchanged: don't redraw
+    slot.dataset.key = key;
+    slot.replaceChildren(...cards);
+  },
+
+  // What a bot's mod portal did while the app was closed, until dismissed, or null when there's
   // nothing worth saying (a quick restart).
-  awayText(counts, away) {
+  awayCard(bot, s) {
+    const away = s.away;
+    const dismissKey = `${bot.id}:${away?.from}`;
+    if (!s.on || !away || HomePage.awayDismissed.has(dismissKey)) return null;
+    const servers = s.servers.filter((srv) => srv.on && srv.away).map((srv) => ({ name: srv.name, parts: HomePage.awayParts(srv.away) }));
+    const secs = (away.to - away.from) / 1000;
+    const busy = servers.some((srv) => srv.parts.length);
+    if (!servers.length || (!busy && secs < 30 * 60)) return null;
+
+    const at = (t) => {
+      const sameDay = new Date(away.from).toDateString() === new Date(away.to).toDateString();
+      return new Date(t).toLocaleString([], sameDay ? { hour: 'numeric', minute: '2-digit' } : { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+    };
+    const lines = [];
+    if (s.portal?.gateway?.state === 'online') {
+      lines.push(s.portal.startedAt > away.from ? `Your mod portal kept ${displayName(bot)} online (it restarted at ${at(s.portal.startedAt)}).` : `Your mod portal kept ${displayName(bot)} online the whole time.`);
+    }
+    if (!busy) {
+      const where = servers.length > 3 ? `any of your ${servers.length} servers` : HomePage.joinWords(servers.map((srv) => srv.name), 'or');
+      lines.push(`Nothing needed doing in ${where}: no welcomes, goodbyes, auto roles, reaction roles, votes, announcements, YouTube posts or log entries.`);
+    } else {
+      for (const srv of servers) lines.push([h('b', null, srv.name), `: ${srv.parts.length ? HomePage.joinWords(srv.parts) : 'nothing needed doing'}.`]);
+    }
+
+    const gotIt = h('button', { class: 'btn sm ghost' }, 'Got it');
+    const card = h(
+      'div',
+      { class: 'card away-card' },
+      h('div', { class: 'card-head' }, icon('clock'), h('h3', null, 'While the app was closed'), h('span', { class: 'subtle' }, `${HomePage.awaySpan(secs)} · ${at(away.from)} to ${at(away.to)}`), gotIt),
+      lines.map((line) => h('p', null, line)),
+    );
+    gotIt.addEventListener('click', () => {
+      HomePage.awayDismissed.add(dismissKey);
+      card.remove();
+    });
+    return card;
+  },
+
+  // What the portal did for one server, as "2 welcomes", "1 vote"… (nothing: an empty list).
+  awayParts(counts) {
     const words = [
       ['welcome', 'welcome', 'welcomes'],
       ['goodbye', 'goodbye', 'goodbyes'],
@@ -501,15 +562,23 @@ const HomePage = {
       ['youtube', 'YouTube post', 'YouTube posts'],
       ['logs', 'log entry', 'log entries'],
     ];
-    const parts = words.filter(([key]) => counts[key] > 0).map(([key, one, many]) => `${fmtNum(counts[key])} ${counts[key] === 1 ? one : many}`);
-    const secs = (away.to - away.from) / 1000;
-    if (!parts.length && secs < 30 * 60) return null;
+    return words.filter(([key]) => counts[key] > 0).map(([key, one, many]) => `${fmtNum(counts[key])} ${counts[key] === 1 ? one : many}`);
+  },
+
+  // "10 hours", "3 days"…
+  awaySpan(secs) {
     const [unit, size] = RELATIVE_STEPS.find(([, step]) => secs >= step && step >= 60) || ['minute', 60];
     const n = Math.max(1, Math.round(secs / size));
-    const closed = `While the app was closed (${n} ${unit}${n === 1 ? '' : 's'})`;
-    if (!parts.length) return `${closed}: nothing happened.`;
-    return `${closed}: ${parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}` : parts[0]}.`;
+    return `${n} ${unit}${n === 1 ? '' : 's'}`;
+  },
+
+  // "a, b and c"
+  joinWords(list, word = 'and') {
+    return list.length > 1 ? `${list.slice(0, -1).join(', ')} ${word} ${list.at(-1)}` : list[0] || '';
   },
 };
 
-onEvent('always:changed', (e) => HomePage.onAlwaysChanged?.(e));
+onEvent('always:changed', (e) => {
+  HomePage.onAlwaysChanged?.(e);
+  if (HomePage.awayEl && document.body.contains(HomePage.awayEl)) HomePage.fillAway();
+});
