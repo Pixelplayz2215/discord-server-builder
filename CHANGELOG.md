@@ -6,6 +6,8 @@ To release: add your changes as `- ` lines under **Unreleased**, then run `npm r
 
 ## Unreleased
 
+## 1.2.5 (2026-11-01)
+
 - **"While the app was closed" is easy to find.** What your mod portal did while the app was closed now shows in a card at the top of the Home page, under Your bots, instead of in small print at the bottom of the **Run 24/7** card. It says how long the app was closed, whether the portal kept your bot online the whole time, and what it did in each server. A quiet night says exactly what wasn't needed instead of "nothing happened". Press **Got it** to put it away.
 - **The time away is right after a shutdown.** When Windows shuts down or restarts with the app still open, the card now counts from then, not from the last time something happened.
 
