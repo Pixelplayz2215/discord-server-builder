@@ -5,9 +5,11 @@
 // by the app (src/main/main.js) and the mod portal (server/always.js), so no Electron here.
 const crypto = require('crypto');
 const { cleanEmoji, sameEmoji, emojiPath, emojiText } = require('./reactionroles');
+const { LIMITS: CARD } = require('./announce');
 
 const EMOJI = '🎉'; // the title's, and the entry emoji unless another is picked
-const LIMITS = { prize: 200, description: 2000, winners: 20 };
+const RAN_BY = 'Ran by ';
+const LIMITS = { prize: 200, description: 2000, winners: 20, ranBy: CARD.author - RAN_BY.length };
 const MISS_MARGIN_MS = 5 * 60 * 1000; // a scheduled post isn't sent this close to (or after) its enter-by time
 const RETRY_MS = 10 * 60 * 1000; // a draw that failed is tried again after this
 const MAX_CHECKS = 500; // members looked up in one draw, at most
@@ -45,6 +47,16 @@ function normalize(input, now = Date.now()) {
     if (endsAt <= start.at) throw problem('The enter-by time must come after it is posted.');
   } else if (endsAt <= now) throw problem('The enter-by time has already passed. Pick a time in the future.');
   const color = Number(input?.color);
+  const fields = (Array.isArray(input?.fields) ? input.fields : [])
+    .map((f) => ({ name: str(f?.name, CARD.fieldName), value: str(f?.value, CARD.fieldValue), inline: !!f?.inline }))
+    .filter((f) => f.name || f.value)
+    .slice(0, CARD.fields);
+  // Who runs it, shown at the top as "Ran by …" (typing "Ran by" too doesn't double it).
+  const ranBy = { name: str(input?.ranBy?.name, CARD.author).replace(/^ran by\s*:?\s*/i, '').slice(0, LIMITS.ranBy), icon: url(input?.ranBy?.icon, 'Ran by picture link') };
+  const footer = str(input?.footer, CARD.footer);
+  const description = str(input?.description, LIMITS.description);
+  const length = prize.length + description.length + footer.length + (ranBy.name ? RAN_BY.length + ranBy.name.length : 0) + fields.reduce((n, f) => n + f.name.length + f.value.length, 0) + 300; // and the lines the bot adds
+  if (length > CARD.embedTotal) throw problem(`A giveaway card can hold about ${(CARD.embedTotal - 300).toLocaleString('en-US')} characters in all; this one has ${(length - 300).toLocaleString('en-US')}.`);
   return {
     id: input?.id ? String(input.id) : null,
     guildId: isId(input?.guildId) ? String(input.guildId) : '',
@@ -52,7 +64,11 @@ function normalize(input, now = Date.now()) {
     channelId: isId(input?.channelId) ? String(input.channelId) : '',
     channelName: str(input?.channelName, 100),
     prize,
-    description: str(input?.description, LIMITS.description),
+    description,
+    ranBy,
+    fields,
+    thumbnail: url(input?.thumbnail, 'small picture link'),
+    footer,
     winners,
     endsAt,
     requiredRole: isId(input?.requiredRole) ? String(input.requiredRole) : '',
@@ -67,12 +83,16 @@ function normalize(input, now = Date.now()) {
   };
 }
 
-// The card both messages share: the prize, its text and picture. image: { name, data, type } for a
-// picture picked from the PC, else null.
+// The card both messages share: who runs it, the prize, its text, fields and pictures, and the
+// footer. image: { name, data, type } for a picture picked from the PC, else null.
 function card(g, image, lines) {
-  const embed = { color: g.color, title: `${EMOJI} ${g.prize}`, description: [g.description, g.description ? '' : null, ...lines].filter((l) => l !== null).join('\n') };
+  const embed = { color: g.color, title: `${EMOJI} ${g.prize}`, description: [...(g.description ? [g.description, ''] : []), ...lines].join('\n') };
+  if (g.ranBy?.name) embed.author = g.ranBy.icon ? { name: RAN_BY + g.ranBy.name, icon_url: g.ranBy.icon } : { name: RAN_BY + g.ranBy.name };
+  if (g.fields?.length) embed.fields = g.fields.map((f) => ({ name: f.name || '​', value: f.value || '​', inline: f.inline }));
   if (image) embed.image = { url: `attachment://${image.name}` };
   else if (g.image) embed.image = { url: g.image };
+  if (g.thumbnail) embed.thumbnail = { url: g.thumbnail };
+  if (g.footer) embed.footer = { text: g.footer };
   return embed;
 }
 

@@ -202,6 +202,11 @@ const GiveawaysPage = {
       : { botId: owners[0].id, guildId: '', guildName: '', channelId: '', prize: '', description: '', winners: 1, endsAt: nextHour + 7 * 86400e3, requiredRole: '', ping: 'none', emoji: { name: '🎉' }, color: 0xfaa61a, image: '', imageFile: '', start: { on: false, at: nextHour } };
     if (!App.bot(draft.botId)) draft.botId = owners[0].id;
     if (!draft.emoji?.name) draft.emoji = { name: '🎉' };
+    // Giveaways from before these existed.
+    draft.ranBy ||= { name: '', icon: '' };
+    draft.fields ||= [];
+    draft.thumbnail ||= '';
+    draft.footer ||= '';
     const posted = !!existing?.messageId;
     let roles = [];
     let emojis = []; // the server's own, for the emoji picker
@@ -298,6 +303,24 @@ const GiveawaysPage = {
       );
     }
 
+    // Fields on the card, like an announcement's: a title and text, side by side or full width.
+    const fieldsHost = h('div', { class: 'stack', style: { gap: '8px' } });
+    const addField = h('button', { type: 'button', class: 'btn sm' }, icon('plus'), 'Add a field');
+    addField.addEventListener('click', () => { draft.fields.push({ name: '', value: '', inline: true }); drawFields(); drawPreview(); });
+    function drawFields() {
+      fieldsHost.replaceChildren(
+        ...draft.fields.map((f, i) =>
+          h(
+            'div',
+            { class: 'announce-field' },
+            h('div', { class: 'grow stack', style: { gap: '6px' } }, input(f, 'name', { placeholder: 'Field title', maxlength: 256 }), input(f, 'value', { rows: 2, placeholder: 'Field text', maxlength: 1024 })),
+            h('div', { class: 'stack', style: { gap: '6px', alignItems: 'flex-end' } }, switchEl(f.inline, (v) => { f.inline = v; drawPreview(); }, 'Side by side'), h('button', { type: 'button', class: 'icon-btn danger', title: 'Remove', onclick: () => { draft.fields.splice(i, 1); drawFields(); drawPreview(); } }, icon('x'))),
+          ),
+        ),
+      );
+      addField.disabled = draft.fields.length >= ANNOUNCE_MAX_FIELDS;
+    }
+
     // When to post it
     const startInput = h('input', { type: 'datetime-local', class: 'input', value: toLocalInput(draft.start.at || Date.now() + 3600e3) });
     startInput.addEventListener('change', () => { draft.start.at = fromLocalInput(startInput.value); });
@@ -321,27 +344,41 @@ const GiveawaysPage = {
       const mention = (r) => h('span', { class: 'rr-mention', style: r?.color ? { color: roleColor(r) } : null }, `@${r?.name || 'role'}`);
       const parts = [h('div', { class: 'rr-author' }, h('img', { class: 'avatar', src: userAvatar(bot, 64), width: 32, height: 32, alt: '' }), h('b', null, displayName(bot)), h('span', { class: 'badge peri' }, 'APP'))];
       if (ping) parts.push(h('div', { class: 'rr-text' }, h('span', { class: 'rr-mention', style: pingRole?.color ? { color: roleColor(pingRole) } : null }, ping)));
+      const ranBy = draft.ranBy.name.trim().replace(/^ran by\s*:?\s*/i, '');
+      const fields = draft.fields.filter((f) => f.name || f.value);
       parts.push(
         h(
           'div',
           { class: 'rr-embed announce-embed', style: { borderLeftColor: colour.value } },
-          h('div', { class: 'rr-title' }, `🎉 ${draft.prize.trim() || 'Your prize'}`),
           h(
             'div',
-            { class: 'rr-text' },
-            draft.description.trim() ? [Updater.inline(draft.description.trim()), h('br'), h('br')] : null,
-            'React with ',
-            emojiNode(draft.emoji, 16),
-            ' to enter!',
-            h('br'),
-            h('b', null, 'Winners:'),
-            ` ${n}`,
-            h('br'),
-            h('b', null, 'Enter by:'),
-            ` ${when} (${draft.endsAt ? fmtRelative(draft.endsAt) : '…'})`,
-            role ? [h('br'), 'Only members with ', mention(role), ' can win.'] : null,
+            { class: 'announce-embed-top' },
+            h(
+              'div',
+              { class: 'grow', style: { minWidth: 0 } },
+              ranBy ? h('div', { class: 'announce-author' }, draft.ranBy.icon ? h('img', { src: draft.ranBy.icon, alt: '' }) : null, `Ran by ${ranBy}`) : null,
+              h('div', { class: 'rr-title' }, `🎉 ${draft.prize.trim() || 'Your prize'}`),
+              h(
+                'div',
+                { class: 'rr-text' },
+                draft.description.trim() ? [Updater.inline(draft.description.trim()), h('br'), h('br')] : null,
+                'React with ',
+                emojiNode(draft.emoji, 16),
+                ' to enter!',
+                h('br'),
+                h('b', null, 'Winners:'),
+                ` ${n}`,
+                h('br'),
+                h('b', null, 'Enter by:'),
+                ` ${when} (${draft.endsAt ? fmtRelative(draft.endsAt) : '…'})`,
+                role ? [h('br'), 'Only members with ', mention(role), ' can win.'] : null,
+              ),
+              fields.length ? h('div', { class: 'announce-fields' }, fields.map((f) => h('div', { class: f.inline ? 'inline' : 'full' }, h('b', null, f.name), h('div', { class: 'rr-text' }, Updater.inline(f.value))))) : null,
+            ),
+            draft.thumbnail.trim() ? h('img', { class: 'announce-thumb', src: draft.thumbnail.trim(), alt: '' }) : null,
           ),
           image ? h('img', { class: 'announce-image', src: image, alt: '' }) : null,
+          draft.footer.trim() ? h('div', { class: 'poll-footer' }, draft.footer.trim()) : null,
         ),
         h('div', { class: 'row wrap', style: { gap: '6px', marginTop: '8px' } }, h('span', { class: 'rr-reaction' }, emojiNode(draft.emoji, 16), h('span', null, '1'))),
       );
@@ -350,6 +387,7 @@ const GiveawaysPage = {
 
     loadGuilds();
     drawImage();
+    drawFields();
     drawPreview();
 
     const payload = () => ({
@@ -395,11 +433,21 @@ const GiveawaysPage = {
           h('div', { class: 'grid cols-2', style: { gap: '12px' } }, field('Post in', channelSel), field('Ping', pingSel)),
           posted ? h('p', { class: 'hint', style: { margin: 0 } }, "It's already posted, so it stays in its channel. Saving updates the post.") : null,
           field('Prize', input(draft, 'prize', { maxlength: 200, placeholder: 'e.g. 1 month of Discord Nitro' })),
-          field('Text (optional)', input(draft, 'description', { rows: 3, maxlength: 2000, placeholder: 'How to claim it, rules, who it\'s from…' }), 'Discord formatting works: **bold**, *italics*, [links](https://…) and more.'),
+          h('div', { class: 'grid cols-2', style: { gap: '12px' } }, field('Ran by (optional)', input(draft.ranBy, 'name', { maxlength: 248, placeholder: 'e.g. Meg (mod)' }), 'Shown at the top as "Ran by …".'), field('Ran by picture (link)', input(draft.ranBy, 'icon', { placeholder: 'https://…', maxlength: 2048 }), 'A small round picture next to it.')),
+          field('Text (optional)', input(draft, 'description', { rows: 3, maxlength: 2000, placeholder: 'How to claim it, rules…' }), 'Discord formatting works: **bold**, *italics*, [links](https://…) and more.'),
           h('div', { class: 'grid cols-2', style: { gap: '12px' } }, field('Winners', winnersInput, `1 to ${GIVEAWAY_MAX_WINNERS}`), field('Enter by', endsInput, "The winners are picked then, at your PC's time.")),
           field('Who can win', roleSel, 'Anyone can enter, but only members with this role can be picked.'),
           h('div', { class: 'grid cols-2', style: { gap: '12px' } }, field('Enter with', emojiField, posted ? 'Members already react with it, so it stays.' : 'Members react with this to enter. Server emojis work too.'), field('Colour', colour)),
-          field('Picture (optional)', imageHost),
+          h(
+            'div',
+            { class: 'ticket-section' },
+            h('div', { class: 'ticket-section-title' }, 'More on the card (optional)'),
+            h('div', { class: 'row' }, h('div', { class: 'label grow' }, 'Fields'), addField),
+            fieldsHost,
+            field('Big picture', imageHost),
+            field('Small picture, top right (link)', input(draft, 'thumbnail', { placeholder: 'https://…', maxlength: 2048 })),
+            field('Footer', input(draft, 'footer', { maxlength: 2048, placeholder: 'Small text at the bottom of the card' })),
+          ),
           posted ? null : h('div', { class: 'ticket-section' }, switchEl(draft.start.on, (v) => { draft.start.on = v; startBox.style.display = v ? '' : 'none'; }, 'Post it later'), startBox, h('p', { class: 'hint', style: { margin: 0 } }, 'Scheduled giveaways are posted while this app is open or in the tray, or by your mod portal with Run 24/7. Winners are picked the same way.')),
         ),
         h('div', null, h('div', { class: 'label', style: { marginBottom: '8px' } }, 'Preview'), preview),
