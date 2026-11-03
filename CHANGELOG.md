@@ -6,6 +6,8 @@ To release: add your changes as `- ` lines under **Unreleased**, then run `npm r
 
 ## Unreleased
 
+## 1.2.7 (2026-11-02)
+
 - **More on giveaway cards.** A giveaway can say who runs it: **Ran by** shows at the top of the card, with a small round picture if you give a link. Like announcements, the card can also have fields (each side by side or full width), a small picture at the top right and a footer. All of them stay on the card after the winners are picked.
 - **Fixed:** a giveaway with no text started its card with an empty line.
 
