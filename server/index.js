@@ -15,6 +15,7 @@ const { createVerify } = require('../src/main/autoroles');
 const Always = require('../src/main/always');
 const { createAlways } = require('./always');
 const { createCards } = require('./cards');
+const { createSysbot } = require('./sysbot');
 
 const MAX_BODY = 64 * 1024;
 const MAX_INTERACTION_BODY = 1024 * 1024;
@@ -88,8 +89,9 @@ function createLimiter(limit, windowMs) {
 const TRANSCRIPT_CSP = "default-src 'none'; img-src data: https://cdn.discordapp.com https://media.discordapp.net; style-src 'unsafe-inline'";
 
 // interactions is optional: without it the portal doesn't answer slash commands. always (24/7) is
-// optional too: without it /always/* isn't there.
-function createPortal({ config, rest, auth, guard, interactions, always = null, fetchImpl = fetch, caseLog = createCases(rest, { botId: once(async () => (await rest.request('GET', '/users/@me')).id) }) }) {
+// optional too: without it /always/* isn't there. So is sysbot (a Pixel's Sysbot stand-in): without it
+// /sysbot isn't there.
+function createPortal({ config, rest, auth, guard, interactions, always = null, sysbot = null, fetchImpl = fetch, caseLog = createCases(rest, { botId: once(async () => (await rest.request('GET', '/users/@me')).id) }) }) {
   const limitUser = createLimiter(120, 60000);
   const limitIp = createLimiter(30, 60000);
   let botUser = null;
@@ -263,6 +265,18 @@ function createPortal({ config, rest, auth, guard, interactions, always = null, 
         return sendJson(res, err.status || 500, { error: err.message || 'Something went wrong.' });
       }
     }
+
+    // Pixel's Sysbot: its check-ins, signed with its own bot token (server/sysbot.js).
+    if (req.method === 'POST' && url.pathname === '/sysbot' && sysbot) {
+      try {
+        limitIp(`sysbot:${ip}`);
+        const result = await sysbot.receive(await readBody(req, sysbot.MAX_BODY), req.headers);
+        return sendJson(res, result.status, result.body);
+      } catch (err) {
+        if (err.status !== 429) console.error('POST /sysbot:', err);
+        return sendJson(res, err.status || 500, { error: err.message || 'Something went wrong.' });
+      }
+    }
     if (req.method === 'GET' && url.pathname === '/') {
       return sendPage(res, 200, 'Mod portal is running', 'Moderators: open Discord Server Builder, choose "Sign in with Discord" and paste this page\'s address.');
     }
@@ -342,13 +356,18 @@ if (require.main === module) {
   let always = null;
   const cards = createCards({ fileData: (name) => always.fileData(name) });
   always = createAlways({ rest, token: config.botToken, publicUrl: config.publicUrl, cards });
-  const server = createPortal({ config, rest, auth: createAuth(config), guard, caseLog, always, interactions: createInteractions({ rest, guard, caseLog, tickets, always, verify: createVerify({ rest }) }) });
+  // Pixel's Sysbot (optional): answers for its bot while that bot's PC is off.
+  const sysbotToken = process.env.SYSBOT_BOT_TOKEN?.trim().replace(/^Bot\s+/i, '');
+  const sysbot = sysbotToken ? createSysbot({ token: sysbotToken, publicUrl: config.publicUrl }) : null;
+  const server = createPortal({ config, rest, auth: createAuth(config), guard, caseLog, always, sysbot, interactions: createInteractions({ rest, guard, caseLog, tickets, always, verify: createVerify({ rest }) }) });
   server.listen(config.port, () => {
     console.log(`Mod portal listening on port ${config.port} (${config.publicUrl})`);
     always.start().catch((err) => console.error('24/7: reading the settings failed:', err.message));
+    sysbot?.start();
   });
   // Render stops the portal on a deploy or when it sleeps: save what 24/7 did first.
   process.on('SIGTERM', () => {
+    sysbot?.close();
     always
       .close()
       .catch(() => {})

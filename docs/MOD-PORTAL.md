@@ -164,6 +164,19 @@ How it works:
 - **Welcome cards.** The portal draws cards with the same code as the app. Fonts only Windows has (Segoe UI, Arial Black, Georgia, Impact, Comic Sans, Consolas) are drawn with Poppins there.
 - **Turning it off.** Press **Turn off** on the Home page: the app keeps what the portal did and runs the features again itself.
 
+### 10. Pixel's Sysbot (optional)
+
+If you run a Pixel's Sysbot trade bot, your portal can stand in for it while its PC is off (a power cut, no internet):
+
+1. In Render, open your portal's **Environment**, add `SYSBOT_BOT_TOKEN` with the **Sysbot's** bot token (not this portal's bot) and save. Render restarts the portal.
+2. In Pixel's Sysbot, go to **Settings → Discord → 24/7 Portal Settings**, paste your portal's address and restart the Sysbot.
+
+The Sysbot then checks in every 30 seconds. When the check-ins stop for 3 minutes, the portal posts the Sysbot's offline status report (with its role ping and STOP picture), marks its trade channels offline, and connects as the Sysbot's bot to answer `/status`, `/bot status`, `/ping`, `/help` and `/echo announce` (owner only); other commands say the trade bot is offline. When the Sysbot closes normally, the portal answers right away and the Sysbot posts its own report. It hands the bot back as soon as the Sysbot starts again.
+
+- **Your other bot isn't affected.** The Sysbot's bot has its own token and connection; this portal's slash commands keep coming through `/interactions` as before.
+- **Staying awake.** While it answers for the Sysbot, the portal visits its own `/health` every 10 minutes, like 24/7 does. It's the same service, so it uses no extra free hours.
+- **After a portal restart** (an update on Render), it waits for one check-in before it answers for the Sysbot again.
+
 ## Good to know
 
 - **Free plan sleeps.** Render's free plan sleeps after 15 minutes without traffic, and the first request after that takes about a minute. Discord only waits 3 seconds for a slash command, so the first command after a quiet spell fails with "The application did not respond". With **Run 24/7** on, the portal keeps itself awake. Otherwise, point a free uptime monitor at `<your portal>/health` every 10 minutes (the free plan's 750 hours a month cover one service running all month), or upgrade the service to a paid instance.
