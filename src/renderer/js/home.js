@@ -531,7 +531,7 @@ const HomePage = {
     }
     if (!busy) {
       const where = servers.length > 3 ? `any of your ${servers.length} servers` : HomePage.joinWords(servers.map((srv) => srv.name), 'or');
-      lines.push(`Nothing needed doing in ${where}: no welcomes, goodbyes, auto roles, reaction roles, votes, announcements, YouTube posts or log entries.`);
+      lines.push(`Nothing needed doing in ${where}: no welcomes, goodbyes, auto roles, reaction roles, votes, announcements, giveaways, YouTube posts or log entries.`);
     } else {
       for (const srv of servers) lines.push([h('b', null, srv.name), `: ${srv.parts.length ? HomePage.joinWords(srv.parts) : 'nothing needed doing'}.`]);
     }
@@ -559,6 +559,7 @@ const HomePage = {
       ['reactionRoles', 'reaction role', 'reaction roles'],
       ['votes', 'vote', 'votes'],
       ['announcements', 'announcement', 'announcements'],
+      ['giveaways', 'giveaway drawn', 'giveaways drawn'],
       ['youtube', 'YouTube post', 'YouTube posts'],
       ['logs', 'log entry', 'log entries'],
     ];

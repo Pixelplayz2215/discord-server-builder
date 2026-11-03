@@ -21,6 +21,7 @@ const tickets = require('./tickets');
 const stats = require('./stats');
 const autoRoles = require('./autoroles');
 const announce = require('./announce');
+const giveaways = require('./giveaways');
 const always = require('./always');
 const WelcomeCard = require('../shared/welcomecard');
 const pkg = require('../../package.json');
@@ -687,6 +688,44 @@ const announcer = announce.createScheduler({
   update: (a, patch) => updateAnnouncement(a.botId, a.guildId, a.id, patch),
 });
 
+/* ---------- Giveaways (posted and drawn while the app runs, including in the tray) ---------- */
+// Kept per server in servers.json as giveaways; pictures picked from the PC share the announcements
+// folder. With 24/7 on, the bot's portal posts and draws them instead, once it's new enough to.
+function allGiveaways() {
+  return store
+    .listGuildConfigs()
+    .filter(({ botId }) => store.getBot(botId) && !isMod(botId))
+    .flatMap(({ botId, guildId, config }) => (config.giveaways || []).map((g) => ({ ...g, botId, guildId })));
+}
+
+function findGiveaway(botId, guildId, id) {
+  const g = allGiveaways().find((x) => x.botId === botId && x.guildId === guildId && x.id === id);
+  if (!g) throw new Error("That giveaway isn't in the app any more.");
+  return g;
+}
+
+// Saves what the app did to a giveaway. rev counts up, so the portal goes by this from now on.
+function updateGiveaway(botId, guildId, id, patch) {
+  const list = store.getGuildConfig(botId, guildId).giveaways || [];
+  store.setGuildConfig(botId, guildId, { giveaways: list.map((g) => (g.id === id ? { ...g, ...patch, rev: (g.rev || 0) + 1 } : g)) });
+  send('giveaways:changed', {});
+}
+
+// The app posts and draws a bot's giveaways unless its portal does (24/7 on, and a portal new enough
+// to), and waits while it hasn't heard from the portal yet.
+function appRunsGiveaways(botId) {
+  if (!alwaysOn(botId)) return true;
+  const status = alwaysStatus.get(botId)?.status;
+  return !!status && !status.features?.includes('giveaways');
+}
+
+const giveawayEngine = giveaways.createGiveaways({
+  restFor: (g) => restFor(g.botId),
+  list: () => allGiveaways().filter((g) => always.giveawayOpen(g) && appRunsGiveaways(g.botId)),
+  update: (g, patch) => updateGiveaway(g.botId, g.guildId, g.id, patch),
+  imageFor: (g) => announceImage(g.imageFile),
+});
+
 /* ---------- Server stats (counter channels renamed while the app runs, including in the tray) ---------- */
 // Settings are kept per server in servers.json as stats.
 const statsEngines = new Map(); // botId -> stats engine
@@ -873,7 +912,7 @@ function noteAlways(botId, status, err = null) {
 // if 24/7 is turned off).
 function mergeAlways(botId, status) {
   // Pages are told only about what changed, so they don't redraw every minute for nothing.
-  const changed = { announcements: false, polls: false, stats: false };
+  const changed = { announcements: false, giveaways: false, polls: false, stats: false };
   for (const [guildId, s] of Object.entries(status.servers || {})) {
     if (!s.on) continue;
     const config = store.getGuildConfig(botId, guildId);
@@ -881,6 +920,7 @@ function mergeAlways(botId, status) {
     if (patch.polls) patch.polls = trimPolls(patch.polls);
     if (Object.keys(patch).length) store.setGuildConfig(botId, guildId, patch);
     if (patch.announcements) changed.announcements = true;
+    if (patch.giveaways) changed.giveaways = true;
     if (patch.polls) changed.polls = true;
 
     const problems = s.problems || {};
@@ -909,6 +949,7 @@ function mergeAlways(botId, status) {
     send('polls:changed');
   }
   if (changed.announcements) send('announce:changed', {});
+  if (changed.giveaways) send('giveaways:changed', {});
   if (changed.stats) send('stats:changed', { botId });
   if (alertsChanged) send('social:changed', {});
 }
@@ -1612,6 +1653,94 @@ const handlers = {
     return image ? `data:${image.type};base64,${image.data.toString('base64')}` : null;
   },
 
+  // Every giveaway of the owner's bots: running and scheduled ones first (soonest first), then drafts
+  // and missed ones, then ended ones (newest first).
+  'giveaways:list': () => {
+    const rank = (g) => (g.endedAt ? 2 : g.messageId || g.start?.on ? 0 : 1);
+    const next = (g) => (g.messageId ? g.endsAt : g.start?.at || 0);
+    return allGiveaways().sort((a, b) => rank(a) - rank(b) || (rank(a) === 0 ? next(a) - next(b) : (b.endedAt || b.createdAt || 0) - (a.endedAt || a.createdAt || 0)));
+  },
+
+  // Saves a giveaway (and when to post it). With post: true it's posted right away as well. One
+  // already posted stays in its channel, and its message is updated to match.
+  'giveaways:save': async (botId, input, { post = false } = {}) => {
+    if (!store.getBot(botId)) throw new Error('That bot is no longer in the app.');
+    if (isMod(botId)) ownerOnly();
+    if (alwaysOn(botId)) await pullAlways(botId); // so what the portal already did isn't done again
+    const before = input?.id ? allGiveaways().find((x) => x.botId === botId && x.id === String(input.id)) : null;
+    if (before?.endedAt) throw new Error("This giveaway has ended, so it can't be changed.");
+    // Once posted it stays where it is, with the emoji members already reacted with.
+    const g = giveaways.normalize(before?.messageId ? { ...input, guildId: before.guildId, channelId: before.channelId, channelName: before.channelName, emoji: before.emoji, start: { on: false } } : input);
+    if (!g.guildId || !g.channelId) throw new Error('Pick the server and channel.');
+    const list = store.getGuildConfig(botId, g.guildId).giveaways || [];
+    const previous = before ? list.find((x) => x.id === before.id) : null;
+    const saved = { ...previous, ...g, id: previous?.id || crypto.randomUUID(), createdAt: previous?.createdAt || Date.now(), rev: (previous?.rev || 0) + 1, missedAt: null, problem: null, retryAt: null };
+    store.setGuildConfig(botId, g.guildId, { giveaways: previous ? list.map((x) => (x.id === saved.id ? saved : x)) : [...list, saved] });
+    send('giveaways:changed', {});
+    if (saved.messageId) {
+      const { body, files } = giveaways.buildMessage(saved, announceImage(saved.imageFile));
+      await restFor(botId)
+        .request('PATCH', `/channels/${saved.channelId}/messages/${saved.messageId}`, { body: files ? body : { ...body, attachments: [] }, files })
+        .catch((err) => {
+          throw err.code === 10008 ? new Error('Saved, but the giveaway message was deleted in Discord.') : err;
+        });
+    } else if (post) {
+      updateGiveaway(botId, g.guildId, saved.id, await giveawayEngine.post({ ...saved, botId }));
+    }
+    return handlers['giveaways:list']();
+  },
+
+  // Posts a draft, scheduled or missed giveaway now.
+  'giveaways:post': async (botId, guildId, id) => {
+    if (isMod(botId)) ownerOnly();
+    if (alwaysOn(botId)) await pullAlways(botId);
+    const g = findGiveaway(botId, snowflake(guildId, 'server'), id);
+    if (g.messageId) throw new Error('This giveaway has already been posted.');
+    if (g.endsAt <= Date.now() + 60 * 1000) throw new Error('Its enter-by time has passed. Edit it to pick a new time first.');
+    updateGiveaway(botId, g.guildId, id, await giveawayEngine.post(g));
+    return handlers['giveaways:list']();
+  },
+
+  // Ends a running giveaway now and picks its winners.
+  'giveaways:end': async (botId, guildId, id) => {
+    if (isMod(botId)) ownerOnly();
+    if (alwaysOn(botId)) await pullAlways(botId);
+    const g = findGiveaway(botId, snowflake(guildId, 'server'), id);
+    if (!g.messageId) throw new Error("This giveaway hasn't been posted yet.");
+    if (g.endedAt) throw new Error('This giveaway has already ended.');
+    updateGiveaway(botId, g.guildId, id, await giveawayEngine.draw(g));
+    return handlers['giveaways:list']();
+  },
+
+  // Picks new winners for the ones given (and for any places left unfilled), from members who haven't won it before.
+  'giveaways:reroll': async (botId, guildId, id, replaceIds = []) => {
+    if (isMod(botId)) ownerOnly();
+    if (alwaysOn(botId)) await pullAlways(botId);
+    const g = findGiveaway(botId, snowflake(guildId, 'server'), id);
+    if (!g.endedAt || !g.messageId) throw new Error("This giveaway hasn't ended yet.");
+    const replace = (Array.isArray(replaceIds) ? replaceIds : []).map(String).filter((x) => (g.winnerList || []).some((w) => w.id === x));
+    if (!replace.length && (g.winnerList || []).length >= g.winners) throw new Error('Pick the winners to replace.');
+    updateGiveaway(botId, g.guildId, id, await giveawayEngine.draw(g, { replace }));
+    return handlers['giveaways:list']();
+  },
+
+  'giveaways:delete': async (botId, guildId, id, deleteMessage) => {
+    if (isMod(botId)) ownerOnly();
+    const gid = snowflake(guildId, 'server');
+    const list = store.getGuildConfig(botId, gid).giveaways || [];
+    const g = list.find((x) => x.id === id);
+    if (g?.messageId && deleteMessage) await restFor(botId).request('DELETE', `/channels/${g.channelId}/messages/${g.messageId}`).catch(() => {});
+    store.setGuildConfig(botId, gid, { giveaways: list.filter((x) => x.id !== id) });
+    return handlers['giveaways:list']();
+  },
+
+  // How many members have entered a running giveaway so far (null when Discord can't say).
+  'giveaways:entries': async (botId, guildId, id) => {
+    if (isMod(botId)) ownerOnly();
+    const g = findGiveaway(botId, snowflake(guildId, 'server'), id);
+    return g.messageId ? giveawayEngine.entryCount(g).catch(() => null) : 0;
+  },
+
   // Every server with stats counters, with its latest counts.
   'stats:list': () =>
     store
@@ -2260,9 +2389,11 @@ if (!app.requestSingleInstanceLock()) {
     // Server stats: each server is refreshed every 5 minutes (the engine paces itself).
     setTimeout(tickStats, 30 * 1000);
     setInterval(tickStats, 60 * 1000);
-    // Scheduled announcements go out within a few seconds of their time.
+    // Scheduled announcements and giveaways go out, and giveaways are drawn, within a few seconds of their time.
     setTimeout(() => announcer.tick().catch(() => {}), 10 * 1000);
     setInterval(() => announcer.tick().catch(() => {}), 5 * 1000);
+    setTimeout(() => giveawayEngine.tick().catch(() => {}), 10 * 1000);
+    setInterval(() => giveawayEngine.tick().catch(() => {}), 5 * 1000);
     setTimeout(runAutoBackups, 60 * 1000);
     setInterval(runAutoBackups, 30 * 60 * 1000);
     // Social alerts: YouTube channels are checked every 5 minutes and Twitch every minute (the watcher paces itself).

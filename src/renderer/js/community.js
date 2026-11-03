@@ -1,5 +1,5 @@
 // Community: the features that run in your servers (welcome cards, auto roles, reaction roles,
-// tickets, announcements, polls, server stats and social alerts) under one rail button, with a menu
+// tickets, announcements, giveaways, polls, server stats and social alerts) under one rail button, with a menu
 // to move between them. Each keeps its own page.
 
 const COMMUNITY_PAGES = [
@@ -8,6 +8,7 @@ const COMMUNITY_PAGES = [
   ['reactionroles', 'Reaction roles', 'smile', 'Roles members pick by reacting'],
   ['tickets', 'Tickets', 'ticket', 'Private support channels'],
   ['announce', 'Announcements', 'post', 'Build, schedule and repeat posts'],
+  ['giveaways', 'Giveaways', 'gift', 'Prizes with winners picked for you'],
   ['polls', 'Polls', 'poll', 'Votes with coloured bars'],
   ['stats', 'Server stats', 'stats', 'Live member, bot and role counts'],
   ['social', 'Social alerts', 'megaphone', 'YouTube uploads and Twitch streams'],
@@ -46,7 +47,7 @@ const Community = {
     } catch {
       // not remembered this time
     }
-    const pages = { welcome: WelcomePage, autoroles: AutoRolesPage, announce: AnnouncePage, reactionroles: ReactionRolesPage, tickets: TicketsPage, polls: PollsPage, stats: StatsPage, social: SocialPage };
+    const pages = { welcome: WelcomePage, autoroles: AutoRolesPage, announce: AnnouncePage, giveaways: GiveawaysPage, reactionroles: ReactionRolesPage, tickets: TicketsPage, polls: PollsPage, stats: StatsPage, social: SocialPage };
     return h(
       'div',
       { class: 'community' },

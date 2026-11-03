@@ -1,8 +1,9 @@
 // 24/7 on the mod portal. Once the owner turns it on in the app, the portal reads each server's
 // settings from its #bot-settings channel (src/main/always.js), connects the bot to Discord's gateway
 // and runs the same engines the app does: welcome and goodbye cards, auto roles, reaction roles, poll
-// bars, server logs, server stats, scheduled announcements and YouTube alerts. What it did (votes,
-// announcements sent, videos seen, and running totals of everything it posted or gave) is saved back
+// bars, server logs, server stats, scheduled announcements, giveaways and YouTube alerts. What it did
+// (votes, announcements sent, giveaways drawn, videos seen, and running totals of everything it
+// posted or gave) is saved back
 // to the channel, and the app reads it with a signed request. While it runs it calls its own /health every 10 minutes, so Render's free plan doesn't put
 // it to sleep. With 24/7 off it does none of this and only answers slash commands and buttons.
 const crypto = require('crypto');
@@ -15,6 +16,7 @@ const welcome = require('../src/main/welcome');
 const stats = require('../src/main/stats');
 const autoRoles = require('../src/main/autoroles');
 const announce = require('../src/main/announce');
+const giveaways = require('../src/main/giveaways');
 const social = require('../src/main/social');
 const WelcomeCard = require('../src/shared/welcomecard');
 
@@ -24,7 +26,8 @@ const ACTIVITY_SAVE_DELAY_MS = 5 * 60 * 1000; // the running totals alone change
 const CATCH_UP_DELAY_MS = 5000;
 const MAX_FOUND_POLLS = 50;
 
-const emptyState = () => ({ announcements: {}, polls: { found: [], counts: {}, forgotten: [] }, alerts: {}, activity: {} });
+const FEATURES = ['giveaways']; // what this portal runs beyond the first 24/7 release, so the app knows
+const emptyState = () => ({ announcements: {}, giveaways: {}, polls: { found: [], counts: {}, forgotten: [] }, alerts: {}, activity: {} });
 const withDefaults = (s) => ({ ...emptyState(), ...s, polls: { ...emptyState().polls, ...s?.polls } });
 
 // connect(onState, onEvent): the gateway connection (tests pass a fake).
@@ -202,6 +205,34 @@ function createAlways({ rest, token, publicUrl = '', cards = null, fetchImpl = f
     markDirty(a.guildId);
   }
 
+  // Giveaways still to post or draw, with what the portal already did to them.
+  function openGiveaways() {
+    return active()
+      .flatMap(([guildId, s]) =>
+        (s.bundle.giveaways || []).map((g) => {
+          const saved = s.state.giveaways[g.id];
+          return { ...(saved?.key === Always.giveawayKey(g) ? { ...g, ...saved.patch } : g), guildId };
+        }),
+      )
+      .filter(Always.giveawayOpen);
+  }
+
+  function updateGiveaway(g, patch) {
+    const s = servers.get(g.guildId);
+    const original = s?.bundle?.giveaways?.find((x) => x.id === g.id);
+    if (!original) return;
+    const key = Always.giveawayKey(original);
+    const saved = s.state.giveaways[g.id];
+    s.state.giveaways[g.id] = { key, updatedAt: now(), patch: { ...(saved?.key === key ? saved.patch : {}), ...patch } };
+    markDirty(g.guildId);
+  }
+
+  async function giveawayImage(g) {
+    const name = g.imageFile && bundleOf(g.guildId)?.files?.[g.imageFile];
+    const data = name ? await fileData(name) : null;
+    return data ? { name: g.imageFile, data, type: Always.FILE_TYPES[name.split('.').pop()] || 'image/png' } : null;
+  }
+
   async function sendAnnouncement(a) {
     let image = null;
     const name = a.embed?.imageFile && bundleOf(a.guildId)?.files?.[a.embed.imageFile];
@@ -281,6 +312,14 @@ function createAlways({ rest, token, publicUrl = '', cards = null, fetchImpl = f
         report: (guildId, state) => statsState.set(guildId, state),
       }),
       announcer: announce.createScheduler({ list: scheduledAnnouncements, send: sendAnnouncement, update: updateAnnouncement, now }),
+      giveaways: giveaways.createGiveaways({
+        restFor: () => rest,
+        list: openGiveaways,
+        update: updateGiveaway,
+        imageFor: giveawayImage,
+        ended: (g) => count(g.guildId, 'giveaways'),
+        now,
+      }),
       social: social.createSocialWatcher({
         getAlerts: youtubeAlerts,
         updateState: updateAlert,
@@ -328,6 +367,7 @@ function createAlways({ rest, token, publicUrl = '', cards = null, fetchImpl = f
   function startTimers() {
     stopTimers();
     repeat(every.announce, () => engines.announcer.tick());
+    repeat(every.announce, () => engines.giveaways.tick());
     repeat(every.stats, () => engines.stats.tick());
     repeat(every.social, () => engines.social.tick());
     repeat(every.reload, () => reload());
@@ -389,6 +429,7 @@ function createAlways({ rest, token, publicUrl = '', cards = null, fetchImpl = f
       for (const id of Object.keys(obj)) if (!ids.has(id)) delete obj[id];
     };
     keep(state.announcements, new Set(bundle.announcements.map((a) => a.id)));
+    keep(state.giveaways, new Set((bundle.giveaways || []).map((g) => g.id)));
     keep(state.alerts, new Set(bundle.alerts.map((a) => a.id)));
     const known = new Set(bundle.polls.map((p) => p.messageId));
     state.polls.found = state.polls.found.filter((p) => !known.has(p.messageId));
@@ -452,7 +493,7 @@ function createAlways({ rest, token, publicUrl = '', cards = null, fetchImpl = f
         state: s.state,
       };
     }
-    return { version: Always.VERSION, running: !!conn, gateway, startedAt, loadedAt, cards: !!cards?.available, servers: out };
+    return { version: Always.VERSION, features: FEATURES, running: !!conn, gateway, startedAt, loadedAt, cards: !!cards?.available, servers: out };
   }
 
   async function close() {
@@ -465,7 +506,7 @@ function createAlways({ rest, token, publicUrl = '', cards = null, fetchImpl = f
     await flush();
   }
 
-  return { start: () => reload(), reload, status, flush, close, fileData, tick: () => Promise.all([engines?.announcer.tick(), engines?.stats.tick(), engines?.social.tick()]) };
+  return { start: () => reload(), reload, status, flush, close, fileData, tick: () => Promise.all([engines?.announcer.tick(), engines?.giveaways.tick(), engines?.stats.tick(), engines?.social.tick()]) };
 }
 
 module.exports = { createAlways, EVERY };

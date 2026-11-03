@@ -58,7 +58,10 @@ function checkSigned(token, body, headers, now = Date.now()) {
 
 /* ---------- What the portal gets for a server ---------- */
 const hasAny = (b) =>
-  !!(b.autoroles?.enabled || b.greetings?.welcome?.enabled || b.greetings?.goodbye?.enabled || b.reactionRoles?.length || b.polls?.some((p) => !p.ended) || b.stats || b.logs?.enabled || b.announcements?.some((a) => a.schedule?.on) || b.alerts?.length);
+  !!(b.autoroles?.enabled || b.greetings?.welcome?.enabled || b.greetings?.goodbye?.enabled || b.reactionRoles?.length || b.polls?.some((p) => !p.ended) || b.stats || b.logs?.enabled || b.announcements?.some((a) => a.schedule?.on) || b.giveaways?.some(giveawayOpen) || b.alerts?.length);
+
+// A giveaway the portal still has to post or draw.
+const giveawayOpen = (g) => !g.endedAt && (g.messageId || g.start?.on);
 
 // One server's settings from the app's saved config. alerts: this server's YouTube alerts.
 function makeBundle({ guildId, config = {}, alerts = [], bot = {}, youtubeKey = '', on = true, now = Date.now() }) {
@@ -75,6 +78,7 @@ function makeBundle({ guildId, config = {}, alerts = [], bot = {}, youtubeKey = 
     stats: config.stats || null,
     logs: config.logs || null,
     announcements: config.announcements || [],
+    giveaways: config.giveaways || [],
     alerts: alerts.filter((a) => a.platform === 'youtube' && a.guildId === String(guildId)),
     youtubeKey: '',
   };
@@ -91,6 +95,7 @@ function bundleHash(bundle) {
     ...rest,
     polls: rest.polls.map(({ counts, endedAt, ...p }) => p),
     announcements: rest.announcements.map(({ lastSentAt, lastMessageId, lastChannelId, missedAt, problem, ...a }) => ({ ...a, schedule: a.schedule && { ...a.schedule, nextAt: null } })),
+    giveaways: (rest.giveaways || []).map(({ messageId, postedAt, endedAt, winnerList, pastWinnerIds, entries, missedAt, problem, retryAt, rerolledAt, start, ...g }) => g),
     alerts: rest.alerts.map(({ state, ...a }) => a),
   };
   return crypto.createHash('sha256').update(JSON.stringify(steady)).digest('hex');
@@ -104,6 +109,7 @@ function bundleFiles(bundle) {
     if (bundle.greetings?.[kind]?.enabled && bg?.type === 'image' && bg.image) names.add(bg.image);
   }
   for (const a of bundle.announcements) if (a.schedule?.on && a.embed?.imageFile) names.add(a.embed.imageFile);
+  for (const g of bundle.giveaways || []) if (giveawayOpen(g) && g.imageFile) names.add(g.imageFile);
   return [...names];
 }
 
@@ -111,9 +117,13 @@ function bundleFiles(bundle) {
 // counts while this is unchanged; a new time or a manual send in the app starts over.
 const announceKey = (a) => `${!!a.schedule?.on}|${a.schedule?.at || ''}|${a.schedule?.repeat || ''}`;
 
+// A giveaway as the app last changed it: each save, post, end or pick-again in the app counts up
+// rev, and the portal's record of what it did only counts while rev is unchanged.
+const giveawayKey = (g) => String(g.rev || 0);
+
 /* ---------- What the portal did, back in the app ---------- */
 // Changes to one server's saved config from the portal's status for it (null when nothing changed):
-// announcements sent, polls found with /poll or deleted, and votes.
+// announcements sent, giveaways posted and drawn, polls found with /poll or deleted, and votes.
 function mergeServer(config, server) {
   const st = server?.state || {};
   const patch = {};
@@ -128,6 +138,17 @@ function mergeServer(config, server) {
     return next;
   });
   if (announcementsChanged) patch.announcements = announcements;
+
+  let giveawaysChanged = false;
+  const giveaways = (config.giveaways || []).map((g) => {
+    const saved = st.giveaways?.[g.id];
+    if (!saved || saved.key !== giveawayKey(g)) return g;
+    const next = { ...g, ...saved.patch };
+    if (JSON.stringify(next) === JSON.stringify(g)) return g;
+    giveawaysChanged = true;
+    return next;
+  });
+  if (giveawaysChanged) patch.giveaways = giveaways;
 
   const pollState = st.polls || {};
   const forgotten = new Set(pollState.forgotten || []);
@@ -161,7 +182,7 @@ function mergeAlerts(alerts, botId, servers = {}) {
 }
 
 // What the portal counts for each server, as running totals in its saved state (state.activity).
-const ACTIVITY = ['welcome', 'goodbye', 'autoroles', 'reactionRoles', 'votes', 'announcements', 'youtube', 'logs'];
+const ACTIVITY = ['welcome', 'goodbye', 'autoroles', 'reactionRoles', 'votes', 'announcements', 'giveaways', 'youtube', 'logs'];
 
 // What the portal did between two of its running totals. A total that went down started again
 // from 0 (its saved state was lost), so all of it is new.
@@ -299,6 +320,8 @@ module.exports = {
   bundleHash,
   bundleFiles,
   announceKey,
+  giveawayKey,
+  giveawayOpen,
   mergeServer,
   mergeAlerts,
   ACTIVITY,
