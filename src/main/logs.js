@@ -1,11 +1,15 @@
 // Server logs: turns the bot's gateway events into embeds posted in a log channel, while the app is
-// open or in the tray. Recent messages are kept in memory so deleted and edited ones can be shown.
-// No Electron here, so it can be tested with fake events.
+// open or in the tray. Recent messages are kept in memory so deleted and edited ones can be shown:
+// everything posted while the bot is connected, bots' posts included, and the last few in each
+// channel from when it connects (so a restart doesn't forget them). No Electron here, so it can be
+// tested with fake events.
 const { isLocked, lockFromAudit, parseAuditReason } = require('../shared/modlog');
 
 const INTENTS = { GUILDS: 1 << 0, GUILD_MEMBERS: 1 << 1, GUILD_MODERATION: 1 << 2, GUILD_MESSAGES: 1 << 9, MESSAGE_CONTENT: 1 << 15 };
 const EVENT_GROUPS = ['members', 'moderation', 'messages', 'server'];
-const MAX_MESSAGES = 5000;
+const MAX_MESSAGES = 20000;
+const RECENT_PER_CHANNEL = 50; // read from each channel when the bot connects
+const TEXT_CHANNELS = new Set([0, 5]); // text and announcement channels
 const MAX_MEMBERS = 50000;
 const NEW_ACCOUNT_MS = 7 * 86400000;
 const FLUSH_MS = 2000;
@@ -103,6 +107,35 @@ function createServerLogger({ rest, configFor, onError = () => {}, posted = () =
     for (const m of d.members || []) rememberMember(d.id, m);
   };
 
+  // A message, as the log needs it if it's deleted or edited later. Bots' and webhooks' posts are
+  // kept too (their edits aren't logged: bots edit their own posts all the time).
+  const messageOf = (guildId, m) => {
+    const card = m.embeds?.[0];
+    return {
+      guildId,
+      channelId: m.channel_id,
+      author: m.author,
+      bot: !!m.author?.bot || !!m.webhook_id,
+      webhook: !!m.webhook_id,
+      content: m.content || '',
+      card: card ? card.title || card.author?.name || card.description || '' : '',
+      attachments: (m.attachments || []).map((a) => a.filename),
+    };
+  };
+
+  // The last few messages in each channel, read when the bot connects, so a message posted before a
+  // restart is still known if it's deleted. Ones it saw being posted since stay as they are.
+  async function rememberRecent(d, cfg) {
+    for (const c of d.channels || []) {
+      if (!TEXT_CHANNELS.has(c.type) || c.id === cfg.channelId) continue;
+      const list = await rest.request('GET', `/channels/${c.id}/messages`, { query: { limit: RECENT_PER_CHANNEL } }).catch(() => null);
+      if (!Array.isArray(list)) continue; // the bot can't read this channel
+      for (const m of [...list].reverse()) {
+        if (m?.id && !messages.has(m.id)) remember(messages, m.id, messageOf(d.id, { ...m, channel_id: c.id }), MAX_MESSAGES);
+      }
+    }
+  }
+
   function memberChanges(guildId, d, before) {
     const lines = [];
     if (before.nick !== (d.nick || null)) lines.push(`**Nickname:** ${before.nick ? escape(before.nick) : '*none*'} → ${d.nick ? escape(d.nick) : '*none*'}`);
@@ -165,7 +198,9 @@ function createServerLogger({ rest, configFor, onError = () => {}, posted = () =
   function handle(type, d) {
     if (!d) return;
     if (type === 'GUILD_CREATE') {
-      if (configFor(d.id)) cacheGuild(d);
+      const cfg = configFor(d.id);
+      if (cfg) cacheGuild(d);
+      if (cfg?.events.messages) rememberRecent(d, cfg).catch(() => {});
       return;
     }
     const guildId = d.guild_id;
@@ -175,15 +210,15 @@ function createServerLogger({ rest, configFor, onError = () => {}, posted = () =
 
     switch (type) {
       case 'MESSAGE_CREATE':
-        if (on.messages && !d.author?.bot && !d.webhook_id && d.channel_id !== cfg.channelId) {
-          remember(messages, d.id, { guildId, channelId: d.channel_id, author: d.author, content: d.content || '', attachments: (d.attachments || []).map((a) => a.filename) }, MAX_MESSAGES);
-        }
+        if (on.messages && d.channel_id !== cfg.channelId) remember(messages, d.id, messageOf(guildId, d), MAX_MESSAGES);
         break;
 
       case 'MESSAGE_UPDATE': {
         const before = messages.get(d.id);
-        if (!on.messages || !before || typeof d.content !== 'string' || d.content === before.content) break;
-        if (before.content || d.content) {
+        if (!on.messages || !before) break;
+        if (Array.isArray(d.embeds)) before.card = messageOf(guildId, { ...d, author: before.author }).card;
+        if (typeof d.content !== 'string' || d.content === before.content) break;
+        if (!before.bot && (before.content || d.content)) {
           post(guildId, {
             title: 'Message edited',
             color: COLORS.edit,
@@ -203,13 +238,18 @@ function createServerLogger({ rest, configFor, onError = () => {}, posted = () =
         const before = messages.get(d.id);
         messages.delete(d.id);
         if (!before) {
-          post(guildId, { title: 'Message deleted', color: COLORS.delete, description: `In <#${d.channel_id}>. It was sent before the bot started watching, so its author and text aren't known.` });
+          post(guildId, { title: 'Message deleted', color: COLORS.delete, description: `In <#${d.channel_id}>. It's older than the messages the bot remembers, so its author and text aren't known.` });
           break;
         }
-        const text = before.content || (cfg.content === false ? "*Text not available: Message Content Intent is off for this bot.*" : '*No text*');
-        const fields = [{ name: 'Message', value: clip(text, 1024) }];
+        // A bot's post is often just a card: its title stands in for the text. (People's posts only
+        // get cards from link previews.)
+        const card = before.bot ? before.card : '';
+        const noText = card ? `*A card:* ${escape(card)}` : cfg.content === false && !before.bot ? '*Text not available: Message Content Intent is off for this bot.*' : '*No text*';
+        const fields = [{ name: 'Message', value: clip(before.content || noText, 1024) }];
+        if (before.content && card) fields.push({ name: 'Card', value: clip(escape(card), 1024) });
         if (before.attachments.length) fields.push({ name: 'Attachments', value: clip(before.attachments.map(escape).join('\n'), 1024) });
-        post(guildId, { title: 'Message deleted', color: COLORS.delete, description: `${userLine(before.author)} in <#${d.channel_id}>`, fields });
+        const who = before.webhook ? ' · a webhook' : before.bot ? ' · a bot' : '';
+        post(guildId, { title: 'Message deleted', color: COLORS.delete, description: `${userLine(before.author)}${who} in <#${d.channel_id}>`, fields });
         break;
       }
 

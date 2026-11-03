@@ -7,6 +7,7 @@ To release: add your changes as `- ` lines under **Unreleased**, then run `npm r
 ## Unreleased
 
 - **Pixel's Sysbot stand-in.** Optional: with `SYSBOT_BOT_TOKEN` set, the portal posts a Pixel's Sysbot trade bot's offline status report when its PC stops checking in (a power cut, no internet) and answers its basic commands until it's back. See the mod portal guide, step 10.
+- **Fixed: deleted messages showed as "sent before the bot started watching".** Server logs now remember bots' and webhooks' posts too, so deleting one logs who posted it and its text (or its card's title), marked as a bot. They also remember the last 50 messages in each channel when the bot connects, so a message posted before the app or your portal restarted is still known when it's deleted. Bots' own edits still aren't logged, since bots edit their posts all the time.
 
 ## 1.2.8 (2026-11-03)
 
