@@ -144,7 +144,7 @@ const ReactionRolesPage = {
         h('h3', { class: 'grow ellipsis' }, p.title || p.message.split('\n')[0].slice(0, 80) || 'Reaction roles'),
         h('span', { class: 'badge peri' }, mode),
       ),
-      h('div', { class: 'subtle', style: { fontSize: 'calc(12rem / 14)', marginTop: '-4px' } }, `#${p.channelName || p.channelId} in ${p.guildName || 'a server'} · via ${bot ? displayName(bot) : 'a removed bot'}`),
+      h('div', { class: 'subtle', style: { fontSize: 'calc(12rem / 14)', marginTop: '-4px' } }, `#${p.channelName || p.channelId} in ${p.guildName || 'a server'} · via ${bot ? displayName(bot) : 'a removed bot'}${p.source === 'command' ? ` · made with /reactionroles${p.by?.name ? ` by ${p.by.name}` : ''}` : ''}`),
       h('div', { class: 'row wrap', style: { gap: '6px', marginTop: '12px' } }, p.pairs.map((pair) => h('span', { class: 'chip rr-chip' }, emojiNode(pair.emoji, 16), h('span', null, pair.roleName || 'role')))),
       p.problem ? h('div', { class: 'callout warn', style: { marginTop: '12px' } }, icon('alert'), h('div', null, p.problem)) : null,
       h(
@@ -381,3 +381,9 @@ function sameEmojiUi(a, b) {
   if (a?.id || b?.id) return String(a?.id) === String(b?.id);
   return String(a?.name).replace(/️/g, '') === String(b?.name).replace(/️/g, '');
 }
+
+// Reaction roles were posted with /reactionroles: refresh the list if it's showing.
+onEvent('rr:changed', () => {
+  if (App.route.page !== 'reactionroles' || document.querySelector('#modal-root .modal')) return;
+  ReactionRolesPage.load();
+});

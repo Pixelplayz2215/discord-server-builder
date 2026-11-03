@@ -342,7 +342,7 @@ if (require.main === module) {
   let always = null;
   const cards = createCards({ fileData: (name) => always.fileData(name) });
   always = createAlways({ rest, token: config.botToken, publicUrl: config.publicUrl, cards });
-  const server = createPortal({ config, rest, auth: createAuth(config), guard, caseLog, always, interactions: createInteractions({ rest, guard, caseLog, tickets, verify: createVerify({ rest }) }) });
+  const server = createPortal({ config, rest, auth: createAuth(config), guard, caseLog, always, interactions: createInteractions({ rest, guard, caseLog, tickets, always, verify: createVerify({ rest }) }) });
   server.listen(config.port, () => {
     console.log(`Mod portal listening on port ${config.port} (${config.publicUrl})`);
     always.start().catch((err) => console.error('24/7: reading the settings failed:', err.message));

@@ -426,7 +426,7 @@ const HomePage = {
           h(
             'p',
             null,
-            'Mods can also moderate right in Discord with /warn, /timeout, /kick, /ban, /unban, /cases, /purge, /lock, /unlock and /slowmode. Your portal answers them with the same permission rules, and records warnings and actions in a private #mod-cases channel. Everyone also gets /poll, which posts a poll with coloured bars (shown on the Polls page).',
+            'Mods can also moderate right in Discord with /warn, /timeout, /kick, /ban, /unban, /cases, /purge, /lock, /unlock and /slowmode. Your portal answers them with the same permission rules, and records warnings and actions in a private #mod-cases channel. Staff get /announce (an announcement card), /giveaway and /reactionroles; giveaways and reaction roles made this way need Run 24/7 (below) and show up on their pages here. Everyone also gets /poll, which posts a poll with coloured bars (shown on the Polls page).',
           ),
           botSelect
             ? h('div', { class: 'stack', style: { gap: '8px', marginTop: '12px' } }, h('div', { class: 'row wrap' }, botSelect, enableBtn, disableBtn), slashStatus)

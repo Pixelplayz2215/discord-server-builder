@@ -117,7 +117,7 @@ const GiveawaysPage = {
       'div',
       { class: 'card' },
       h('div', { class: 'card-head' }, icon('gift'), h('h3', { class: 'grow ellipsis' }, g.prize)),
-      h('div', { class: 'subtle', style: { fontSize: 'calc(12rem / 14)', marginTop: '-4px' } }, `#${g.channelName || g.channelId} in ${g.guildName || 'a server'} · via ${displayName(App.bot(g.botId))}${g.requiredRole ? ` · only @${g.requiredRoleName || 'a role'} can win` : ''}`),
+      h('div', { class: 'subtle', style: { fontSize: 'calc(12rem / 14)', marginTop: '-4px' } }, `#${g.channelName || g.channelId} in ${g.guildName || 'a server'} · via ${displayName(App.bot(g.botId))}${g.requiredRole ? ` · only @${g.requiredRoleName || 'a role'} can win` : ''}${g.source === 'command' ? ` · started with /giveaway${g.ranBy?.name ? ` by ${g.ranBy.name}` : ''}` : ''}`),
       h('div', { class: 'row wrap', style: { gap: '6px', marginTop: '10px' } }, badges),
       result,
       g.problem ? h('div', { class: 'callout warn', style: { marginTop: '10px' } }, icon('alert'), h('div', null, g.problem)) : null,

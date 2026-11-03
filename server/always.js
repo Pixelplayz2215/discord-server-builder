@@ -27,7 +27,11 @@ const CATCH_UP_DELAY_MS = 5000;
 const MAX_FOUND_POLLS = 50;
 
 const FEATURES = ['giveaways']; // what this portal runs beyond the first 24/7 release, so the app knows
-const emptyState = () => ({ announcements: {}, giveaways: {}, polls: { found: [], counts: {}, forgotten: [] }, alerts: {}, activity: {} });
+// foundGiveaways and foundPanels: giveaways and reaction roles made with /giveaway and /reactionroles,
+// kept here until the app has them in its settings.
+const emptyState = () => ({ announcements: {}, giveaways: {}, foundGiveaways: [], foundPanels: [], polls: { found: [], counts: {}, forgotten: [] }, alerts: {}, activity: {} });
+const MAX_FOUND = 50;
+const FOUND_SAVE_DELAY_MS = 2000; // a giveaway or reaction role made with a command is saved soon, in case the portal restarts
 const withDefaults = (s) => ({ ...emptyState(), ...s, polls: { ...emptyState().polls, ...s?.polls } });
 
 // connect(onState, onEvent): the gateway connection (tests pass a fake).
@@ -48,7 +52,8 @@ function createAlways({ rest, token, publicUrl = '', cards = null, fetchImpl = f
   let saveDue = 0;
   let index = { panels: new Map(), polls: new Map() };
 
-  const active = () => [...servers.entries()].filter(([, s]) => s.bundle?.on && s.bundle.used);
+  const inUse = (s) => s.bundle.used || s.state.foundPanels.length > 0 || s.state.foundGiveaways.some(Always.giveawayOpen);
+  const active = () => [...servers.entries()].filter(([, s]) => s.bundle?.on && inUse(s));
   const bundleOf = (guildId) => {
     const b = servers.get(guildId)?.bundle;
     return b?.on ? b : null;
@@ -135,7 +140,7 @@ function createAlways({ rest, token, publicUrl = '', cards = null, fetchImpl = f
     const pollIndex = new Map();
     for (const [guildId, s] of servers) {
       const b = s.bundle?.on ? s.bundle : null;
-      for (const p of b?.reactionRoles || []) if (p.messageId) panels.set(p.messageId, { ...p, guildId });
+      for (const p of [...(b?.reactionRoles || []), ...(b ? s.state.foundPanels : [])]) if (p.messageId && !panels.has(p.messageId)) panels.set(p.messageId, { ...p, guildId });
       const forgotten = new Set(s.state.polls.forgotten);
       for (const p of [...(b?.polls || []), ...s.state.polls.found]) {
         if (p.messageId && !forgotten.has(p.id) && !pollIndex.has(p.messageId)) pollIndex.set(p.messageId, { ...p, guildId });
@@ -184,6 +189,22 @@ function createAlways({ rest, token, publicUrl = '', cards = null, fetchImpl = f
     markDirty(found.guildId);
   }
 
+  // Whether 24/7 is on for a server, so the portal can look after what a command makes there.
+  const runs = (guildId) => !!servers.get(String(guildId))?.bundle?.on;
+
+  // Keeps a giveaway started with /giveaway (kind 'giveaway') or reaction roles posted with
+  // /reactionroles ('panel'): the portal draws it or hands out the roles from now on, and the app
+  // lists it once it reads the status.
+  function adopt(kind, guildId, item) {
+    const s = servers.get(String(guildId));
+    if (!s?.bundle?.on) throw new Error('24/7 is off for this server.');
+    const key = kind === 'giveaway' ? 'foundGiveaways' : 'foundPanels';
+    s.state[key] = [...s.state[key], item].slice(-MAX_FOUND);
+    rebuildIndex();
+    applyConnection();
+    markDirty(String(guildId), FOUND_SAVE_DELAY_MS);
+  }
+
   function scheduledAnnouncements() {
     return active()
       .flatMap(([guildId, s]) =>
@@ -205,20 +226,28 @@ function createAlways({ rest, token, publicUrl = '', cards = null, fetchImpl = f
     markDirty(a.guildId);
   }
 
-  // Giveaways still to post or draw, with what the portal already did to them.
+  // Giveaways still to post or draw, with what the portal already did to them, and ones started
+  // with /giveaway.
   function openGiveaways() {
     return active()
-      .flatMap(([guildId, s]) =>
-        (s.bundle.giveaways || []).map((g) => {
+      .flatMap(([guildId, s]) => [
+        ...(s.bundle.giveaways || []).map((g) => {
           const saved = s.state.giveaways[g.id];
           return { ...(saved?.key === Always.giveawayKey(g) ? { ...g, ...saved.patch } : g), guildId };
         }),
-      )
+        ...s.state.foundGiveaways.map((g) => ({ ...g, guildId })),
+      ])
       .filter(Always.giveawayOpen);
   }
 
   function updateGiveaway(g, patch) {
     const s = servers.get(g.guildId);
+    const found = s?.state.foundGiveaways.find((x) => x.id === g.id);
+    if (found) {
+      Object.assign(found, patch);
+      markDirty(g.guildId);
+      return;
+    }
     const original = s?.bundle?.giveaways?.find((x) => x.id === g.id);
     if (!original) return;
     const key = Always.giveawayKey(original);
@@ -435,6 +464,15 @@ function createAlways({ rest, token, publicUrl = '', cards = null, fetchImpl = f
     state.polls.found = state.polls.found.filter((p) => !known.has(p.messageId));
     keep(state.polls.counts, new Set([...bundle.polls, ...state.polls.found].map((p) => p.id)));
     state.polls.forgotten = state.polls.forgotten.filter((id) => bundle.polls.some((p) => p.id === id));
+    // Made with a command and now in the app's settings: the settings take over, keeping what the
+    // portal did to a giveaway (it may have been drawn after the app last looked).
+    const sameMessage = (list, item) => (list || []).find((x) => x.messageId === item.messageId);
+    for (const g of state.foundGiveaways) {
+      const saved = sameMessage(bundle.giveaways, g);
+      if (saved && !state.giveaways[saved.id]) state.giveaways[saved.id] = { key: Always.giveawayKey(saved), updatedAt: now(), patch: Always.giveawayResults(g) };
+    }
+    state.foundGiveaways = state.foundGiveaways.filter((g) => !sameMessage(bundle.giveaways, g));
+    state.foundPanels = state.foundPanels.filter((p) => !sameMessage(bundle.reactionRoles, p));
   }
 
   async function load(guildIds) {
@@ -506,7 +544,7 @@ function createAlways({ rest, token, publicUrl = '', cards = null, fetchImpl = f
     await flush();
   }
 
-  return { start: () => reload(), reload, status, flush, close, fileData, tick: () => Promise.all([engines?.announcer.tick(), engines?.giveaways.tick(), engines?.stats.tick(), engines?.social.tick()]) };
+  return { start: () => reload(), reload, status, flush, close, fileData, runs, adopt, tick: () => Promise.all([engines?.announcer.tick(), engines?.giveaways.tick(), engines?.stats.tick(), engines?.social.tick()]) };
 }
 
 module.exports = { createAlways, EVERY };

@@ -95,7 +95,7 @@ function bundleHash(bundle) {
     ...rest,
     polls: rest.polls.map(({ counts, endedAt, ...p }) => p),
     announcements: rest.announcements.map(({ lastSentAt, lastMessageId, lastChannelId, missedAt, problem, ...a }) => ({ ...a, schedule: a.schedule && { ...a.schedule, nextAt: null } })),
-    giveaways: (rest.giveaways || []).map(({ messageId, postedAt, endedAt, winnerList, pastWinnerIds, entries, missedAt, problem, retryAt, rerolledAt, start, ...g }) => g),
+    giveaways: (rest.giveaways || []).map((g) => Object.fromEntries(Object.entries(g).filter(([k]) => !GIVEAWAY_RESULTS.includes(k)))),
     alerts: rest.alerts.map(({ state, ...a }) => a),
   };
   return crypto.createHash('sha256').update(JSON.stringify(steady)).digest('hex');
@@ -121,9 +121,14 @@ const announceKey = (a) => `${!!a.schedule?.on}|${a.schedule?.at || ''}|${a.sche
 // rev, and the portal's record of what it did only counts while rev is unchanged.
 const giveawayKey = (g) => String(g.rev || 0);
 
+// What happened to a giveaway, as opposed to its settings.
+const GIVEAWAY_RESULTS = ['messageId', 'postedAt', 'endedAt', 'winnerList', 'pastWinnerIds', 'entries', 'missedAt', 'problem', 'retryAt', 'rerolledAt', 'start'];
+const giveawayResults = (g) => Object.fromEntries(GIVEAWAY_RESULTS.filter((k) => k in g).map((k) => [k, g[k]]));
+
 /* ---------- What the portal did, back in the app ---------- */
 // Changes to one server's saved config from the portal's status for it (null when nothing changed):
-// announcements sent, giveaways posted and drawn, polls found with /poll or deleted, and votes.
+// announcements sent, giveaways posted and drawn, giveaways and reaction roles made with commands,
+// polls found with /poll or deleted, and votes.
 function mergeServer(config, server) {
   const st = server?.state || {};
   const patch = {};
@@ -148,7 +153,21 @@ function mergeServer(config, server) {
     giveawaysChanged = true;
     return next;
   });
+  // Giveaways started with /giveaway, and what the portal did to them since.
+  for (const found of st.foundGiveaways || []) {
+    const i = giveaways.findIndex((g) => g.messageId === found.messageId);
+    const next = i < 0 ? found : { ...giveaways[i], ...giveawayResults(found) };
+    if (i >= 0 && JSON.stringify(next) === JSON.stringify(giveaways[i])) continue;
+    if (i < 0) giveaways.push(next);
+    else giveaways[i] = next;
+    giveawaysChanged = true;
+  }
   if (giveawaysChanged) patch.giveaways = giveaways;
+
+  // Reaction roles posted with /reactionroles.
+  const panels = config.reactionRoles || [];
+  const newPanels = (st.foundPanels || []).filter((found) => !panels.some((p) => p.messageId === found.messageId));
+  if (newPanels.length) patch.reactionRoles = [...panels, ...newPanels];
 
   const pollState = st.polls || {};
   const forgotten = new Set(pollState.forgotten || []);
@@ -322,6 +341,7 @@ module.exports = {
   announceKey,
   giveawayKey,
   giveawayOpen,
+  giveawayResults,
   mergeServer,
   mergeAlerts,
   ACTIVITY,

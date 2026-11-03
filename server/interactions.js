@@ -2,15 +2,20 @@
 // points at this portal's /interactions. Discord signs every request; unsigned ones are refused.
 // Each mod command goes through the same checks as the app (guard.js): the mod's own Discord
 // permissions, and only members ranked below them. Member actions are recorded in #mod-cases.
-// /poll is for anyone who can post polls in the channel. Ticket buttons go to src/main/tickets.js and
-// Verify buttons to src/main/autoroles.js.
+// /poll is for anyone who can post polls in the channel. /announce and /giveaway are for members
+// with Manage Messages there, and /reactionroles for members with Manage Roles (only roles below
+// their own). Giveaways and reaction roles made with a command are handed to 24/7 (server/always.js),
+// which draws them or hands out the roles and tells the app. Ticket buttons go to
+// src/main/tickets.js and Verify buttons to src/main/autoroles.js.
 const crypto = require('crypto');
 const { purgeMessages, lockWithNotice } = require('../src/main/builder');
-const { DURATIONS, DELETE_WINDOWS, SLOWMODES, labelFor } = require('../src/main/commands');
+const { DURATIONS, DELETE_WINDOWS, SLOWMODES, MAX_ROLE_PAIRS, labelFor } = require('../src/main/commands');
 const { auditReason, P } = require('./guard');
 const { createCases, notifyUser, warnMember, TYPES, escapeMarkdown } = require('../src/main/cases');
 const { normalizePoll, pollMessage, parseEmojiInput, emojiChoices, MAX_OPTIONS } = require('../src/main/polls');
-const { emojiPath } = require('../src/main/reactionroles');
+const { emojiPath, normalizePanel, panelMessage } = require('../src/main/reactionroles');
+const announce = require('../src/main/announce');
+const giveaways = require('../src/main/giveaways');
 
 const INTERACTION = { PING: 1, COMMAND: 2, COMPONENT: 3, AUTOCOMPLETE: 4, MODAL: 5 };
 const RESPONSE = { PONG: 1, MESSAGE: 4, DEFERRED: 5, CHOICES: 8 };
@@ -20,8 +25,11 @@ const MAX_CLOCK_SKEW_S = 300;
 const SHOWN_CASES = 15;
 const DMS_CLOSED = "Their DMs are closed, so they weren't told.";
 const EMOJI_CACHE_MS = 60000;
-// Channel permissions /poll reads from the interaction itself (the member's and the bot's).
-const CAN = { ADD_REACTIONS: 1n << 6n, VIEW_CHANNEL: 1n << 10n, SEND_MESSAGES: 1n << 11n, EMBED_LINKS: 1n << 14n, READ_HISTORY: 1n << 16n, SEND_IN_THREADS: 1n << 38n, SEND_POLLS: 1n << 49n };
+// Channel permissions /poll, /announce, /giveaway and /reactionroles read from the interaction itself
+// (the member's and the bot's).
+const CAN = { ADD_REACTIONS: 1n << 6n, VIEW_CHANNEL: 1n << 10n, SEND_MESSAGES: 1n << 11n, MANAGE_MESSAGES: 1n << 13n, EMBED_LINKS: 1n << 14n, READ_HISTORY: 1n << 16n, MENTION_EVERYONE: 1n << 17n, MANAGE_ROLES: 1n << 28n, SEND_IN_THREADS: 1n << 38n, SEND_POLLS: 1n << 49n };
+// The commands whose emoji boxes suggest emojis as you type, and which boxes.
+const EMOJI_BOXES = { poll: /^emoji\d$/, giveaway: /^emoji$/, reactionroles: /^emoji\d$/ };
 
 const avatarUrl = (u) => (u.avatar ? `https://cdn.discordapp.com/avatars/${u.id}/${u.avatar}.png?size=64` : `https://cdn.discordapp.com/embed/avatars/${Number((BigInt(u.id) >> 22n) % 6n)}.png`);
 
@@ -57,12 +65,14 @@ const once = (fn) => {
 const reply = (content) => ({ status: 200, body: { type: RESPONSE.MESSAGE, data: { content, flags: EPHEMERAL, allowed_mentions: { parse: [] } } } });
 
 // caseLog: the portal's shared case log (one is made if it isn't passed). tickets and verify answer
-// ticket buttons and forms and Verify buttons, when given.
-function createInteractions({ rest, guard, tickets = null, verify = null, caseLog = createCases(rest, { botId: once(async () => (await rest.request('GET', '/users/@me')).id) }) }) {
+// ticket buttons and forms and Verify buttons, when given. always: 24/7, which keeps giveaways and
+// reaction roles made with commands; without it those two commands say to turn 24/7 on.
+function createInteractions({ rest, guard, tickets = null, verify = null, always = null, caseLog = createCases(rest, { botId: once(async () => (await rest.request('GET', '/users/@me')).id) }) }) {
   const application = once(async () => {
     const app = await rest.request('GET', '/applications/@me');
     return { id: app.id, key: publicKey(app.verify_key) };
   });
+  const botUserId = once(async () => (await rest.request('GET', '/users/@me')).id);
 
   function contextFor(interaction) {
     const u = interaction.member.user;
@@ -71,7 +81,9 @@ function createInteractions({ rest, guard, tickets = null, verify = null, caseLo
       guildId: interaction.guild_id,
       channelId: interaction.channel_id,
       channelType: interaction.channel?.type,
+      channelName: interaction.channel?.name || '',
       user: { id: u.id, username: u.username, global_name: u.global_name || null },
+      memberRoles: interaction.member.roles || [],
       shownAs: { name: interaction.member.nick || u.global_name || u.username, icon: avatarUrl(u) },
       // The member's and the bot's permissions in this channel, as Discord worked them out.
       permissions: BigInt(interaction.member.permissions || 0),
@@ -133,6 +145,56 @@ function createInteractions({ rest, guard, tickets = null, verify = null, caseLo
     const type = ctx.options.channel ? ctx.resolved.channels?.[id]?.type : ctx.channelType;
     return { id, thread: THREAD_TYPES.has(type) };
   }
+
+  /* ---------- /announce, /giveaway and /reactionroles ---------- */
+  // Command boxes are one line, so \n in the text starts a new one.
+  const text = (value) => String(value ?? '').replace(/\\n/g, '\n').trim();
+  const messageLink = (ctx, id) => `https://discord.com/channels/${ctx.guildId}/${ctx.channelId}/${id}`;
+
+  function staffOnly(ctx, need, permission, what) {
+    if (!(ctx.permissions & need)) throw fail(`You need the ${permission} permission to ${what}.`, 403);
+  }
+
+  // What the bot needs in this channel to post a card (and react to it).
+  function botCanPost(ctx, what, { react = false } = {}) {
+    const send = THREAD_TYPES.has(ctx.channelType) ? CAN.SEND_IN_THREADS : CAN.SEND_MESSAGES;
+    const needs = [[CAN.VIEW_CHANNEL, 'View Channel'], [send, 'Send Messages'], [CAN.EMBED_LINKS, 'Embed Links'], ...(react ? [[CAN.ADD_REACTIONS, 'Add Reactions'], [CAN.READ_HISTORY, 'Read Message History']] : [])];
+    const missing = needs.filter(([bit]) => !(ctx.appPermissions & bit)).map(([, name]) => name);
+    if (missing.length) throw fail(`The bot needs ${missing.join(', ')} in this channel to post ${what}.`);
+  }
+
+  // Giveaways and reaction roles need 24/7 on for the server, so the portal can look after them.
+  function needs247(ctx, what) {
+    if (!always?.runs(ctx.guildId)) throw fail(`Turn on Run 24/7 for this server first (on the app's Home page), so the bot can ${what} while the app is closed. You can also make it in the app.`);
+  }
+
+  // The ping box: a role, or @everyone (the server's own id). Pinging @everyone, or a role members
+  // can't mention, needs Mention Everyone, as in Discord.
+  function pingOf(ctx) {
+    const id = ctx.options.ping ? String(ctx.options.ping) : '';
+    if (!id) return { ping: 'none', pingName: '' };
+    const everyone = id === ctx.guildId;
+    const role = ctx.resolved.roles?.[id];
+    if ((everyone || !role?.mentionable) && !(ctx.permissions & CAN.MENTION_EVERYONE)) {
+      throw fail(`You can't ping ${everyone ? '@everyone' : `@${role?.name || 'that role'}`}: that needs the Mention Everyone permission${everyone ? '' : ', or a role anyone can mention'}.`, 403);
+    }
+    return everyone ? { ping: 'everyone', pingName: '' } : { ping: id, pingName: role?.name || '' };
+  }
+
+  // Field 1 and field 2, side by side unless turned off.
+  function fieldsOf(ctx) {
+    const inline = ctx.options.side_by_side !== false;
+    return [1, 2].map((n) => ({ name: text(ctx.options[`field${n}_title`]), value: text(ctx.options[`field${n}_text`]), inline })).filter((f) => f.name || f.value);
+  }
+
+  // A check from the shared code (it throws plain errors) as an answer to the member.
+  const checked = (fn) => {
+    try {
+      return fn();
+    } catch (err) {
+      throw err.status ? err : fail(err.message);
+    }
+  };
 
   async function lock(ctx, locked) {
     await actorFor(ctx, P.MANAGE_CHANNELS);
@@ -265,12 +327,109 @@ function createInteractions({ rest, guard, tickets = null, verify = null, caseLo
       }
       return `📊 Posted your poll: https://discord.com/channels/${ctx.guildId}/${ctx.channelId}/${message.id}`;
     },
+
+    // Posts an announcement card here, like one from the app's Announcements page.
+    async announce(ctx) {
+      staffOnly(ctx, CAN.MANAGE_MESSAGES, 'Manage Messages', 'post announcements');
+      botCanPost(ctx, 'an announcement');
+      const a = checked(() => announce.normalize({ guildId: ctx.guildId, channelId: ctx.channelId, ...pingOf(ctx), embed: { on: true, title: text(ctx.options.title), description: text(ctx.options.text), fields: fieldsOf(ctx) } }));
+      const message = await rest.request('POST', `/channels/${ctx.channelId}/messages`, { body: announce.buildMessage(a).body });
+      return `📣 Posted your announcement: ${messageLink(ctx, message.id)}`;
+    },
+
+    // Starts a giveaway here, "Ran by" whoever started it. 24/7 draws it when entries close.
+    async giveaway(ctx) {
+      staffOnly(ctx, CAN.MANAGE_MESSAGES, 'Manage Messages', 'start giveaways');
+      botCanPost(ctx, 'a giveaway', { react: true });
+      needs247(ctx, 'pick the winners');
+      const startedAt = Date.now();
+      const endsAt = startedAt + checked(() => giveaways.parseDuration(ctx.options.ends_in));
+      const role = ctx.options.role && String(ctx.options.role) !== ctx.guildId ? String(ctx.options.role) : '';
+      const emoji = ctx.options.emoji ? parseEmojiInput(ctx.options.emoji, await serverEmojis(ctx.guildId).catch(() => [])) : null;
+      const guild = await rest.request('GET', `/guilds/${ctx.guildId}`).catch(() => null);
+      const g = checked(() =>
+        giveaways.normalize(
+          {
+            guildId: ctx.guildId,
+            guildName: guild?.name || '',
+            channelId: ctx.channelId,
+            channelName: ctx.channelName,
+            prize: text(ctx.options.prize),
+            description: text(ctx.options.text),
+            winners: ctx.options.winners ?? 1,
+            endsAt,
+            requiredRole: role,
+            requiredRoleName: ctx.resolved.roles?.[role]?.name || '',
+            ...pingOf(ctx),
+            emoji,
+            ranBy: { name: ctx.shownAs.name },
+            fields: fieldsOf(ctx),
+          },
+          startedAt,
+        ),
+      );
+      const posted = await giveaways.createGiveaways({ restFor: () => rest, list: () => [], update: () => {} }).post(g);
+      if (posted.problem) {
+        // Members couldn't enter with an emoji the bot can't use, so take it down again.
+        await rest.request('DELETE', `/channels/${ctx.channelId}/messages/${posted.messageId}`).catch(() => {});
+        throw fail("The bot can't use that emoji. Use a standard emoji or one from this server.");
+      }
+      always.adopt('giveaway', ctx.guildId, { ...g, ...posted, id: crypto.randomUUID(), source: 'command', createdAt: startedAt });
+      return `🎉 Started your giveaway: ${messageLink(ctx, posted.messageId)}\nThe winners are picked <t:${Math.floor(endsAt / 1000)}:R>.`;
+    },
+
+    // Posts reaction roles here: members react to give themselves the roles, handed out by 24/7.
+    async reactionroles(ctx) {
+      staffOnly(ctx, CAN.MANAGE_ROLES, 'Manage Roles', 'post reaction roles');
+      botCanPost(ctx, 'reaction roles', { react: true });
+      if (!(ctx.appPermissions & CAN.MANAGE_ROLES)) throw fail('The bot needs the Manage Roles permission to hand out roles.');
+      needs247(ctx, 'hand out the roles');
+      const [guild, roles, botMember, emojis] = await Promise.all([
+        rest.request('GET', `/guilds/${ctx.guildId}`),
+        rest.request('GET', `/guilds/${ctx.guildId}/roles`),
+        botUserId().then((id) => rest.request('GET', `/guilds/${ctx.guildId}/members/${id}`)),
+        serverEmojis(ctx.guildId).catch(() => []),
+      ]);
+      // Same rule as Discord: roles below your own highest role, and below the bot's.
+      const highest = (ids) => Math.max(0, ...roles.filter((r) => ids.includes(r.id)).map((r) => r.position));
+      const yours = guild.owner_id === ctx.user.id ? Infinity : highest(ctx.memberRoles);
+      const bots = highest(botMember.roles || []);
+      const pairs = [];
+      for (let n = 1; n <= MAX_ROLE_PAIRS; n++) {
+        const emoji = ctx.options[`emoji${n}`];
+        const roleId = ctx.options[`role${n}`] ? String(ctx.options[`role${n}`]) : '';
+        const label = text(ctx.options[`text${n}`]);
+        if (emoji == null && !roleId && !label) continue;
+        if (emoji == null || !roleId) throw fail(`Role ${n} needs both an emoji and a role.`);
+        const role = roles.find((r) => r.id === roleId);
+        if (!role || role.id === ctx.guildId) throw fail("@everyone can't be handed out: everyone has it already.");
+        if (role.managed) throw fail(`@${role.name} belongs to a bot or an integration, so it can't be handed out.`);
+        if (role.position >= yours) throw fail(`@${role.name} is equal to or higher than your highest role.`, 403);
+        if (role.position >= bots) throw fail(`The bot's role must be above @${role.name} to hand it out. Move it up in Server Settings → Roles.`);
+        pairs.push({ emoji: parseEmojiInput(emoji, emojis), roleId, roleName: role.name, description: label });
+      }
+      const panel = checked(() => normalizePanel({ guildId: ctx.guildId, guildName: guild.name, channelId: ctx.channelId, channelName: ctx.channelName, message: text(ctx.options.message), style: 'embed', mode: 'normal', pairs }));
+
+      const path = `/channels/${ctx.channelId}/messages`;
+      const body = panelMessage(panel);
+      const message = await rest.request('POST', path, { body: body.content ? body : { ...body, content: undefined } });
+      try {
+        for (const p of panel.pairs) await rest.request('PUT', `${path}/${message.id}/reactions/${emojiPath(p.emoji)}/@me`);
+      } catch (err) {
+        // A missing reaction would leave a role nobody can pick, so take it down again.
+        await rest.request('DELETE', `${path}/${message.id}`).catch(() => {});
+        if (err.code === 10014) throw fail("The bot can't use one of those emojis. Use a standard emoji or one from this server.");
+        throw err;
+      }
+      always.adopt('panel', ctx.guildId, { ...panel, id: crypto.randomUUID(), messageId: message.id, source: 'command', by: { name: ctx.shownAs.name }, createdAt: Date.now() });
+      return `🎭 Posted your reaction roles: ${messageLink(ctx, message.id)}`;
+    },
   };
 
-  // Suggestions while someone types in one of /poll's emoji boxes.
+  // Suggestions while someone types in an emoji box (/poll, /giveaway, /reactionroles).
   async function suggest(interaction) {
     const focused = (interaction.data?.options || []).find((o) => o.focused);
-    if (interaction.data?.name !== 'poll' || !/^emoji\d$/.test(focused?.name || '') || !interaction.guild_id) return [];
+    if (!EMOJI_BOXES[interaction.data?.name]?.test(focused?.name || '') || !interaction.guild_id) return [];
     return emojiChoices(focused.value, await serverEmojis(interaction.guild_id).catch(() => []));
   }
 

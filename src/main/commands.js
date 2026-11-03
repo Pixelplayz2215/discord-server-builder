@@ -1,14 +1,16 @@
-// Slash commands for moderators, plus /poll for everyone, answered by the mod portal
-// (server/interactions.js). The app registers them on the owner's bot; the portal handles them with
-// the same permission rules as the app.
+// Slash commands for moderators, /announce, /giveaway and /reactionroles for staff, and /poll for
+// everyone, answered by the mod portal (server/interactions.js). The app registers them on the
+// owner's bot; the portal handles them with the same permission rules as the app.
 const PERMS = {
   KICK_MEMBERS: 1n << 1n,
   BAN_MEMBERS: 1n << 2n,
   MANAGE_CHANNELS: 1n << 4n,
   MANAGE_MESSAGES: 1n << 13n,
+  MANAGE_ROLES: 1n << 28n,
   MODERATE_MEMBERS: 1n << 40n,
 };
-const OPTION = { STRING: 3, INTEGER: 4, USER: 6, CHANNEL: 7 };
+const OPTION = { STRING: 3, INTEGER: 4, BOOLEAN: 5, USER: 6, CHANNEL: 7, ROLE: 8 };
+const MAX_ROLE_PAIRS = 8; // a command has at most 25 options: the message and 8 × (emoji, role, text)
 const CHANNEL = { TEXT: 0, VOICE: 2, ANNOUNCEMENT: 5, STAGE: 13, FORUM: 15 };
 
 const choices = (pairs) => pairs.map(([name, value]) => ({ name, value }));
@@ -24,6 +26,18 @@ const LOCKABLE = [CHANNEL.TEXT, CHANNEL.VOICE, CHANNEL.ANNOUNCEMENT, CHANNEL.STA
 // /poll's emoji boxes suggest the server's own emojis and standard ones as you type.
 const pollEmoji = (n, required) => ({ type: OPTION.STRING, name: `emoji${n}`, description: `Emoji for option ${n} (type to search, server emojis too)`, required, autocomplete: true, max_length: 100 });
 const pollOption = (n, required) => ({ type: OPTION.STRING, name: `option${n}`, description: `Option ${n}`, required, max_length: 55 });
+// The parts of a card /announce and /giveaway share. Command boxes are one line, so \n starts a new one.
+const ping = { type: OPTION.ROLE, name: 'ping', description: 'A role to ping (@everyone works too)' };
+const cardFields = [1, 2].flatMap((n) => [
+  { type: OPTION.STRING, name: `field${n}_title`, description: `Field ${n} title`, max_length: 256 },
+  { type: OPTION.STRING, name: `field${n}_text`, description: `Field ${n} text (\\n for a new line)`, max_length: 1024 },
+]);
+const sideBySide = { type: OPTION.BOOLEAN, name: 'side_by_side', description: 'Show the two fields side by side (default: yes)' };
+const rolePair = (n) => [
+  { type: OPTION.STRING, name: `emoji${n}`, description: `Emoji for role ${n} (type to search, server emojis too)`, required: n === 1, autocomplete: true, max_length: 100 },
+  { type: OPTION.ROLE, name: `role${n}`, description: `Role ${n}`, required: n === 1 },
+  { type: OPTION.STRING, name: `text${n}`, description: `Text shown next to role ${n} (optional)`, max_length: 100 },
+];
 
 // default_member_permissions hides a command from members without that permission (null: everyone).
 // Server admins can change who sees it under Server Settings → Integrations; the portal checks
@@ -77,6 +91,28 @@ const COMMANDS = [
     pollEmoji(4, false),
     pollOption(4, false),
   ]),
+  command('announce', 'Post an announcement card in this channel', PERMS.MANAGE_MESSAGES, [
+    { type: OPTION.STRING, name: 'text', description: 'What it says (\\n for a new line)', required: true, max_length: 4000 },
+    { type: OPTION.STRING, name: 'title', description: 'A title above it', max_length: 256 },
+    ping,
+    ...cardFields,
+    sideBySide,
+  ]),
+  command('giveaway', 'Start a giveaway here: members enter by reacting, and the bot picks the winners', PERMS.MANAGE_MESSAGES, [
+    { type: OPTION.STRING, name: 'prize', description: 'What they can win', required: true, max_length: 200 },
+    { type: OPTION.STRING, name: 'ends_in', description: 'How long members can enter, e.g. 30m, 2h, 1d 12h or 1w', required: true, max_length: 40 },
+    { type: OPTION.INTEGER, name: 'winners', description: 'How many win (default 1)', min_value: 1, max_value: 20 },
+    { type: OPTION.STRING, name: 'text', description: 'Text on the card (\\n for a new line)', max_length: 2000 },
+    { type: OPTION.STRING, name: 'emoji', description: 'Emoji members react with to enter (default 🎉, server emojis too)', autocomplete: true, max_length: 100 },
+    { type: OPTION.ROLE, name: 'role', description: 'Only members with this role can win' },
+    ping,
+    ...cardFields,
+    sideBySide,
+  ]),
+  command('reactionroles', 'Post a message members react to, to give themselves roles', PERMS.MANAGE_ROLES, [
+    { type: OPTION.STRING, name: 'message', description: 'What the message says (\\n for a new line)', required: true, max_length: 2000 },
+    ...Array.from({ length: MAX_ROLE_PAIRS }, (_, i) => rolePair(i + 1)).flat(),
+  ]),
 ];
 const NAMES = new Set(COMMANDS.map((c) => c.name));
 
@@ -91,4 +127,4 @@ async function removeCommands(rest, appId) {
   for (const c of existing) if (NAMES.has(c.name)) await rest.request('DELETE', `/applications/${appId}/commands/${c.id}`);
 }
 
-module.exports = { COMMANDS, NAMES, DURATIONS, DELETE_WINDOWS, SLOWMODES, labelFor, registerCommands, removeCommands };
+module.exports = { COMMANDS, NAMES, DURATIONS, DELETE_WINDOWS, SLOWMODES, MAX_ROLE_PAIRS, labelFor, registerCommands, removeCommands };

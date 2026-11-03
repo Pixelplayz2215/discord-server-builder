@@ -6,6 +6,8 @@ To release: add your changes as `- ` lines under **Unreleased**, then run `npm r
 
 ## Unreleased
 
+- **/announce, /giveaway and /reactionroles.** Staff can post announcements, giveaways and reaction roles right from Discord, in the same formats as the app, kept simple (no link buttons or author pictures). `/announce` posts a card with a title, text, a ping and two fields (side by side or not). `/giveaway` takes the prize, how long members can enter (like `2h` or `1d 12h`), how many win, text, the entry emoji (server emojis too), a role needed to win, a ping and two fields, and says who ran it. `/reactionroles` takes a message and up to 8 emoji and role pairs, each with its own text. Giveaways and reaction roles made this way need **Run 24/7** for the server: your portal draws the winners and hands out the roles around the clock, and they show up on the Giveaways and Reaction roles pages. `/poll` already works this way. Update your portal with **Sync fork**, then press **Turn on** under **Add slash commands** on the Home page again to add the new commands.
+
 ## 1.2.7 (2026-11-02)
 
 - **More on giveaway cards.** A giveaway can say who runs it: **Ran by** shows at the top of the card, with a small round picture if you give a link. Like announcements, the card can also have fields (each side by side or full width), a small picture at the top right and a footer. All of them stay on the card after the winners are picked.

@@ -35,6 +35,13 @@ A Windows desktop app (Electron) in the Pixelplayz2215 theme for running Discord
 - **Moderator sign-in.** Your mods can use the app without the bot token. They click **Sign in with Discord** and get the servers where they have Kick, Ban or Timeout permission, with moderation tools only. Each action is checked against their own Discord permissions. This needs the small mod portal server in `server/` running on a host. Setup steps are in [docs/MOD-PORTAL.md](docs/MOD-PORTAL.md).
 
 - **Slash commands for mods (optional).** Mods who don't use the app can moderate right in Discord with `/warn`, `/timeout`, `/untimeout`, `/kick`, `/ban`, `/unban`, `/cases`, `/purge`, `/lock`, `/unlock` and `/slowmode`. The mod portal answers them, with the same permission checks as the app. Warnings and member actions are recorded as numbered cases in a private `#mod-cases` channel the bot creates, and `/cases` looks a member up. The owner turns them on from the Home page in one click.
+- **Community commands (optional, with the slash commands).** Staff can post from Discord too, in the same formats as the app (kept simple: no link buttons or author pictures):
+  - `/announce`: an announcement card with a title, text, an optional ping and two fields, side by side or not. Needs Manage Messages.
+  - `/giveaway`: a prize, how long members can enter (`30m`, `2h`, `1d 12h`, `1w`…), how many win, text, the entry emoji (server emojis too), a role needed to win, a ping and two fields. The card says who ran it. Needs Manage Messages.
+  - `/reactionroles`: a message and up to 8 emoji and role pairs, each with optional text. Needs Manage Roles, and only hands out roles below your own and the bot's.
+  - `/poll` (for everyone): a question with up to 4 emoji and option pairs.
+
+  Pinging @everyone, or a role members can't mention, needs Mention Everyone. Type `\n` in a text box for a new line. Giveaways and reaction roles made with commands need **Run 24/7** for that server, so your portal draws the winners and hands out the roles around the clock, and they show up on the Giveaways and Reaction roles pages.
 
 ## Your data stays on your PC
 

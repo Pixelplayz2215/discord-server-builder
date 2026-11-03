@@ -106,6 +106,30 @@ function buildMessage(g, image = null) {
   return { body, files: image ? [{ name: image.name, data: image.data, type: image.type }] : undefined };
 }
 
+// How long entries stay open, typed into /giveaway: "30m", "2h", "1d 12h", "1 week", "1h30m"…
+const UNITS = [
+  [/^w(eeks?)?$/, 7 * 86400e3],
+  [/^d(ays?)?$/, 86400e3],
+  [/^h((ou)?rs?)?$/, 3600e3],
+  [/^m(in(ute)?s?)?$/, 60e3],
+];
+const MAX_DURATION_MS = 60 * 86400e3;
+function parseDuration(text) {
+  const words = String(text || '').toLowerCase().replace(/,|\band\b/g, ' ').trim();
+  const parts = [...words.matchAll(/(\d+(?:\.\d+)?)\s*([a-z]+)/g)];
+  const unmatched = words.replace(/(\d+(?:\.\d+)?)\s*([a-z]+)/g, '').trim();
+  let ms = 0;
+  for (const [, n, unit] of parts) {
+    const size = UNITS.find(([re]) => re.test(unit))?.[1];
+    if (!size) throw problem(`"${unit}" isn't a unit I know. Write how long like 30m, 2h, 1d 12h or 1w.`);
+    ms += Number(n) * size;
+  }
+  if (!parts.length || unmatched) throw problem('Write how long members can enter, like 30m, 2h, 1d 12h or 1w.');
+  if (ms < 60e3) throw problem('A giveaway needs to run for at least a minute.');
+  if (ms > MAX_DURATION_MS) throw problem('A giveaway can run for 60 days at most.');
+  return Math.round(ms);
+}
+
 // Why nobody won, in words.
 function noWinner(g) {
   if (!g.entries) return 'Nobody entered.';
@@ -254,4 +278,4 @@ function createGiveaways({ restFor, list, update, imageFor = () => null, ended =
   return { tick, post, draw, entryCount };
 }
 
-module.exports = { normalize, buildMessage, buildEndedMessage, winnersMessage, createGiveaways, EMOJI, LIMITS };
+module.exports = { normalize, buildMessage, buildEndedMessage, winnersMessage, createGiveaways, parseDuration, EMOJI, LIMITS };

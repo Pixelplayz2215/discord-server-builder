@@ -912,7 +912,7 @@ function noteAlways(botId, status, err = null) {
 // if 24/7 is turned off).
 function mergeAlways(botId, status) {
   // Pages are told only about what changed, so they don't redraw every minute for nothing.
-  const changed = { announcements: false, giveaways: false, polls: false, stats: false };
+  const changed = { announcements: false, giveaways: false, panels: false, polls: false, stats: false };
   for (const [guildId, s] of Object.entries(status.servers || {})) {
     if (!s.on) continue;
     const config = store.getGuildConfig(botId, guildId);
@@ -921,6 +921,7 @@ function mergeAlways(botId, status) {
     if (Object.keys(patch).length) store.setGuildConfig(botId, guildId, patch);
     if (patch.announcements) changed.announcements = true;
     if (patch.giveaways) changed.giveaways = true;
+    if (patch.reactionRoles) changed.panels = true;
     if (patch.polls) changed.polls = true;
 
     const problems = s.problems || {};
@@ -950,6 +951,10 @@ function mergeAlways(botId, status) {
   }
   if (changed.announcements) send('announce:changed', {});
   if (changed.giveaways) send('giveaways:changed', {});
+  if (changed.panels) {
+    rebuildPanelIndex();
+    send('rr:changed', {});
+  }
   if (changed.stats) send('stats:changed', { botId });
   if (alertsChanged) send('social:changed', {});
 }
