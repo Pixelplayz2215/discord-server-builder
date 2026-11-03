@@ -6,6 +6,8 @@ To release: add your changes as `- ` lines under **Unreleased**, then run `npm r
 
 ## Unreleased
 
+## 1.2.6 (2026-11-02)
+
 - **Giveaways.** A new Giveaways page (on the Community page) posts a prize with a live preview: your text, a picture, a colour and an optional ping. Pick how many win, the date and time members can **enter by**, and if you like a role members need to win. Post it now or schedule it. Members enter by reacting with 🎉, or any emoji you pick (your server's own included), and at the enter-by time the bot picks the winners at random from them, pings them in a reply and lists them on the post. Bots, members who have left and members without the role can't win. The page shows how many have entered so far, **End now** picks the winners early, and **Pick again** replaces a winner (say, one who never claimed the prize) with someone who hasn't won it yet. Giveaways run while the app is open or in the tray, or around the clock with **Run 24/7** once your portal is updated with **Sync fork** (until then, the app runs them).
 
 ## 1.2.5 (2026-11-01)
