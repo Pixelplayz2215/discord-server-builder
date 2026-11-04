@@ -477,7 +477,10 @@ function createInteractions({ rest, guard, tickets = null, verify = null, always
     return { status: 200, body: { type: RESPONSE.DEFERRED, data: { flags: EPHEMERAL } }, after: () => run(interaction, handler) };
   }
 
-  return { receive };
+  // The bot's application ID, so a portal running several bots can tell whose interaction it is.
+  const applicationId = async () => (await application()).id;
+
+  return { receive, applicationId };
 }
 
 module.exports = { createInteractions, verifySignature, publicKey, once };

@@ -6,6 +6,8 @@ To release: add your changes as `- ` lines under **Unreleased**, then run `npm r
 
 ## Unreleased
 
+- **Several bots on one portal.** Your mod portal can now run more than one of your bots, each with its own slash commands, buttons and 24/7, on the same free Render service. On Render, add each extra bot's token as `DISCORD_BOT_TOKEN_2`, `DISCORD_BOT_TOKEN_3` and so on, then turn on that bot's slash commands and 24/7 on the Home page with the same portal address. With one bot, nothing changes. Mods still sign in through the first bot. Update your portal with **Sync fork** first.
+
 ## 1.2.9 (2026-11-03)
 
 - **Pixel's Sysbot stand-in.** Optional: with `SYSBOT_BOT_TOKEN` set, the portal posts a Pixel's Sysbot trade bot's offline status report when its PC stops checking in (a power cut, no internet) and answers its basic commands until it's back. See the mod portal guide, step 10.

@@ -330,7 +330,7 @@ const HomePage = {
             { class: 'stack', style: { gap: '10px' } },
             h('p', null, `Your portal will run welcome & goodbye cards, auto roles, reaction roles, polls, server logs, server stats, scheduled announcements and YouTube alerts for ${displayName(bot)}, even when this PC is off. This app stops running them while 24/7 is on.`),
             h('p', null, 'Each server gets a private #bot-settings channel where the settings are kept for the portal, encrypted with your bot token. Only the bot can see it, and server admins can see it exists. Please leave it there.'),
-            h('div', { class: 'callout' }, icon('alert'), h('div', null, h('b', null, 'Render free plan: '), "while 24/7 is on, the portal keeps itself awake. That uses Render's 750 free hours a month, enough for one service all month. Other free services on the same Render account share those hours.")),
+            h('div', { class: 'callout' }, icon('alert'), h('div', null, h('b', null, 'Render free plan: '), "while 24/7 is on, the portal keeps itself awake. That uses Render's 750 free hours a month, enough for one service all month. Other free services on the same Render account share those hours. Your other bots can share this one portal: on Render, add each one's token as DISCORD_BOT_TOKEN_2, DISCORD_BOT_TOKEN_3 and so on, then turn on its slash commands and 24/7 here.")),
             h('p', { class: 'subtle' }, 'Twitch alerts and automatic backups still need this app running.'),
           ),
           confirmLabel: 'Turn on 24/7',

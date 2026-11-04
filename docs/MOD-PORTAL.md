@@ -177,6 +177,19 @@ The Sysbot then checks in every 30 seconds. When the check-ins stop for 3 minute
 - **Staying awake.** While it answers for the Sysbot, the portal visits its own `/health` every 10 minutes, like 24/7 does. It's the same service, so it uses no extra free hours.
 - **After a portal restart** (an update on Render), it waits for one check-in before it answers for the Sysbot again.
 
+### 11. More than one bot (optional)
+
+One portal can run several of your bots, each with its own slash commands, ticket and Verify buttons, and 24/7, all on the same free Render service:
+
+1. In Render, open your portal's **Environment** and add each extra bot's token: `DISCORD_BOT_TOKEN_2`, `DISCORD_BOT_TOKEN_3` and so on. Save, and Render restarts the portal.
+2. In the app, pick that bot on the Home page, press **Turn on** under **Add slash commands** with the same portal address, then **Turn on 24/7** if you want it.
+
+- **One address for all.** Every bot's Interactions Endpoint URL is the same `<your portal>/interactions`. The portal knows which bot each command is for, and checks Discord's signature with that bot's own key.
+- **Each bot's settings stay its own.** 24/7 settings are in each server's #bot-settings channel, encrypted with that bot's token, and the app talks to each bot's 24/7 with requests signed with that bot's token.
+- **Mod sign-in** (the app's **Sign in with Discord** and mod-view) works through the first bot, `DISCORD_BOT_TOKEN`, as before.
+- **Free hours.** It's still one service, so it uses no extra Render hours. Each bot keeps its own connection to Discord, which fits easily in the free plan's memory.
+- **One bot only?** Nothing changes: leave the extra variables out.
+
 ## Good to know
 
 - **Free plan sleeps.** Render's free plan sleeps after 15 minutes without traffic, and the first request after that takes about a minute. Discord only waits 3 seconds for a slash command, so the first command after a quiet spell fails with "The application did not respond". With **Run 24/7** on, the portal keeps itself awake. Otherwise, point a free uptime monitor at `<your portal>/health` every 10 minutes (the free plan's 750 hours a month cover one service running all month), or upgrade the service to a paid instance.

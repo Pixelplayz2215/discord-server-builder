@@ -90,11 +90,29 @@ const TRANSCRIPT_CSP = "default-src 'none'; img-src data: https://cdn.discordapp
 
 // interactions is optional: without it the portal doesn't answer slash commands. always (24/7) is
 // optional too: without it /always/* isn't there. So is sysbot (a Pixel's Sysbot stand-in): without it
-// /sysbot isn't there.
-function createPortal({ config, rest, auth, guard, interactions, always = null, sysbot = null, fetchImpl = fetch, caseLog = createCases(rest, { botId: once(async () => (await rest.request('GET', '/users/@me')).id) }) }) {
+// /sysbot isn't there. bots: more bots sharing the portal ([{ token, rest, interactions, always }]),
+// each with its own slash commands and 24/7. Mods sign in through the first bot only.
+function createPortal({ config, rest, auth, guard, interactions, always = null, sysbot = null, bots = [], fetchImpl = fetch, caseLog = createCases(rest, { botId: once(async () => (await rest.request('GET', '/users/@me')).id) }) }) {
   const limitUser = createLimiter(120, 60000);
   const limitIp = createLimiter(30, 60000);
   let botUser = null;
+  const allBots = [{ token: config.botToken, rest, interactions, always }, ...bots];
+
+  // Which bot an interaction is for. The body says (its application_id); that bot then checks
+  // Discord's signature with its own key, so naming another bot gets an unsigned request nowhere.
+  async function interactionsFor(body) {
+    if (!bots.length) return interactions;
+    let appId = '';
+    try {
+      appId = String(JSON.parse(body.toString('utf8')).application_id || '');
+    } catch {
+      return interactions; // not JSON: the first bot refuses it
+    }
+    for (const bot of bots) {
+      if (bot.interactions && (await bot.interactions.applicationId().catch(() => null)) === appId) return bot.interactions;
+    }
+    return interactions;
+  }
 
   const userLabel = async (id) => {
     const u = await rest.request('GET', `/users/${id}`).catch(() => null);
@@ -210,7 +228,18 @@ function createPortal({ config, rest, auth, guard, interactions, always = null, 
   async function sendTranscript(res, channelId, messageId, signature) {
     if (!checkTranscriptSignature(config.sessionSecret, channelId, messageId, signature)) return sendPage(res, 403, 'This link is not valid', 'Open transcripts with the View transcript button in your ticket log channel.');
     try {
-      const message = await rest.request('GET', `/channels/${channelId}/messages/${messageId}`);
+      // Read by whichever of the portal's bots made it (the one that can see its log channel).
+      let message = null;
+      let failed = null;
+      for (const bot of allBots) {
+        try {
+          message = await bot.rest.request('GET', `/channels/${channelId}/messages/${messageId}`);
+          break;
+        } catch (err) {
+          failed = err;
+        }
+      }
+      if (!message) throw failed;
       const file = (message.attachments || []).find((a) => /\.html$/i.test(a.filename || ''));
       if (!file) return sendPage(res, 404, 'Transcript not found', 'That log message has no transcript attached.');
       const page = await fetchImpl(file.url);
@@ -240,15 +269,16 @@ function createPortal({ config, rest, auth, guard, interactions, always = null, 
     }
 
     // always: the app checks this before turning 24/7 on, to know the portal is new enough.
-    if (req.method === 'GET' && url.pathname === '/health') return sendJson(res, 200, { ok: true, always: always ? Always.VERSION : 0 });
+    if (req.method === 'GET' && url.pathname === '/health') return sendJson(res, 200, { ok: true, always: always ? Always.VERSION : 0, bots: allBots.length });
 
     // 24/7: the app asks how it's going, or to read the settings again after saving them. Only
-    // requests signed with this portal's bot token are answered.
+    // requests signed with one of this portal's bot tokens are answered, by that bot's 24/7.
     if (req.method === 'POST' && (url.pathname === '/always/status' || url.pathname === '/always/reload') && always) {
       try {
         limitIp(`always:${ip}`);
         const raw = (await readBody(req)).toString('utf8');
-        if (!Always.checkSigned(config.botToken, raw, req.headers)) return sendJson(res, 401, { error: "That request wasn't signed with this portal's bot token." });
+        const bot = allBots.find((b) => b.always && Always.checkSigned(b.token, raw, req.headers));
+        if (!bot) return sendJson(res, 401, { error: "That request wasn't signed with one of this portal's bot tokens." });
         let body = {};
         try {
           body = raw ? JSON.parse(raw) : {};
@@ -256,10 +286,10 @@ function createPortal({ config, rest, auth, guard, interactions, always = null, 
           throw httpError(400, 'Invalid JSON.');
         }
         if (url.pathname === '/always/reload') {
-          const ids = Array.isArray(body.guildIds) ? body.guildIds.map(String).filter((id) => /^d{15,21}$/.test(id)) : null;
-          await always.reload(ids?.length ? ids : null);
+          const ids = Array.isArray(body.guildIds) ? body.guildIds.map(String).filter((id) => /^\d{15,21}$/.test(id)) : null;
+          await bot.always.reload(ids?.length ? ids : null);
         }
-        return sendJson(res, 200, always.status());
+        return sendJson(res, 200, bot.always.status());
       } catch (err) {
         if (err.status !== 429) console.error(`POST ${url.pathname}:`, err);
         return sendJson(res, err.status || 500, { error: err.message || 'Something went wrong.' });
@@ -315,7 +345,8 @@ function createPortal({ config, rest, auth, guard, interactions, always = null, 
     // Slash commands, sent by Discord once the bot's Interactions Endpoint URL points here.
     if (req.method === 'POST' && url.pathname === '/interactions' && interactions) {
       try {
-        const result = await interactions.receive(await readBody(req, MAX_INTERACTION_BODY), req.headers);
+        const body = await readBody(req, MAX_INTERACTION_BODY);
+        const result = await (await interactionsFor(body)).receive(body, req.headers);
         sendJson(res, result.status, result.body);
         if (result.after) await result.after();
       } catch (err) {
@@ -345,33 +376,38 @@ function createPortal({ config, rest, auth, guard, interactions, always = null, 
   });
 }
 
-if (require.main === module) {
-  const config = loadConfig();
-  const rest = new DiscordRest(config.botToken);
+// One bot's part of the portal: its REST client, mod checks, case log, tickets, 24/7 and slash commands.
+function startBot(token, config) {
+  const rest = new DiscordRest(token);
   const guard = createGuard(rest);
   const botId = once(async () => (await rest.request('GET', '/users/@me')).id);
   const caseLog = createCases(rest, { botId });
   const tickets = createTickets({ rest, botId, transcriptLink: (channelId, messageId) => `${config.publicUrl}/transcripts/${channelId}/${messageId}?sig=${transcriptSignature(config.sessionSecret, channelId, messageId)}` });
-  // 24/7: reads its settings now and runs if the owner turned it on in the app.
+  // 24/7: reads its settings when started, and runs if the owner turned it on in the app.
   let always = null;
   const cards = createCards({ fileData: (name) => always.fileData(name) });
-  always = createAlways({ rest, token: config.botToken, publicUrl: config.publicUrl, cards });
+  always = createAlways({ rest, token, publicUrl: config.publicUrl, cards });
+  const interactions = createInteractions({ rest, guard, caseLog, tickets, always, verify: createVerify({ rest }) });
+  return { token, rest, guard, caseLog, always, interactions };
+}
+
+if (require.main === module) {
+  const config = loadConfig();
+  const first = startBot(config.botToken, config);
+  const more = config.extraBotTokens.map((token) => startBot(token, config));
   // Pixel's Sysbot (optional): answers for its bot while that bot's PC is off.
   const sysbotToken = process.env.SYSBOT_BOT_TOKEN?.trim().replace(/^Bot\s+/i, '');
   const sysbot = sysbotToken ? createSysbot({ token: sysbotToken, publicUrl: config.publicUrl }) : null;
-  const server = createPortal({ config, rest, auth: createAuth(config), guard, caseLog, always, sysbot, interactions: createInteractions({ rest, guard, caseLog, tickets, always, verify: createVerify({ rest }) }) });
+  const server = createPortal({ config, rest: first.rest, auth: createAuth(config), guard: first.guard, caseLog: first.caseLog, always: first.always, interactions: first.interactions, bots: more, sysbot });
   server.listen(config.port, () => {
-    console.log(`Mod portal listening on port ${config.port} (${config.publicUrl})`);
-    always.start().catch((err) => console.error('24/7: reading the settings failed:', err.message));
+    console.log(`Mod portal listening on port ${config.port} (${config.publicUrl})${more.length ? `, running ${more.length + 1} bots` : ''}`);
+    [first, ...more].forEach((bot, i) => bot.always.start().catch((err) => console.error(`24/7${i ? ` (bot ${i + 1})` : ''}: reading the settings failed:`, err.message)));
     sysbot?.start();
   });
   // Render stops the portal on a deploy or when it sleeps: save what 24/7 did first.
   process.on('SIGTERM', () => {
     sysbot?.close();
-    always
-      .close()
-      .catch(() => {})
-      .finally(() => process.exit(0));
+    Promise.all([first, ...more].map((bot) => bot.always.close().catch(() => {}))).finally(() => process.exit(0));
   });
 }
 

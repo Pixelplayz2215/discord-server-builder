@@ -838,7 +838,7 @@ async function callPortal(botId, route, body = {}) {
     throw new Error(`Can't reach your mod portal (${err.cause?.code || err.name}). If it was asleep, it can take a minute to wake up.`);
   }
   const data = await res.json().catch(() => ({}));
-  if (res.status === 401) throw new Error("Your portal runs a different bot. On Render, set DISCORD_BOT_TOKEN to this bot's token (Environment), then try again.");
+  if (res.status === 401) throw new Error("Your portal doesn't run this bot. On Render, open your portal → Environment and add this bot's token as DISCORD_BOT_TOKEN_2 (or _3, _4… for more bots), wait for the deploy to finish, then try again.");
   if (res.status === 404) throw new Error('Your portal needs updating: on GitHub, open your fork and press Sync fork, then wait for Render to finish deploying.');
   if (!res.ok) throw new Error(data.error || `Your portal answered HTTP ${res.status}.`);
   return data;
@@ -1208,7 +1208,7 @@ const handlers = {
       await rest.request('PATCH', '/applications/@me', { body: { interactions_endpoint_url: `${url}/interactions` } });
     } catch (err) {
       if (err.code !== 50035 || !/interactions_endpoint_url/.test(err.message)) throw err;
-      throw new Error("Discord couldn't verify your portal. Make sure it runs this bot's token and has the latest code: on GitHub, press Sync fork, then wait for Render to finish deploying.");
+      throw new Error("Discord couldn't verify your portal. Make sure it runs this bot's token (for a second bot, add it on Render as DISCORD_BOT_TOKEN_2, or _3, _4…) and has the latest code: on GitHub, press Sync fork, then wait for Render to finish deploying.");
     }
     await commands.registerCommands(rest, application.id);
     return noteSlashCommands(botId, await slashStatus(rest));
