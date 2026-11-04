@@ -6,6 +6,8 @@ To release: add your changes as `- ` lines under **Unreleased**, then run `npm r
 
 ## Unreleased
 
+## 1.2.12 (2026-11-04)
+
 - **Permission changes in server logs.** Server logs now post when a channel's or category's permissions change, and when a role's permissions change, saying what changed for each role or member (✅ allowed, ❌ denied, ➖ back to default) and who did it. So locking behind Verify shows up channel by channel, and so do permission edits made in Discord.
 - **Lock behind Verify, easier to use.**
   - The list of channels to keep open now shows every kind of channel (text, announcement, voice, stage, forum and media) with its icon, under its category.
