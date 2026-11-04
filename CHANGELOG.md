@@ -6,6 +6,14 @@ To release: add your changes as `- ` lines under **Unreleased**, then run `npm r
 
 ## Unreleased
 
+- **Permission changes in server logs.** Server logs now post when a channel's or category's permissions change, and when a role's permissions change, saying what changed for each role or member (✅ allowed, ❌ denied, ➖ back to default) and who did it. So locking behind Verify shows up channel by channel, and so do permission edits made in Discord.
+- **Lock behind Verify, easier to use.**
+  - The list of channels to keep open now shows every kind of channel (text, announcement, voice, stage, forum and media) with its icon, under its category.
+  - Ticking channels updates the list of changes right away, and the **Lock the server** button stays clickable while you choose.
+  - The Verify channel now stays visible to verified members unless you choose to hide it, since it's often your rules channel, and the window says so.
+  - If your auto roles give new members a role that can already see channels, the window warns you, since they'd skip the Verify button.
+  - A blank line that showed "null" is gone.
+
 ## 1.2.11 (2026-11-04)
 
 - **Previews show Discord's formatting.** The previews on Announcements, Giveaways, Reaction roles, Polls, Tickets, the Verify button and Welcome & goodbye now show text the way Discord does: `#`, `##` and `###` headings, `-#` small text, `>` quotes, lists, code blocks, *italics*, __underline__, ~~strikethrough~~, spoilers, links, role and channel mentions, server emojis and timestamps. Before, only **bold** and `code` showed, so a `# Rules` heading looked like plain text.

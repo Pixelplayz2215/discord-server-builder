@@ -16,8 +16,47 @@ const FLUSH_MS = 2000;
 const AUDIT_DELAY_MS = 1500; // Discord writes the audit log entry a moment after the change
 const AUDIT_MAX_AGE_MS = 2 * 60000;
 const COLORS = { join: 0x0bbfbc, leave: 0x8a80a3, kick: 0xfc8a35, ban: 0xfc354c, unban: 0x0bbfbc, member: 0x7f8cf0, delete: 0xfc8a35, edit: 0xf5a623, server: 0x5865f2 };
-const AUDIT = { KICK: 20, BAN: 22, UNBAN: 23 };
+const AUDIT = { KICK: 20, BAN: 22, UNBAN: 23, OVERWRITES: [13, 14, 15], ROLE_UPDATE: 31 };
 const AUDIT_REUSE_MS = 1000; // one read of the audit log serves a burst of events (a raid's bans)
+
+// Permission names as Discord's settings show them, by bit. On a channel, two read differently.
+const PERMISSIONS = [
+  'Create Invite', 'Kick Members', 'Ban Members', 'Administrator', 'Manage Channels', 'Manage Server', 'Add Reactions', 'View Audit Log', 'Priority Speaker', 'Video', 'View Channels',
+  'Send Messages', 'Send Text-to-Speech Messages', 'Manage Messages', 'Embed Links', 'Attach Files', 'Read Message History', 'Mention @everyone, @here and All Roles', 'Use External Emojis',
+  'View Server Insights', 'Connect', 'Speak', 'Mute Members', 'Deafen Members', 'Move Members', 'Use Voice Activity', 'Change Nickname', 'Manage Nicknames', 'Manage Roles', 'Manage Webhooks',
+  'Manage Expressions', 'Use Application Commands', 'Request to Speak', 'Manage Events', 'Manage Threads', 'Create Public Threads', 'Create Private Threads', 'Use External Stickers',
+  'Send Messages in Threads', 'Use Activities', 'Timeout Members', 'View Creator Monetization Analytics', 'Use Soundboard', 'Create Expressions', 'Create Events', 'Use External Sounds',
+  'Send Voice Messages', null, null, 'Create Polls', 'Use External Apps',
+];
+const ON_CHANNEL = { 4: 'Manage Channel', 28: 'Manage Permissions' };
+function permissionNames(mask, onChannel = false) {
+  const names = [];
+  for (let bit = 0; mask >> BigInt(bit); bit++) {
+    if (!(mask & (1n << BigInt(bit)))) continue;
+    names.push((onChannel && ON_CHANNEL[bit]) || PERMISSIONS[bit] || `permission ${bit}`);
+  }
+  return names;
+}
+
+// What changed in a channel's permission overwrites, one line per role or member:
+// ✅ allowed, ❌ denied, ➖ back to following the role / category.
+function overwriteChanges(before = [], after = [], guildId) {
+  const lines = [];
+  for (const id of new Set([...before, ...after].map((o) => o.id))) {
+    const b = before.find((o) => o.id === id);
+    const a = after.find((o) => o.id === id);
+    const [ba, bd, aa, ad] = [b?.allow, b?.deny, a?.allow, a?.deny].map((v) => BigInt(v || 0));
+    if (ba === aa && bd === ad) continue;
+    const parts = [
+      ...permissionNames(aa & ~ba, true).map((n) => `✅ ${n}`),
+      ...permissionNames(ad & ~bd, true).map((n) => `❌ ${n}`),
+      ...permissionNames((ba | bd) & ~(aa | ad), true).map((n) => `➖ ${n}`),
+    ];
+    const who = id === guildId ? '@everyone' : Number((a || b).type) === 1 ? `<@${id}>` : `<@&${id}>`;
+    if (parts.length) lines.push(`${who}: ${parts.join(', ')}`);
+  }
+  return lines;
+}
 
 const snowflakeTime = (id) => Number((BigInt(id) >> 22n) + 1420070400000n);
 const stamp = (ms, style = 'R') => `<t:${Math.floor(ms / 1000)}:${style}>`;
@@ -58,8 +97,9 @@ function normalizeConfig(input) {
 function createServerLogger({ rest, configFor, onError = () => {}, posted = () => {}, flushMs = FLUSH_MS, auditDelayMs = AUDIT_DELAY_MS }) {
   const messages = new Map(); // message id -> { guildId, channelId, author, content, attachments }
   const members = new Map(); // guild:user -> { nick, roles, until, joinedAt, user }
-  const channels = new Map(); // channel id -> { name, locked }
+  const channels = new Map(); // channel id -> { name, locked, overwrites }
   const roles = new Map(); // role id -> name
+  const rolePermissions = new Map(); // role id -> permissions, to tell what changed
   const queues = new Map(); // guild id -> { embeds, timer, sending }
 
   const remember = (map, key, value, max) => {
@@ -102,8 +142,11 @@ function createServerLogger({ rest, configFor, onError = () => {}, posted = () =
   }
 
   const cacheGuild = (d) => {
-    for (const c of d.channels || []) channels.set(c.id, { name: c.name, locked: isLocked(c, d.id) });
-    for (const r of d.roles || []) roles.set(r.id, r.name);
+    for (const c of d.channels || []) channels.set(c.id, { name: c.name, locked: isLocked(c, d.id), overwrites: c.permission_overwrites || [] });
+    for (const r of d.roles || []) {
+      roles.set(r.id, r.name);
+      rolePermissions.set(r.id, r.permissions);
+    }
     for (const m of d.members || []) rememberMember(d.id, m);
   };
 
@@ -188,6 +231,19 @@ function createServerLogger({ rest, configFor, onError = () => {}, posted = () =
     const thumbnail = avatarUrl(user) ? { url: avatarUrl(user) } : undefined;
     if (entry?.action_type === AUDIT.KICK) post(guildId, { title: 'Member kicked', color: COLORS.kick, description: lines.join('\n'), thumbnail, fields: byAndWhy(entry) });
     else if (on.members) post(guildId, { title: 'Member left', color: COLORS.leave, description: lines.join('\n'), thumbnail });
+  }
+
+  // A channel's or category's permissions changed (not a lock: that has its own entry).
+  async function logChannelPermissions(guildId, channel, lines) {
+    const entry = await recentAudit(guildId, (e) => e.target_id === channel.id && AUDIT.OVERWRITES.includes(e.action_type));
+    const kind = channel.type === 4 ? 'Category' : 'Channel';
+    post(guildId, { title: `${kind} permissions changed`, color: COLORS.server, description: clip(`<#${channel.id}> · ${escape(channel.name)}\n${lines.join('\n')}`, 4096), fields: byAndWhy(entry) });
+  }
+
+  async function logRolePermissions(guildId, role, added, removed) {
+    const entry = await recentAudit(guildId, (e) => e.target_id === role.id && e.action_type === AUDIT.ROLE_UPDATE);
+    const lines = [...permissionNames(added).map((n) => `✅ ${n}`), ...permissionNames(removed).map((n) => `❌ ${n}`)];
+    post(guildId, { title: 'Role permissions changed', color: COLORS.server, description: clip(`${role.id === guildId ? '@everyone' : `<@&${role.id}> · ${escape(role.name)}`}\n${lines.join('\n')}`, 4096), fields: byAndWhy(entry) });
   }
 
   async function logBan(guildId, user, banned) {
@@ -304,28 +360,45 @@ function createServerLogger({ rest, configFor, onError = () => {}, posted = () =
         const old = channels.get(d.id);
         const locked = isLocked(d, guildId);
         if (type === 'CHANNEL_DELETE') channels.delete(d.id);
-        else channels.set(d.id, { name: d.name, locked });
-        if (type === 'CHANNEL_UPDATE' && old && old.locked !== locked && on.moderation && d.type !== 4) logLock(guildId, d, locked).catch(() => {});
+        else channels.set(d.id, { name: d.name, locked, overwrites: d.permission_overwrites || [] });
+        const lockChanged = type === 'CHANNEL_UPDATE' && old && old.locked !== locked && d.type !== 4;
+        if (lockChanged && on.moderation) logLock(guildId, d, locked).catch(() => {});
         if (!on.server || (d.id === cfg.channelId && type !== 'CHANNEL_DELETE')) break;
         const kind = d.type === 4 ? 'Category' : 'Channel';
         if (type === 'CHANNEL_CREATE') post(guildId, { title: `${kind} created`, color: COLORS.server, description: `<#${d.id}> · ${escape(d.name)}` });
         if (type === 'CHANNEL_DELETE') post(guildId, { title: `${kind} deleted`, color: COLORS.delete, description: escape(d.name) });
         if (type === 'CHANNEL_UPDATE' && old && old.name !== d.name) post(guildId, { title: `${kind} renamed`, color: COLORS.server, description: `<#${d.id}>: ${escape(old.name)} → ${escape(d.name)}` });
+        if (type === 'CHANNEL_UPDATE' && old && !lockChanged) {
+          const lines = overwriteChanges(old.overwrites, d.permission_overwrites || [], guildId);
+          if (lines.length) logChannelPermissions(guildId, d, lines).catch(() => {});
+        }
         break;
       }
 
       case 'GUILD_ROLE_CREATE':
       case 'GUILD_ROLE_DELETE': {
         const role = d.role || { id: d.role_id, name: roles.get(d.role_id) };
-        if (type === 'GUILD_ROLE_CREATE') roles.set(role.id, role.name);
-        else roles.delete(role.id);
+        if (type === 'GUILD_ROLE_CREATE') {
+          roles.set(role.id, role.name);
+          rolePermissions.set(role.id, role.permissions);
+        } else {
+          roles.delete(role.id);
+          rolePermissions.delete(role.id);
+        }
         if (on.server) post(guildId, type === 'GUILD_ROLE_CREATE' ? { title: 'Role created', color: COLORS.server, description: `<@&${role.id}> · ${escape(role.name)}` } : { title: 'Role deleted', color: COLORS.delete, description: escape(role.name || role.id) });
         break;
       }
 
-      case 'GUILD_ROLE_UPDATE':
-        if (d.role) roles.set(d.role.id, d.role.name);
+      case 'GUILD_ROLE_UPDATE': {
+        if (!d.role) break;
+        const before = rolePermissions.get(d.role.id);
+        roles.set(d.role.id, d.role.name);
+        rolePermissions.set(d.role.id, d.role.permissions);
+        if (!on.server || before == null || before === d.role.permissions) break;
+        const [was, now] = [BigInt(before || 0), BigInt(d.role.permissions || 0)];
+        logRolePermissions(guildId, d.role, now & ~was, was & ~now).catch(() => {});
         break;
+      }
 
       default:
         break;

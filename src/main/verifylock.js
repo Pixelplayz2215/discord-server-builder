@@ -14,8 +14,10 @@ const GONE = new Set([10003, 10009, 10011]); // unknown channel, overwrite, role
 
 // What locking would change. roles/channels: the server's, from Discord. botRoleIds: the bot's own
 // roles. verifyChannelId: where the Verify button is; openChannelIds: others @everyone keeps seeing.
-// hideVerify: the Verify channel disappears for members once they've verified.
-function planLock({ guildId, roles, channels, botRoleIds, verifyChannelId, verifiedRoleIds, openChannelIds = [], hideVerify = true }) {
+// hideVerify: the Verify channel disappears for members once they've verified (off unless asked:
+// it's often the rules channel). joinRoleIds: roles new members get as soon as they join (auto
+// roles); any that can see channels would let them skip the Verify button, so they're named.
+function planLock({ guildId, roles, channels, botRoleIds, verifyChannelId, verifiedRoleIds, openChannelIds = [], hideVerify = false, joinRoleIds = [] }) {
   const byId = new Map(roles.map((r) => [r.id, r]));
   const verified = verifiedRoleIds.map((id) => byId.get(id)).filter(Boolean);
   if (!verified.length) throw problem('Pick the roles the Verify button gives first.');
@@ -76,12 +78,20 @@ function planLock({ guildId, roles, channels, botRoleIds, verifyChannelId, verif
     if (edits.length) channelEdits.push({ id: c.id, name: c.name, type: c.type, edits });
   }
 
+  // A role given on join that can see channels (on its own, or let in by name) lets new members in
+  // without verifying.
+  const joinRolesSee = joinRoleIds
+    .map((id) => byId.get(id))
+    .filter((r) => r && (verifiedRoleIds.includes(r.id) || sees(bits(r.permissions)) || channels.some((c) => !open.has(c.id) && (c.permission_overwrites || []).some((o) => o.id === r.id && bits(o.allow) & P.VIEW))))
+    .map((r) => r.name);
+
   const everyoneBits = bits(byId.get(guildId)?.permissions);
   return {
     alreadyHidden: !(everyoneBits & P.VIEW),
     everyone: { before: String(everyoneBits), after: String(everyoneBits & ~P.VIEW) },
     roles: roleEdits,
     stuckBots,
+    joinRolesSee,
     channels: channelEdits,
   };
 }

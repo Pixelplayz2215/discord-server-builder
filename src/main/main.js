@@ -628,23 +628,44 @@ const autoRoleProblems = new Map(); // `${botId}:${guildId}` -> latest problem
 const autoRolesOn = (botId) => store.listGuildConfigs().some(({ botId: b, config }) => b === botId && config.autoroles?.enabled);
 
 // What locking a server behind its Verify button would change, with the names the app shows.
-// openChannelIds: channels @everyone keeps seeing besides the Verify one (like #rules).
-async function verifyLockPlan(botId, guildId, { openChannelIds = [], hideVerify = true } = {}) {
+// openChannelIds: channels @everyone keeps seeing besides the Verify one (like #rules). While the
+// lock window is open the server is read once and reused, so ticking boxes answers at once; locking
+// itself (fresh) reads it again.
+const VERIFY_LOCK_READ_MS = 2 * 60 * 1000;
+const verifyLockReads = new Map(); // `${botId}:${guildId}` -> { at, roles, channels, me }
+async function verifyLockPlan(botId, guildId, { openChannelIds = [], hideVerify = false, fresh = false } = {}) {
   const v = store.getGuildConfig(botId, guildId).autoroles?.verify;
   if (!v?.enabled || !v.channelId || !v.roles?.length) throw new Error('Post a Verify button first: Edit → Post a Verify button, with the roles it gives.');
-  const rest = restFor(botId);
-  const [roles, channels, me] = await Promise.all([rest.request('GET', `/guilds/${guildId}/roles`), rest.request('GET', `/guilds/${guildId}/channels`), rest.request('GET', `/guilds/${guildId}/members/${botId}`)]);
+  const key = `${botId}:${guildId}`;
+  let read = verifyLockReads.get(key);
+  if (fresh || !read || Date.now() - read.at > VERIFY_LOCK_READ_MS) {
+    const rest = restFor(botId);
+    const [roles, channels, me] = await Promise.all([rest.request('GET', `/guilds/${guildId}/roles`), rest.request('GET', `/guilds/${guildId}/channels`), rest.request('GET', `/guilds/${guildId}/members/${botId}`)]);
+    read = { at: Date.now(), roles, channels, me };
+    verifyLockReads.set(key, read);
+  }
+  const { roles, channels, me } = read;
   const open = (Array.isArray(openChannelIds) ? openChannelIds : []).map(String).filter((id) => /^\d{15,21}$/.test(id) && id !== v.channelId);
-  const plan = verifyLock.planLock({ guildId, roles, channels, botRoleIds: me.roles || [], verifyChannelId: v.channelId, verifiedRoleIds: v.roles, openChannelIds: open, hideVerify: hideVerify !== false });
+  const auto = store.getGuildConfig(botId, guildId).autoroles;
+  const plan = verifyLock.planLock({ guildId, roles, channels, botRoleIds: me.roles || [], verifyChannelId: v.channelId, verifiedRoleIds: v.roles, openChannelIds: open, hideVerify: hideVerify === true, joinRoleIds: auto?.enabled ? auto.roles || [] : [] });
   const name = (id) => channels.find((c) => c.id === id)?.name || 'a channel';
   return {
     ...plan,
     verifyChannelId: v.channelId,
     verifyChannelName: name(v.channelId),
     verifiedRoles: v.roles.map((id) => ({ id, name: roles.find((r) => r.id === id)?.name || 'a role' })),
-    openChannels: open.map((id) => ({ id, name: name(id) })),
-    // Channels that could stay open to everyone too, for the app's list.
-    textChannels: channels.filter((c) => (c.type === 0 || c.type === 5) && c.id !== v.channelId).sort((a, b) => a.position - b.position).map((c) => ({ id: c.id, name: c.name })),
+    openChannels: open.map((id) => ({ id, name: name(id), type: channels.find((c) => c.id === id)?.type ?? 0 })),
+    // Channels that could stay open to everyone too, for the app's list: every kind, in Discord's
+    // order (by category, then text-like channels before voice ones).
+    openable: (() => {
+      const categories = new Map(channels.filter((c) => c.type === 4).map((c) => [c.id, c]));
+      const voiceLike = (c) => (c.type === 2 || c.type === 13 ? 1 : 0);
+      const where = (c) => categories.get(c.parent_id)?.position ?? -1;
+      return channels
+        .filter((c) => [0, 2, 5, 13, 15, 16].includes(c.type) && c.id !== v.channelId)
+        .sort((a, b) => where(a) - where(b) || voiceLike(a) - voiceLike(b) || a.position - b.position)
+        .map((c) => ({ id: c.id, name: c.name, type: c.type, category: categories.get(c.parent_id)?.name || '' }));
+    })(),
   };
 }
 
@@ -1623,7 +1644,7 @@ const handlers = {
     if (isMod(botId)) ownerOnly();
     const id = snowflake(guildId, 'server');
     if (store.getGuildConfig(botId, id).verifyLock) throw new Error('This server is already locked behind Verify. Unlock it first to lock it again.');
-    const plan = await verifyLockPlan(botId, id, options);
+    const plan = await verifyLockPlan(botId, id, { ...options, fresh: true }); // what the server is like now, not when the window opened
     const rest = restFor(botId);
     const progress = (text) => send('verifylock:progress', { botId, guildId: id, text });
     progress('Making a backup…');
