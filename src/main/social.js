@@ -1,8 +1,10 @@
 // Social alerts: posts in a Discord channel when a YouTube channel uploads (or starts a stream or
-// premiere) and when a Twitch channel goes live. Checks run in the app, while it's open or in the tray.
+// premiere), when a Twitch channel goes live, and when a GitHub account or repo publishes a release
+// or a new repo. Checks run in the app, while it's open or in the tray.
 // YouTube is read from each channel's public feed, which needs no login but is often down, or with
 // an API key through the YouTube Data API. Twitch goes through its API with a token from "Log in with
-// Twitch" (device-code sign-in, no client secret).
+// Twitch" (device-code sign-in, no client secret). GitHub is read from its public feeds (a repo's
+// releases, or an account's public activity), which need no login and aren't rate limited like its API.
 // No Electron here, so it can be tested with a fake fetch.
 
 const YT_FEED = 'https://www.youtube.com/feeds/videos.xml?channel_id=';
@@ -14,10 +16,15 @@ const HELIX = 'https://api.twitch.tv/helix';
 const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36';
 const YOUTUBE_EVERY_MS = 5 * 60 * 1000;
 const TWITCH_EVERY_MS = 60 * 1000;
+const GITHUB = 'https://github.com';
+const GITHUB_EVERY_MS = 5 * 60 * 1000;
+const GITHUB_UA = 'DiscordServerBuilder (social alerts)';
 // Videos older than this are never announced, so a PC that was off for a week doesn't post a backlog.
 const CATCH_UP_MS = 2 * 86400000;
 const MAX_SEEN = 60;
 const COLORS = { youtube: 0xff0033, twitch: 0x9146ff };
+// Which GitHub events an alert posts, unless set: releases, and new repos (an account only).
+const GITHUB_EVENTS = { releases: true, repos: true };
 // YouTube's feed sometimes answers 404 or a 5xx for a channel that exists, then works again moments
 // later. A failed read is tried again after these waits, and an alert only shows a problem once this
 // many checks in a row have failed (a missed video is still in the feed at the next check).
@@ -28,6 +35,8 @@ const realSleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const DEFAULT_MESSAGES = {
   youtube: '**{name}** posted a new video: {url}',
   twitch: '**{name}** is live on Twitch! {title}',
+  github: '**{name}** released **{title}**: {url}',
+  githubRepo: 'New on GitHub: **{name}** {url}',
 };
 
 class TwitchLoginNeeded extends Error {}
@@ -324,10 +333,86 @@ function twitchMessage(alert, stream, now = Date.now()) {
   return { content: (prefix + text).slice(0, 2000), embeds: [embed], allowed_mentions: allowed };
 }
 
+/* ---------------- GitHub ---------------- */
+
+// An account or repo from what the owner typed: a github.com link (any page in it), owner, or owner/repo.
+function parseGitHubSource(input) {
+  const text = String(input || '').trim().replace(/^(?:https?:\/\/)?(?:www\.)?github\.com\//i, '').replace(/^@/, '');
+  const m = text.match(/^([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))(?:\/([A-Za-z0-9._-]{1,100}))?(?:[/?#]|$)/);
+  if (!m) throw new Error('Paste a GitHub link, like github.com/you or github.com/you/repo.');
+  const repo = m[2]?.replace(/\.git$/i, '');
+  return repo && !/^(\.|\.\.)$/.test(repo) ? { owner: m[1], repo } : { owner: m[1], repo: null };
+}
+
+const githubFeedUrl = (source) => (source.kind === 'repo' ? `${GITHUB}/${source.id}/releases.atom` : `${GITHUB}/${source.id}.atom`);
+
+async function fetchGitHubFeed(url, fetchImpl) {
+  let res;
+  try {
+    res = await fetchImpl(url, { headers: { 'User-Agent': GITHUB_UA, Accept: 'application/atom+xml' } });
+  } catch (err) {
+    throw new Error(`Couldn't reach GitHub (${err.cause?.code || err.message}).`);
+  }
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`GitHub answered HTTP ${res.status}.`);
+  return res.text();
+}
+
+// The entries of a GitHub Atom feed: { id, title, url, at }, and the feed's own page link.
+function parseGitHubAtom(xml) {
+  const tag = (src, name) => decode(src.match(new RegExp(`<${name}(?:\\s[^>]*)?>([\\s\\S]*?)</${name}>`))?.[1]?.trim() || '');
+  const link = (src) => decode(src.match(/<link[^>]*rel="alternate"[^>]*href="([^"]+)"/)?.[1] || '');
+  const head = xml.split('<entry>')[0];
+  const entries = [...xml.matchAll(/<entry>([\s\S]*?)<\/entry>/g)].map(([, e]) => ({ id: tag(e, 'id'), title: tag(e, 'title'), url: link(e), author: tag(e, 'name'), at: Date.parse(tag(e, 'published') || tag(e, 'updated')) || 0 }));
+  return { page: link(head), entries: entries.filter((e) => e.id) };
+}
+
+// A GitHub account or public repo to watch, checked by reading its feed.
+async function resolveGitHubSource(input, fetchImpl) {
+  const { owner, repo } = parseGitHubSource(input);
+  const kind = repo ? 'repo' : 'user';
+  const xml = await fetchGitHubFeed(repo ? `${GITHUB}/${owner}/${repo}/releases.atom` : `${GITHUB}/${owner}.atom`, fetchImpl);
+  if (xml == null) throw new Error(repo ? `There's no public GitHub repo at github.com/${owner}/${repo}. Private repos can't be watched.` : `There's no GitHub account called ${owner}.`);
+  // The name as GitHub writes it: a repo's feed links to it, an account's entries name it.
+  const feed = parseGitHubAtom(xml);
+  const page = feed.page.replace(/^https:\/\/github\.com\//, '').replace(/\/releases$/, '');
+  const author = feed.entries.map((e) => e.author).find((a) => a.toLowerCase() === owner.toLowerCase());
+  const id = repo ? (/^[^/]+\/[^/]+$/.test(page) ? page : `${owner}/${repo}`) : author || (/^[^/]+$/.test(page) ? page : owner);
+  return { id, name: id, kind, url: `${GITHUB}/${id}`, avatar: `${GITHUB}/${id.split('/')[0]}.png?size=64` };
+}
+
+// What happened on GitHub, newest first: { id, kind: 'release'|'repo', repo, title, url, at }. A repo's
+// feed has its releases; an account's has its public activity, of which releases and new (or newly
+// public) repos are kept.
+async function fetchGitHubEvents(source, fetchImpl) {
+  const xml = await fetchGitHubFeed(githubFeedUrl(source), fetchImpl);
+  if (xml == null) throw new Error(source.kind === 'repo' ? 'This repo is gone or private now.' : 'This GitHub account is gone.');
+  const { entries } = parseGitHubAtom(xml);
+  if (source.kind === 'repo') return entries.map((e) => ({ ...e, kind: 'release', repo: source.id }));
+  const REPO = '([A-Za-z0-9-]+\\/[A-Za-z0-9._-]+)';
+  const events = [];
+  for (const e of entries) {
+    let m;
+    if ((m = e.title.match(new RegExp(` released (.+) at ${REPO}$`)))) events.push({ ...e, kind: 'release', title: m[1], repo: m[2] });
+    else if ((m = e.title.match(new RegExp(` created a repository ${REPO}$`)) || e.title.match(new RegExp(` made ${REPO} public$`)))) events.push({ ...e, kind: 'repo', title: m[1], repo: m[1], url: e.url || `${GITHUB}/${m[1]}` });
+  }
+  return events;
+}
+
+// GitHub links unfurl into a preview card on their own, so the message is just text.
+function githubMessage(alert, event) {
+  const { prefix, allowed } = mentionFor(alert);
+  const template = event.kind === 'repo' ? alert.repoMessage || DEFAULT_MESSAGES.githubRepo : alert.message || DEFAULT_MESSAGES.github;
+  const text = fill(template, { name: event.repo.split('/').pop(), title: event.title, url: event.url, game: '' });
+  return { content: (prefix + text).slice(0, 2000), allowed_mentions: allowed };
+}
+
+const githubEventsOf = (alert) => ({ ...GITHUB_EVENTS, ...alert.events, repos: alert.source?.kind === 'user' && (alert.events?.repos ?? GITHUB_EVENTS.repos) });
+
 /* ---------------- Watcher ---------------- */
 
-// alerts: [{ id, botId, guildId, channelId, platform: 'youtube'|'twitch', source: { id, name, login?, url },
-//   message, mention, shorts, enabled, createdAt, state: { seen, live, checkedAt, error, lastPostAt } }]
+// alerts: [{ id, botId, guildId, channelId, platform: 'youtube'|'twitch'|'github', source: { id, name, login?, url, kind? },
+//   message, repoMessage?, events?, mention, shorts, enabled, createdAt, state: { seen, live, checkedAt, error, lastPostAt } }]
 // post(alert, message) sends to Discord; updateState(id, state) saves an alert's state.
 function createSocialWatcher({ getAlerts, updateState, post, getTwitch, fetchImpl, now = Date.now, sleep = realSleep, youtubeKey = () => '' }) {
   let running = false;
@@ -398,6 +483,34 @@ function createSocialWatcher({ getAlerts, updateState, post, getTwitch, fetchImp
     }
   }
 
+  // GitHub: each account or repo's feed every 5 minutes; new releases and repos, oldest first.
+  async function checkGitHub(alerts) {
+    const bySource = new Map();
+    for (const a of alerts) if (now() - (a.state?.checkedAt || 0) >= GITHUB_EVERY_MS) bySource.set(`${a.source.kind}:${a.source.id}`, [...(bySource.get(`${a.source.kind}:${a.source.id}`) || []), a]);
+    for (const group of bySource.values()) {
+      let events;
+      try {
+        events = await fetchGitHubEvents(group[0].source, fetchImpl);
+      } catch (err) {
+        for (const a of group) {
+          const failures = (a.state?.failures || 0) + 1;
+          updateState(a.id, { ...a.state, checkedAt: now(), failures, error: failures >= FAILS_BEFORE_ERROR ? err.message : a.state?.error || null });
+        }
+        continue;
+      }
+      for (const a of group) {
+        const state = { ...a.state, checkedAt: now(), error: null, failures: 0 };
+        const seen = new Set(state.seen || []);
+        const since = Math.max(a.createdAt || 0, now() - CATCH_UP_MS);
+        const wanted = githubEventsOf(a);
+        const fresh = events.filter((e) => !seen.has(e.id) && e.at >= since && (e.kind === 'repo' ? wanted.repos : wanted.releases)).reverse(); // oldest first
+        for (const e of fresh) await send(a, githubMessage(a, e), state);
+        state.seen = [...new Set([...events.map((e) => e.id), ...seen])].slice(0, MAX_SEEN);
+        updateState(a.id, state);
+      }
+    }
+  }
+
   async function tick() {
     if (running) return;
     running = true;
@@ -405,6 +518,7 @@ function createSocialWatcher({ getAlerts, updateState, post, getTwitch, fetchImp
       const alerts = getAlerts().filter((a) => a.enabled !== false);
       await checkYouTube(alerts.filter((a) => a.platform === 'youtube'));
       await checkTwitch(alerts.filter((a) => a.platform === 'twitch'));
+      await checkGitHub(alerts.filter((a) => a.platform === 'github'));
     } finally {
       running = false;
     }
@@ -427,6 +541,12 @@ module.exports = {
   createSocialWatcher,
   youtubeMessage,
   twitchMessage,
+  parseGitHubSource,
+  parseGitHubAtom,
+  resolveGitHubSource,
+  fetchGitHubEvents,
+  githubMessage,
+  githubEventsOf,
   mentionFor,
   TwitchLoginNeeded,
   DEFAULT_MESSAGES,

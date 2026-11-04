@@ -26,7 +26,7 @@ const ACTIVITY_SAVE_DELAY_MS = 5 * 60 * 1000; // the running totals alone change
 const CATCH_UP_DELAY_MS = 5000;
 const MAX_FOUND_POLLS = 50;
 
-const FEATURES = ['giveaways']; // what this portal runs beyond the first 24/7 release, so the app knows
+const FEATURES = ['giveaways', 'github']; // what this portal runs beyond the first 24/7 release, so the app knows
 // foundGiveaways and foundPanels: giveaways and reaction roles made with /giveaway and /reactionroles,
 // kept here until the app has them in its settings.
 const emptyState = () => ({ announcements: {}, giveaways: {}, foundGiveaways: [], foundPanels: [], polls: { found: [], counts: {}, forgotten: [] }, alerts: {}, activity: {} });
@@ -275,7 +275,8 @@ function createAlways({ rest, token, publicUrl = '', cards = null, fetchImpl = f
     return message;
   }
 
-  function youtubeAlerts() {
+  // The social alerts the portal checks (YouTube and GitHub), with what it saw last.
+  function socialAlerts() {
     return active().flatMap(([, s]) => s.bundle.alerts.map((a) => ({ ...a, state: s.state.alerts[a.id] || a.state })));
   }
 
@@ -350,7 +351,7 @@ function createAlways({ rest, token, publicUrl = '', cards = null, fetchImpl = f
         now,
       }),
       social: social.createSocialWatcher({
-        getAlerts: youtubeAlerts,
+        getAlerts: socialAlerts,
         updateState: updateAlert,
         post: async (alert, message) => {
           const sent = await rest.request('POST', `/channels/${alert.channelId}/messages`, { body: message });

@@ -212,8 +212,17 @@ async function postAlert(alert, message) {
   await restFor(alert.botId).request('POST', `/channels/${alert.channelId}/messages`, { body: message });
 }
 
+// With 24/7 on, the portal checks a bot's YouTube alerts, and its GitHub ones once it's new enough
+// to (the app waits until it has heard from the portal).
+function appChecksAlert(a) {
+  if (a.platform === 'twitch' || !alwaysOn(a.botId)) return true;
+  if (a.platform === 'youtube') return false;
+  const status = alwaysStatus.get(a.botId)?.status;
+  return !!status && !status.features?.includes('github');
+}
+
 const socialWatcher = social.createSocialWatcher({
-  getAlerts: () => store.getSocial().alerts.filter((a) => !(a.platform === 'youtube' && alwaysOn(a.botId))), // the portal checks those
+  getAlerts: () => store.getSocial().alerts.filter(appChecksAlert),
   updateState: (id, state) => updateAlert(id, { state }),
   post: postAlert,
   getTwitch,
@@ -863,7 +872,7 @@ function alwaysFile(name) {
 // Servers with settings in the app, plus ones saved for the portal before (to tell it they're off).
 function alwaysServerIds(botId) {
   const ids = new Set(store.listGuildConfigs().filter((c) => c.botId === botId).map((c) => c.guildId));
-  for (const a of store.getSocial().alerts) if (a.botId === botId && a.platform === 'youtube') ids.add(a.guildId);
+  for (const a of store.getSocial().alerts) if (a.botId === botId && a.platform !== 'twitch') ids.add(a.guildId);
   for (const id of Object.keys(store.getBot(botId)?.always?.saved || {})) ids.add(id);
   return [...ids].filter((id) => /^\d{15,21}$/.test(id));
 }
@@ -2106,6 +2115,7 @@ const handlers = {
   // Turns what the owner typed (a link, @handle or channel name) into the channel to watch.
   'social:resolve': async (platform, input) => {
     if (platform === 'youtube') return social.resolveYouTubeChannel(input, fetch, { apiKey: store.getYouTubeKey() });
+    if (platform === 'github') return social.resolveGitHubSource(input, fetch);
     if (platform !== 'twitch') throw new Error('Unknown platform.');
     const twitch = getTwitch();
     if (!twitch) throw new Error('Log in with Twitch first.');
@@ -2116,11 +2126,16 @@ const handlers = {
 
   'social:saveAlert': (input) => {
     const a = input || {};
-    if (!['youtube', 'twitch'].includes(a.platform)) throw new Error('Pick YouTube or Twitch.');
+    if (!['youtube', 'twitch', 'github'].includes(a.platform)) throw new Error('Pick YouTube, Twitch or GitHub.');
     const bot = store.getBot(String(a.botId));
     if (!bot || bot.type === 'mod') throw new Error('Pick one of your bots.');
-    const sourceOk = a.platform === 'youtube' ? /^UC[\w-]{22}$/.test(a.source?.id || '') : /^\d{1,20}$/.test(a.source?.id || '');
-    if (!sourceOk) throw new Error('Check the channel first.');
+    const id = String(a.source?.id || '');
+    const kind = a.source?.kind === 'repo' ? 'repo' : 'user';
+    const sourceOk = { youtube: /^UC[\w-]{22}$/, twitch: /^\d{1,20}$/, github: kind === 'repo' ? /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/ : /^[A-Za-z0-9-]{1,39}$/ }[a.platform].test(id);
+    if (!sourceOk) throw new Error(a.platform === 'github' ? 'Check the GitHub link first.' : 'Check the channel first.');
+    // GitHub: releases, and new repos (an account only).
+    const events = a.platform === 'github' ? { releases: a.events?.releases !== false, repos: kind === 'user' && a.events?.repos !== false } : undefined;
+    if (events && !events.releases && !events.repos) throw new Error('Pick releases, new repos, or both.');
     const mention = ['none', 'everyone', 'here'].includes(a.mention) || /^\d{15,21}$/.test(String(a.mention)) ? String(a.mention) : 'none';
     const { alerts } = store.getSocial();
     const existing = alerts.find((x) => x.id === a.id);
@@ -2132,8 +2147,9 @@ const handlers = {
       guildName: String(a.guildName || '').slice(0, 100),
       channelId: snowflake(a.channelId, 'channel'),
       channelName: String(a.channelName || '').slice(0, 100),
-      source: { id: a.source.id, name: String(a.source.name || a.source.id).slice(0, 100), login: a.source.login || null, url: String(a.source.url || '').slice(0, 200), avatar: a.source.avatar || null },
+      source: { id: a.source.id, name: String(a.source.name || a.source.id).slice(0, 100), login: a.source.login || null, url: String(a.source.url || '').slice(0, 200), avatar: a.source.avatar || null, ...(a.platform === 'github' ? { kind } : {}) },
       message: String(a.message || '').slice(0, 1000),
+      ...(events ? { events, repoMessage: String(a.repoMessage || '').slice(0, 1000) } : {}),
       mention,
       mentionName: /^\d/.test(mention) ? String(a.mentionName || '').slice(0, 100) : '',
       shorts: a.shorts !== false,
@@ -2174,6 +2190,11 @@ const handlers = {
       }
       if (!video) throw new Error(feed.videos.length ? 'Its latest videos are all Shorts, which this alert leaves out.' : 'This channel has no videos to show in a test yet.');
       message = social.youtubeMessage(alert, feed.name || alert.source.name, video);
+    } else if (alert.platform === 'github') {
+      const wanted = social.githubEventsOf(alert);
+      const event = (await social.fetchGitHubEvents(alert.source, fetch)).find((e) => (e.kind === 'repo' ? wanted.repos : wanted.releases));
+      if (!event) throw new Error(alert.source.kind === 'repo' ? 'This repo has no releases to show in a test yet.' : 'There are no recent releases or new repos to show in a test yet.');
+      message = social.githubMessage(alert, event);
     } else {
       const twitch = getTwitch();
       if (!twitch) throw new Error('Log in with Twitch first.');

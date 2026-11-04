@@ -810,6 +810,7 @@ input[type='range'] { width: 100%; accent-color: var(--accent); cursor: pointer;
 .social-icon svg { width: 18px; height: 18px; }
 .social-icon.youtube { background: color-mix(in srgb, #ff0033 16%, transparent); color: #ff4d6d; }
 .social-icon.twitch { background: color-mix(in srgb, #9146ff 18%, transparent); color: #a970ff; }
+.social-icon.github { background: color-mix(in srgb, var(--text) 10%, transparent); color: var(--text); }
 .client-id-box { margin: 4px 0 8px 46px; padding: 12px 14px; border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); font-size: calc(13rem / 14); }
 .client-id-box summary { cursor: pointer; font-weight: 600; }
 .client-id-box ol { margin: 10px 0 12px; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }

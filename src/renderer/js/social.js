@@ -1,10 +1,19 @@
-// Social page: post in a Discord channel when a YouTube channel uploads or a Twitch channel goes live.
-// The checks run in the main process while the app is open or in the tray.
+// Social page: post in a Discord channel when a YouTube channel uploads, a Twitch channel goes live,
+// or a GitHub account or repo publishes a release or a new repo. The checks run in the main process
+// while the app is open or in the tray.
 
 const PLATFORMS = {
   youtube: { name: 'YouTube', icon: 'youtube', badge: 'coral', placeholder: 'https://www.youtube.com/@channel', when: 'post a video or start a stream' },
   twitch: { name: 'Twitch', icon: 'twitch', badge: 'peri', placeholder: 'twitch.tv/name, or just the name', when: 'go live' },
+  github: { name: 'GitHub', icon: 'github', badge: '', placeholder: 'github.com/you (every repo), or github.com/you/repo', when: 'release an update' },
 };
+
+// What a GitHub alert posts for, in words.
+function githubWhen(a) {
+  const repos = a.source?.kind === 'user' && a.events?.repos !== false;
+  const releases = a.events?.releases !== false;
+  return [releases ? 'release an update' : null, repos ? 'make a new repo' : null].filter(Boolean).join(' or ') || 'do something';
+}
 const TWITCH_CONSOLE = 'https://dev.twitch.tv/console/apps';
 const YOUTUBE_API_CONSOLE = 'https://console.cloud.google.com/apis/library/youtube.googleapis.com';
 // The watcher's message when YouTube's public feed fails (src/main/social.js); group 1 is the HTTP status.
@@ -53,7 +62,7 @@ const SocialPage = {
             { class: 'grow' },
             h('span', { class: 'eyebrow' }, 'Announce'),
             h('h1', null, 'Social alerts'),
-            h('p', { class: 'muted', style: { marginTop: '6px' } }, 'Post in your Discord server when a YouTube channel uploads or a Twitch channel goes live. The app checks while it is open or in the tray.'),
+            h('p', { class: 'muted', style: { marginTop: '6px' } }, 'Post in your Discord server when a YouTube channel uploads, a Twitch channel goes live, or a GitHub account or repo publishes a release or a new repo. The app checks while it is open or in the tray; with Run 24/7 on, your mod portal checks YouTube and GitHub around the clock.'),
           ),
           addBtn,
         ),
@@ -252,7 +261,7 @@ const SocialPage = {
       h(
         'div',
         { class: 'grow', style: { minWidth: 0 } },
-        h('div', { class: 'row', style: { gap: '6px' } }, h('span', { class: 'primary ellipsis' }, a.source.name), h('span', { class: `badge ${p.badge}` }, p.name), h('span', { class: 'subtle' }, `when they ${p.when}`)),
+        h('div', { class: 'row', style: { gap: '6px' } }, h('span', { class: 'primary ellipsis' }, a.source.name), h('span', { class: `badge ${p.badge}` }, p.name), h('span', { class: 'subtle' }, `when they ${a.platform === 'github' ? githubWhen(a) : p.when}`)),
         h('div', { class: 'secondary ellipsis' }, `→ #${a.channelName || a.channelId} in ${a.guildName || 'a server'} · via ${bot ? displayName(bot) : 'a removed bot'}${ping ? ` · pings ${ping}` : ''}`),
         h('div', { class: 'stat-line', style: { marginTop: '4px' } }, status),
       ),
@@ -292,26 +301,31 @@ const SocialPage = {
     if (!owners.length) return toast('Connect a bot on the Home page first.', 'error');
     const d = SocialPage.data;
     const draft = alert
-      ? { ...alert, source: { ...alert.source } }
-      : { platform: 'youtube', botId: owners[0].id, guildId: '', channelId: '', mention: 'none', message: '', shorts: true, enabled: true, source: null };
+      ? { ...alert, source: { ...alert.source }, events: { releases: true, repos: true, ...alert.events } }
+      : { platform: 'youtube', botId: owners[0].id, guildId: '', channelId: '', mention: 'none', message: '', repoMessage: '', events: { releases: true, repos: true }, shorts: true, enabled: true, source: null };
     if (!App.bot(draft.botId)) draft.botId = owners[0].id;
 
     // Where to watch
-    const resolved = h('div', { class: 'progress-note' }, draft.source ? `✓ ${draft.source.name}` : '');
+    // A GitHub account covers all its public repos; a repo, just that one's releases.
+    const found = (source) => (draft.platform !== 'github' ? `✓ ${source.name}` : source.kind === 'repo' ? `✓ ${source.name}: this repo's releases` : `✓ ${source.name}: every public repo of theirs`);
+    const resolved = h('div', { class: 'progress-note' }, draft.source ? found(draft.source) : '');
     const sourceInput = h('input', { class: 'input', value: draft.source ? draft.source.login || draft.source.url : '', placeholder: PLATFORMS[draft.platform].placeholder, autocomplete: 'off' });
     sourceInput.addEventListener('input', () => {
       draft.source = null;
       resolved.textContent = '';
+      githubParts();
     });
     const resolve = async () => {
-      if (!sourceInput.value.trim()) throw new Error(draft.platform === 'youtube' ? 'Paste the YouTube channel link.' : 'Enter the Twitch channel.');
+      if (!sourceInput.value.trim()) throw new Error({ youtube: 'Paste the YouTube channel link.', twitch: 'Enter the Twitch channel.', github: 'Paste the GitHub link.' }[draft.platform]);
       resolved.textContent = 'Checking…';
       try {
         draft.source = await api('social:resolve', draft.platform, sourceInput.value.trim());
-        resolved.textContent = `✓ ${draft.source.name}`;
+        resolved.textContent = found(draft.source);
       } catch (err) {
         resolved.textContent = '';
         throw err;
+      } finally {
+        githubParts();
       }
     };
     const checkBtn = h('button', { class: 'btn sm' }, icon('search'), 'Check');
@@ -363,19 +377,54 @@ const SocialPage = {
 
     const message = h('textarea', { class: 'textarea', rows: 3, maxlength: 1000, placeholder: d.defaults[draft.platform] }, draft.message || '');
     const messageHint = h('div', { class: 'hint' });
+    const messageField = field('Message', message, messageHint);
+    const messageLabel = messageField.querySelector('label');
+    const watchLabel = h('label', null, 'Channel to watch');
     let shorts = draft.shorts !== false;
     const shortsRow = h('div', null, switchEl(shorts, (v) => (shorts = v), 'Include Shorts'));
+
+    // GitHub: what to post for. New repos only work for an account (a repo can't make more repos).
+    const repoMessage = h('textarea', { class: 'textarea', rows: 2, maxlength: 1000, placeholder: d.defaults.githubRepo }, draft.repoMessage || '');
+    const repoMessageField = field('Message for new repos', repoMessage, 'Leave empty for the message shown. You can use {name} (the repo) and {url}.');
+    const reposHint = h('div', { class: 'hint', style: { margin: '-4px 0 0 46px' } }, 'Only for a whole account: paste github.com/you instead of a repo link to get these.');
+    const reposSwitch = switchEl(draft.events.repos, (v) => {
+      draft.events.repos = v;
+      githubParts();
+    }, 'New repos (when they make one, or make one public)');
+    const githubRow = h(
+      'div',
+      { class: 'stack', style: { gap: '8px' } },
+      h('div', { class: 'label' }, 'Post when there are'),
+      switchEl(draft.events.releases, (v) => (draft.events.releases = v), 'New releases'),
+      reposSwitch,
+      reposHint,
+    );
+    function githubParts() {
+      const github = draft.platform === 'github';
+      const forRepo = draft.source?.kind === 'repo';
+      githubRow.style.display = github ? '' : 'none';
+      reposSwitch.querySelector('input').disabled = forRepo;
+      reposHint.style.display = github && forRepo ? '' : 'none';
+      repoMessageField.style.display = github && !forRepo && draft.events.repos ? '' : 'none';
+    }
     const twitchWarning = h('div', { class: 'callout warn' }, icon('alert'), h('div', null, 'Twitch alerts need you to log in with Twitch first (Accounts, above).'));
     const platformParts = () => {
       const p = PLATFORMS[draft.platform];
       sourceInput.placeholder = p.placeholder;
       message.placeholder = d.defaults[draft.platform];
-      messageHint.textContent = `Leave empty for the message shown. You can use {name}, {title}, {url}${draft.platform === 'twitch' ? ' and {game}. Twitch alerts also get a card with the stream title, game and preview, so you don\'t need {url}.' : '. A {url} shows YouTube\'s video preview.'}`;
+      messageHint.textContent = {
+        twitch: "Leave empty for the message shown. You can use {name}, {title}, {url} and {game}. Twitch alerts also get a card with the stream title, game and preview, so you don't need {url}.",
+        youtube: "Leave empty for the message shown. You can use {name}, {title} and {url}. A {url} shows YouTube's video preview.",
+        github: "Leave empty for the message shown. You can use {name} (the repo), {title} (the release) and {url}. A {url} shows GitHub's preview of the release.",
+      }[draft.platform];
+      messageLabel.textContent = draft.platform === 'github' ? 'Message for releases' : 'Message';
+      watchLabel.textContent = draft.platform === 'github' ? 'Account or repo to watch' : 'Channel to watch';
       shortsRow.style.display = draft.platform === 'youtube' ? '' : 'none';
       mine.style.display = draft.platform === 'twitch' && d.twitch.account ? '' : 'none';
       twitchWarning.style.display = draft.platform === 'twitch' && !d.twitch.loggedIn ? '' : 'none';
+      githubParts();
     };
-    const platformSel = selectEl([['youtube', 'YouTube: a channel posts a video or starts a stream'], ['twitch', 'Twitch: a channel goes live']], draft.platform, (v) => {
+    const platformSel = selectEl([['youtube', 'YouTube: a channel posts a video or starts a stream'], ['twitch', 'Twitch: a channel goes live'], ['github', 'GitHub: a new release, or a new repo']], draft.platform, (v) => {
       draft.platform = v;
       draft.source = null;
       sourceInput.value = '';
@@ -390,10 +439,12 @@ const SocialPage = {
       body: [
         field('When', platformSel),
         twitchWarning,
-        field('Channel to watch', h('div', { class: 'stack', style: { gap: '6px' } }, h('div', { class: 'row' }, h('div', { class: 'grow' }, sourceInput), checkBtn, mine), resolved)),
+        h('div', { class: 'field' }, watchLabel, h('div', { class: 'stack', style: { gap: '6px' } }, h('div', { class: 'row' }, h('div', { class: 'grow' }, sourceInput), checkBtn, mine), resolved)),
+        githubRow,
         h('div', { class: 'grid cols-2', style: { gap: '12px' } }, field('Bot that posts', botSel), field('Server', guildSel)),
         h('div', { class: 'grid cols-2', style: { gap: '12px' } }, field('Post in', channelSel), field('Ping', mentionSel)),
-        field('Message', message, messageHint),
+        messageField,
+        repoMessageField,
         shortsRow,
       ],
       actions: [
@@ -408,7 +459,7 @@ const SocialPage = {
             const guildName = guildSel.selectedOptions[0]?.textContent || '';
             const channelName = (channelSel.selectedOptions[0]?.textContent || '').replace(/^#/, '').replace(/ \(announcements\)$/, '');
             const mentionName = mentionSel.selectedOptions[0]?.textContent || '';
-            SocialPage.data = await api('social:saveAlert', { ...draft, guildId: guildSel.value, guildName, channelId: channelSel.value, channelName, mention: mentionSel.value, mentionName, message: message.value.trim(), shorts });
+            SocialPage.data = await api('social:saveAlert', { ...draft, guildId: guildSel.value, guildName, channelId: channelSel.value, channelName, mention: mentionSel.value, mentionName, message: message.value.trim(), repoMessage: repoMessage.value.trim(), shorts });
             toast(alert ? 'Alert saved' : `Alert added for ${draft.source.name}`);
             SocialPage.rerender();
           },

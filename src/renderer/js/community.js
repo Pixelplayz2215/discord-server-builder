@@ -11,7 +11,7 @@ const COMMUNITY_PAGES = [
   ['giveaways', 'Giveaways', 'gift', 'Prizes with winners picked for you'],
   ['polls', 'Polls', 'poll', 'Votes with coloured bars'],
   ['stats', 'Server stats', 'stats', 'Live member, bot and role counts'],
-  ['social', 'Social alerts', 'megaphone', 'YouTube uploads and Twitch streams'],
+  ['social', 'Social alerts', 'megaphone', 'YouTube, Twitch and GitHub releases'],
 ];
 
 const Community = {

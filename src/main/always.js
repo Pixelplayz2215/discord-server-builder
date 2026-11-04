@@ -17,6 +17,8 @@ const STATE_FILE = 'state.dsb';
 const FILE_PREFIX = 'f-';
 const SILENT = 1 << 12; // posted without notifying anyone
 const MAX_SKEW_MS = 5 * 60 * 1000;
+// Social alerts the portal checks (Twitch's stay with the app, which has the login).
+const PORTAL_ALERTS = new Set(['youtube', 'github']);
 const BIT = { VIEW_CHANNEL: 1n << 10n, SEND_MESSAGES: 1n << 11n, ATTACH_FILES: 1n << 15n, READ_MESSAGE_HISTORY: 1n << 16n };
 const FILE_TYPES = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' };
 
@@ -79,7 +81,7 @@ function makeBundle({ guildId, config = {}, alerts = [], bot = {}, youtubeKey = 
     logs: config.logs || null,
     announcements: config.announcements || [],
     giveaways: config.giveaways || [],
-    alerts: alerts.filter((a) => a.platform === 'youtube' && a.guildId === String(guildId)),
+    alerts: alerts.filter((a) => PORTAL_ALERTS.has(a.platform) && a.guildId === String(guildId)),
     youtubeKey: '',
   };
   if (bundle.alerts.length) bundle.youtubeKey = youtubeKey || '';
@@ -192,7 +194,7 @@ function mergeServer(config, server) {
 function mergeAlerts(alerts, botId, servers = {}) {
   let changed = false;
   const next = alerts.map((a) => {
-    const st = a.botId === botId && a.platform === 'youtube' && servers[a.guildId]?.on ? servers[a.guildId].state?.alerts?.[a.id] : null;
+    const st = a.botId === botId && PORTAL_ALERTS.has(a.platform) && servers[a.guildId]?.on ? servers[a.guildId].state?.alerts?.[a.id] : null;
     if (!st || JSON.stringify(st) === JSON.stringify(a.state)) return a;
     changed = true;
     return { ...a, state: st };

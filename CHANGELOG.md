@@ -6,6 +6,8 @@ To release: add your changes as `- ` lines under **Unreleased**, then run `npm r
 
 ## Unreleased
 
+- **GitHub alerts.** Social alerts can now post when you publish a release or make a new repo on GitHub, with your own message and an optional ping, like YouTube and Twitch alerts. Paste a repo's link to post its releases, or your profile's (github.com/you) to post releases from any of your public repos, and new repos when you make one or make one public. Pick **New releases**, **New repos** or both; each has its own message. GitHub's links show their preview in Discord. There's nothing to log in to and no key to add, though private repos can't be watched. Checks run every 5 minutes, and with **Run 24/7** on your mod portal does them around the clock (update it with **Sync fork**; until then the app checks).
+
 ## 1.2.13 (2026-11-04)
 
 - **@Verified shows on each channel.** Lock behind Verify now also adds the verified role to every channel members can see, with View Channel ✓. Each channel's permissions screen then shows who can see it, as if you'd done it by hand. Before, the role could see channels through its own role settings only, so the channel screens didn't show it. Private channels stay as they are.
