@@ -655,6 +655,8 @@ async function verifyLockPlan(botId, guildId, { openChannelIds = [], hideVerify 
     verifyChannelName: name(v.channelId),
     verifiedRoles: v.roles.map((id) => ({ id, name: roles.find((r) => r.id === id)?.name || 'a role' })),
     openChannels: open.map((id) => ({ id, name: name(id), type: channels.find((c) => c.id === id)?.type ?? 0 })),
+    // Channels that let everyone in by name now (when updating a lock, the ones kept open before).
+    currentlyOpen: channels.filter((c) => c.id !== v.channelId && c.type !== 4 && (c.permission_overwrites || []).some((o) => o.id === guildId && BigInt(o.allow || 0) & (1n << 10n))).map((c) => c.id),
     // Channels that could stay open to everyone too, for the app's list: every kind, in Discord's
     // order (by category, then text-like channels before voice ones).
     openable: (() => {
@@ -1639,22 +1641,30 @@ const handlers = {
   },
 
   // Backs the server up, gives the verified roles to everyone already here (unless asked not to),
-  // then changes the permissions, keeping a record so Unlock can put them back.
+  // then changes the permissions, keeping a record so Unlock can put them back. On a server that's
+  // locked already it updates the lock (other channels kept open, new channels covered); the
+  // record then holds both, newest first, so Unlock still ends at how it was before the first lock.
   'verifylock:lock': async (botId, guildId, options = {}) => {
     if (isMod(botId)) ownerOnly();
     const id = snowflake(guildId, 'server');
-    if (store.getGuildConfig(botId, id).verifyLock) throw new Error('This server is already locked behind Verify. Unlock it first to lock it again.');
+    const earlier = store.getGuildConfig(botId, id).verifyLock || null;
+    if (earlier) options = { ...options, giveExisting: false }; // members who haven't verified yet stay out
     const plan = await verifyLockPlan(botId, id, { ...options, fresh: true }); // what the server is like now, not when the window opened
     const rest = restFor(botId);
     const progress = (text) => send('verifylock:progress', { botId, guildId: id, text });
     progress('Making a backup…');
-    backups.saveBackup(backupsRoot(), id, await backups.snapshotServer(rest, id, { label: 'Before locking behind Verify' }));
+    backups.saveBackup(backupsRoot(), id, await backups.snapshotServer(rest, id, { label: earlier ? 'Before updating the Verify lock' : 'Before locking behind Verify' }));
     const roleIds = plan.verifiedRoles.map((r) => r.id);
     if (options.giveExisting !== false) {
       await verifyLock.giveToMembers(rest, id, roleIds, { reason: 'Already here when the server was locked behind Verify', onProgress: (done, total) => progress(`Giving the role… ${done}/${total}`) });
     }
     progress('Changing permissions…');
-    const keep = (record, partial = false) => store.setGuildConfig(botId, id, { verifyLock: { ...record, partial, verifyChannelId: plan.verifyChannelId, roleIds } });
+    const keep = (record, partial = false) => {
+      const merged = earlier
+        ? { ...earlier, everyone: earlier.everyone ?? record.everyone, roles: [...earlier.roles, ...record.roles], channels: [...record.channels, ...earlier.channels], updatedAt: record.at }
+        : record;
+      store.setGuildConfig(botId, id, { verifyLock: { ...merged, partial: partial || !!earlier?.partial, verifyChannelId: plan.verifyChannelId, roleIds } });
+    };
     try {
       keep(await verifyLock.applyLock(rest, id, plan, { reason: 'Locked behind the Verify button', onStep: (done, total) => progress(`Changing permissions… ${done}/${total}`) }));
     } catch (err) {

@@ -124,24 +124,25 @@ const AutoRolesPage = {
         AutoRolesPage.load();
       }
     }));
-    // Locking the server behind the Verify button, or unlocking it again.
-    const lockBtn = h('button', { class: 'btn sm', 'data-lock': key }, icon(s.lock ? 'unlock' : 'lock'), AutoRolesPage.lockProgress[key] || (s.lock ? 'Unlock' : 'Lock behind Verify…'));
+    // Locking the server behind the Verify button (or updating the lock), and unlocking it again.
+    const lockBtn = h('button', { class: 'btn sm', 'data-lock': key }, icon('lock'), AutoRolesPage.lockProgress[key] || (s.lock ? 'Update lock…' : 'Lock behind Verify…'));
     lockBtn.addEventListener('click', withBusy(lockBtn, async () => {
       try {
-        if (s.lock) {
-          if (!(await confirmDialog({ title: `Unlock ${s.guildName || 'the server'}?`, message: '@everyone sees the channels it could before it was locked, and the permission changes are put back. Members keep their verified role.', confirmLabel: 'Unlock' }))) return;
-          AutoRolesPage.data = await api('verifylock:unlock', s.botId, s.guildId);
-          toast('Unlocked: @everyone sees the channels again');
-        } else {
-          const options = await AutoRolesPage.lockDialog(s);
-          if (!options) return;
-          AutoRolesPage.data = await api('verifylock:lock', s.botId, s.guildId, options);
-          toast('Locked: new members see only the Verify channel until they verify');
-        }
+        const options = await AutoRolesPage.lockDialog(s, { updating: !!s.lock });
+        if (!options) return;
+        AutoRolesPage.data = await api('verifylock:lock', s.botId, s.guildId, options);
+        toast(s.lock ? 'Lock updated' : 'Locked: new members see only the Verify channel until they verify');
       } finally {
         delete AutoRolesPage.lockProgress[key];
         AutoRolesPage.load();
       }
+    }));
+    const unlockBtn = h('button', { class: 'btn sm ghost' }, icon('unlock'), 'Unlock');
+    unlockBtn.addEventListener('click', withBusy(unlockBtn, async () => {
+      if (!(await confirmDialog({ title: `Unlock ${s.guildName || 'the server'}?`, message: '@everyone sees the channels it could before it was locked, and the permission changes are put back. Members keep their verified role.', confirmLabel: 'Unlock' }))) return;
+      AutoRolesPage.data = await api('verifylock:unlock', s.botId, s.guildId);
+      toast('Unlocked: @everyone sees the channels again');
+      AutoRolesPage.rerender();
     }));
     const line = (ic, label, value) => h('div', { class: 'ticket-line' }, icon(ic), h('span', { class: 'subtle' }, label), h('span', { class: 'ellipsis' }, value));
     const delay = AUTO_ROLE_DELAYS.find(([v]) => Number(v) === s.delay)?.[1].toLowerCase() || 'right away';
@@ -167,6 +168,7 @@ const AutoRolesPage = {
         { class: 'row wrap', style: { marginTop: '14px' } },
         existing,
         s.verify.enabled ? lockBtn : null,
+        s.lock ? unlockBtn : null,
         h('button', { class: 'btn sm', onclick: () => AutoRolesPage.edit(s) }, icon('edit'), 'Edit'),
         s.verify.messageId ? h('button', { class: 'btn sm ghost', onclick: () => openExternal(`https://discord.com/channels/${s.guildId}/${s.verify.channelId}/${s.verify.messageId}`) }, icon('external'), 'Open Verify message') : null,
         h('div', { class: 'grow' }),
@@ -176,9 +178,11 @@ const AutoRolesPage = {
   },
 
   // Shows what locking the server behind its Verify button would change, with the choices.
-  // Resolves to the options to lock with, or null.
-  async lockDialog(s) {
-    const options = { giveExisting: true, hideVerify: false, openChannelIds: [] };
+  // updating: it's locked already, so this changes the lock (the channels open now start ticked, and
+  // nobody is given the role). Resolves to the options to lock with, or null.
+  async lockDialog(s, { updating = false } = {}) {
+    const options = { giveExisting: !updating, hideVerify: false, openChannelIds: [] };
+    let startedOpen = !updating; // when updating, the first answer says which channels are open now
     const summary = h('div', { class: 'stack', style: { gap: '8px' } }, h('div', { class: 'loading-block' }, h('div', { class: 'skeleton' })));
     const openList = h('div', { class: 'verify-open-list' });
     let plan = null;
@@ -202,6 +206,11 @@ const AutoRolesPage = {
         return;
       }
       if (mine !== asked) return;
+      if (!startedOpen) {
+        startedOpen = true;
+        options.openChannelIds = next.currentlyOpen;
+        return refresh();
+      }
       plan = next;
       summary.classList.remove('updating');
       if (lockButton) lockButton.disabled = false;
@@ -210,7 +219,10 @@ const AutoRolesPage = {
       // Voice and stage channels go without the #, as in Discord.
       const open = [`#${plan.verifyChannelName}`, ...plan.openChannels.map((c) => (c.type === 2 || c.type === 13 ? `🔊 ${c.name}` : `#${c.name}`))];
       const openIds = new Set([plan.verifyChannelId, ...plan.openChannels.map((c) => c.id)]);
-      const byName = plan.channels.filter((c) => !openIds.has(c.id)).map((c) => `#${c.name}`);
+      const verifiedIds = new Set(plan.verifiedRoles.map((r) => r.id));
+      const closed = plan.channels.filter((c) => !openIds.has(c.id));
+      const named = closed.filter((c) => c.edits.some((e) => verifiedIds.has(e.id) && BigInt(e.after.allow) & (1n << 10n)));
+      const byName = closed.filter((c) => c.edits.some((e) => e.id === s.guildId)).map((c) => `#${c.name}`);
       const bots = plan.roles.filter((r) => r.bot).map((r) => r.name);
       const item = (ic, text) => h('div', { class: 'ticket-line verify-plan-line' }, icon(ic), h('span', null, text));
       summary.replaceChildren(
@@ -218,7 +230,9 @@ const AutoRolesPage = {
           item('eyeOff', plan.alreadyHidden ? `@everyone already can't see channels unless a channel lets it in. ${names(open)} will let everyone in.` : `@everyone stops seeing your channels, except ${names(open, 12)}.`),
           item('eye', `${verified} ${plan.verifiedRoles.length === 1 ? 'sees' : 'see'} everything @everyone could see before${plan.roles.some((r) => !r.bot) ? ' (gets View Channels)' : ''}.`),
           options.hideVerify ? item('check', `#${plan.verifyChannelName} disappears for members once they verify.`) : item('eye', `#${plan.verifyChannelName}, where the Verify button is, stays visible to everyone, verified members included.`),
-          byName.length ? item('hash', `${byName.length} ${byName.length === 1 ? 'channel lets' : 'channels let'} @everyone in by name. ${byName.length === 1 ? 'It lets' : 'They let'} ${verified} in instead: ${names(byName)}.`) : null,
+          named.length ? item('check', `${verified} ${plan.verifiedRoles.length === 1 ? 'is' : 'are'} added to ${named.length} ${named.length === 1 ? "channel's" : "channels'"} permissions with View Channel ✓, so each one shows who can see it.`) : null,
+          byName.length ? item('hash', `${byName.length} ${byName.length === 1 ? 'channel lets' : 'channels let'} @everyone in by name, and won't any more: ${names(byName)}.`) : null,
+          updating && !named.length && !byName.length && !plan.channels.length ? item('check', 'Nothing else to change: the lock is up to date.') : null,
           bots.length ? item('bot', `These bots get View Channels on their own role, so they keep seeing your channels: ${names(bots)}.`) : null,
           plan.joinRolesSee.length
             ? h('div', { class: 'callout warn' }, icon('alert'), h('div', null, h('b', null, `New members would skip the Verify button: `), `they get ${names(plan.joinRolesSee.map((n) => `@${n}`))} as soon as they join (your auto roles), and that can see channels. Stop giving it on join (Edit), or take View Channels off it in Server Settings → Roles.`))
@@ -252,8 +266,8 @@ const AutoRolesPage = {
     const body = h(
       'div',
       { class: 'stack', style: { gap: '14px' } },
-      h('p', null, "One step instead of changing every channel by hand: new members see only the Verify channel until they press the button, and verified members see the rest."),
-      switchEl(options.giveExisting, (v) => (options.giveExisting = v), 'Give the verified role to everyone already in the server (recommended, or they lose access until they press Verify). On a big server this takes a few minutes.'),
+      h('p', null, updating ? "The server is locked already. This changes which channels stay open to everyone, and covers channels made since. Members who haven't verified aren't given the role." : "One step instead of changing every channel by hand: new members see only the Verify channel until they press the button, and verified members see the rest."),
+      updating ? null : switchEl(options.giveExisting, (v) => (options.giveExisting = v), 'Give the verified role to everyone already in the server (recommended, or they lose access until they press Verify). On a big server this takes a few minutes.'),
       switchEl(options.hideVerify, (v) => {
         options.hideVerify = v;
         refresh();
@@ -263,12 +277,12 @@ const AutoRolesPage = {
     );
     refresh({ fresh: true });
     const ok = await openModal({
-      title: `Lock ${s.guildName || 'the server'} behind Verify?`,
+      title: updating ? `Update the Verify lock on ${s.guildName || 'the server'}?` : `Lock ${s.guildName || 'the server'} behind Verify?`,
       wide: true,
       body,
       actions: [
         { label: 'Cancel', kind: 'ghost' },
-        { label: 'Lock the server', kind: 'primary', icon: 'lock', value: true, ref: (b) => ((lockButton = b), (b.disabled = true)) },
+        { label: updating ? 'Update the lock' : 'Lock the server', kind: 'primary', icon: 'lock', value: true, ref: (b) => ((lockButton = b), (b.disabled = true)) },
       ],
     });
     return ok && plan ? options : null;

@@ -1,7 +1,8 @@
 // Locking a server behind its Verify button, in one go: @everyone stops seeing channels (except the
 // Verify channel, and any others picked to stay open), and the roles the button gives see what
-// @everyone could see before. Channels that let @everyone in by name let those roles in instead;
-// private channels stay as they are. Bots whose roles relied on @everyone to see channels get View
+// @everyone could see before: through their role, and named on each of those channels with View
+// Channel so it shows there. Channels that let @everyone in by name stop doing so; private channels
+// stay as they are. Bots whose roles relied on @everyone to see channels get View
 // Channels on their own role. What was changed is kept, so unlocking puts it back. No Electron here.
 const { fetchAllMembers } = require('./builder');
 
@@ -67,9 +68,10 @@ function planLock({ guildId, roles, channels, botRoleIds, verifyChannelId, verif
           set(r.id, o.allow & ~P.VIEW, o.deny | P.VIEW);
         }
       }
-    } else if (everyone.allow & P.VIEW) {
-      // It lets @everyone in by name: the verified roles get that instead.
-      set(guildId, everyone.allow & ~P.VIEW, everyone.deny);
+    } else if (!(everyone.deny & P.VIEW)) {
+      // Not private. If it lets @everyone in by name, that goes; and the verified roles get View
+      // Channel on it, so its permissions screen shows who sees it (their role would let them anyway).
+      if (everyone.allow & P.VIEW) set(guildId, everyone.allow & ~P.VIEW, everyone.deny);
       for (const r of verified) {
         const o = current(r.id) || { allow: 0n, deny: 0n };
         if (!(o.allow & P.VIEW)) set(r.id, o.allow | P.VIEW, o.deny & ~P.VIEW);

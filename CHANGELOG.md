@@ -6,6 +6,9 @@ To release: add your changes as `- ` lines under **Unreleased**, then run `npm r
 
 ## Unreleased
 
+- **@Verified shows on each channel.** Lock behind Verify now also adds the verified role to every channel members can see, with View Channel ✓. Each channel's permissions screen then shows who can see it, as if you'd done it by hand. Before, the role could see channels through its own role settings only, so the channel screens didn't show it. Private channels stay as they are.
+- **Update lock.** A server that's locked behind Verify now has **Update lock…** next to **Unlock**. It changes which channels stay open to everyone, and covers channels made since you locked. The channels open now start ticked, and nobody is given the role. **Unlock** still puts everything back as it was before the first lock.
+
 ## 1.2.12 (2026-11-04)
 
 - **Permission changes in server logs.** Server logs now post when a channel's or category's permissions change, and when a role's permissions change, saying what changed for each role or member (✅ allowed, ❌ denied, ➖ back to default) and who did it. So locking behind Verify shows up channel by channel, and so do permission edits made in Discord.
