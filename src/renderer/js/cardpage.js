@@ -11,7 +11,7 @@ const loadCardImage = (src) =>
   });
 
 async function renderCard(card, vars, avatarUrl, backgroundUrl) {
-  await Promise.all(['500 26px Poppins', '600 32px Poppins', '800 58px Poppins', '400 50px Silkscreen'].map((f) => document.fonts.load(f).catch(() => null)));
+  await Promise.all(['500 26px Poppins', '600 32px Poppins', '800 58px Poppins', '400 50px Silkscreen', '400 32px Twemoji'].map((f) => document.fonts.load(f, f.includes('Twemoji') ? '\u{1F600}' : undefined).catch(() => null)));
   const [avatar, background] = await Promise.all([loadCardImage(avatarUrl), loadCardImage(backgroundUrl)]);
   const canvas = document.createElement('canvas');
   canvas.width = WelcomeCard.WIDTH;

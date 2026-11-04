@@ -6,6 +6,9 @@ To release: add your changes as `- ` lines under **Unreleased**, then run `npm r
 
 ## Unreleased
 
+- **No more empty boxes on welcome cards.** Names written with "fancy text" letters (𝓢𝓹𝓲𝓭𝓮𝓻, ｆａｎｃｙ, ᴘɪxᴇʟ, 🅿🅸🆇) used to come out as rows of □ on cards your mod portal drew, because its font only has plain letters. Cards now write them in plain letters (Spiderblock). Anything the card still can't draw is left out, along with decorations that would run into the line below (꧁ ꧂) and "zalgo" piles of accent marks. If a name's letters can't be drawn at all, for example a script the portal has no font for, the card uses the member's username. Long names are cut without breaking an emoji in half.
+- **Emoji on cards look like Discord's.** Emoji in names and card text are now drawn in Twemoji, the style Discord uses, both in the app and on the mod portal. Before, the portal had no emoji font of its own. Update it with **Sync fork**.
+
 ## 1.2.14 (2026-11-04)
 
 - **GitHub alerts.** Social alerts can now post when you publish a release or make a new repo on GitHub, with your own message and an optional ping, like YouTube and Twitch alerts. Paste a repo's link to post its releases, or your profile's (github.com/you) to post releases from any of your public repos, and new repos when you make one or make one public. Pick **New releases**, **New repos** or both; each has its own message. GitHub's links show their preview in Discord. There's nothing to log in to and no key to add, though private repos can't be watched. Checks run every 5 minutes, and with **Run 24/7** on your mod portal does them around the clock (update it with **Sync fork**; until then the app checks).

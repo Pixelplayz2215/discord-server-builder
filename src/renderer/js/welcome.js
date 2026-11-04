@@ -50,7 +50,7 @@ const WelcomePage = {
         img.onerror = () => resolve(null);
         img.src = src;
       });
-    await Promise.all(['500 26px Poppins', '600 32px Poppins', '800 58px Poppins', '400 50px Silkscreen'].map((f) => document.fonts.load(f).catch(() => null)));
+    await Promise.all(['500 26px Poppins', '600 32px Poppins', '800 58px Poppins', '400 50px Silkscreen', '400 32px Twemoji'].map((f) => document.fonts.load(f, f.includes('Twemoji') ? '\u{1F600}' : undefined).catch(() => null)));
     const [avatar, background] = await Promise.all([load(userAvatar(bot, 256)), card.background.type === 'image' ? WelcomePage.image(card.background.image).then(load) : null]);
     if (isCurrent()) WelcomeCard.draw(canvas.getContext('2d'), card, vars, { avatar, background });
   },

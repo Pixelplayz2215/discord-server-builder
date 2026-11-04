@@ -1,7 +1,7 @@
 // Draws welcome and goodbye cards on the portal for 24/7, with the same drawing code as the app
 // (src/shared/welcomecard.js) on @napi-rs/canvas. Windows-only fonts (Segoe UI, Impact…) are drawn
-// with Poppins, since the portal's host doesn't have them. Also reads a server emoji's colour for
-// poll bars, like the app does.
+// with Poppins, since the portal's host doesn't have them, and emoji with the Twemoji font the app
+// ships. Also reads a server emoji's colour for poll bars, like the app does.
 const path = require('path');
 const WelcomeCard = require('../src/shared/welcomecard');
 const { avatarUrl } = require('../src/main/welcome');
@@ -23,7 +23,11 @@ function registerFonts() {
   fontsReady = true;
   for (const family of WelcomeCard.FONTS.filter((f) => f !== 'Silkscreen')) for (const file of POPPINS) canvas.GlobalFonts.registerFromPath(file, family);
   canvas.GlobalFonts.registerFromPath(path.join(FONTS, 'silkscreen-latin-400-normal.woff2'), 'Silkscreen');
+  canvas.GlobalFonts.registerFromPath(path.join(FONTS, 'twemoji-15.0.3.woff2'), 'Twemoji');
 }
+
+// A small canvas for checking which characters the fonts can draw (see WelcomeCard.cardText).
+let spare = null;
 
 const MISSING = "the portal couldn't load its drawing library. On Render, open the service and choose Manual Deploy → Clear build cache & deploy.";
 
@@ -45,7 +49,8 @@ function createCards({ fetchImpl = fetch, fileData = async () => null } = {}) {
         : null,
     ]);
     const c = canvas.createCanvas(WelcomeCard.WIDTH, WelcomeCard.HEIGHT);
-    WelcomeCard.draw(c.getContext('2d'), card, vars, { avatar, background });
+    spare ??= canvas.createCanvas(96, 48);
+    WelcomeCard.draw(c.getContext('2d'), card, vars, { avatar, background }, { spare });
     return c.encode('png');
   }
 

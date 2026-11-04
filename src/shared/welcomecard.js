@@ -119,7 +119,108 @@
     });
   }
 
-  const fontFor = (family, weight, size) => `${family === 'Silkscreen' ? 400 : weight} ${size}px "${family}", "Segoe UI", "Segoe UI Emoji", sans-serif`;
+  // Twemoji draws emoji the way Discord shows them, on the portal too (it has no emoji font of its own).
+  const fontFor = (family, weight, size) => `${family === 'Silkscreen' ? 400 : weight} ${size}px "${family}", "Twemoji", "Segoe UI", "Segoe UI Emoji", sans-serif`;
+
+  const segmenter = typeof Intl !== 'undefined' && Intl.Segmenter ? new Intl.Segmenter(undefined, { granularity: 'grapheme' }) : null;
+  // The characters as people see them, so an emoji made of several parts stays whole.
+  const graphemes = (value) => (segmenter ? Array.from(segmenter.segment(value), (s) => s.segment) : Array.from(value));
+
+  // Names from "fancy text" sites use look-alike symbols instead of letters (𝓢𝓹𝓲𝓭𝓮𝓻, ｆａｎｃｙ, Ⓐ, ᴘɪxᴇʟ,
+  // 🅿🅸🆇). The card's fonts have no such symbols, so they'd come out as empty boxes; these turn them
+  // back into the plain letters. Emoji are left alone (ℹ️ and Ⓜ️ would otherwise become i and M).
+  const SMALL_CAPS = { ᴀ: 'a', ʙ: 'b', ᴄ: 'c', ᴅ: 'd', ᴇ: 'e', ꜰ: 'f', ɢ: 'g', ʜ: 'h', ɪ: 'i', ᴊ: 'j', ᴋ: 'k', ʟ: 'l', ᴍ: 'm', ɴ: 'n', ᴏ: 'o', ᴘ: 'p', ꞯ: 'q', ʀ: 'r', ꜱ: 's', ᴛ: 't', ᴜ: 'u', ᴠ: 'v', ᴡ: 'w', ʏ: 'y', ᴢ: 'z' };
+  const BOXED_LETTER = /^[\u{1F130}-\u{1F149}\u{1F150}-\u{1F169}\u{1F170}-\u{1F189}]$/u; // 🄰 🅐 🅰 and the rest of A–Z
+  const EMOJI = /️|⃣|\p{Extended_Pictographic}|\p{Regional_Indicator}/u;
+  const PLAIN_BASE = /^[\p{Script=Latin}\p{Script=Greek}\p{Script=Cyrillic}\p{N}\p{P}\p{S}\p{Zs}]/u;
+
+  function plainLetters(value) {
+    return graphemes(String(value ?? ''))
+      .map((g) => {
+        if (BOXED_LETTER.test(g)) return String.fromCharCode(65 + ((g.codePointAt(0) - 0x1f130) % 32));
+        if (EMOJI.test(g)) return g;
+        return g.normalize('NFKC').replace(/[ᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘꞯʀꜱᴛᴜᴠᴡʏᴢ]/gu, (ch) => SMALL_CAPS[ch]);
+      })
+      .join('');
+  }
+
+  // Whether a character can be drawn with the card's fonts: it's drawn on a small spare canvas and
+  // compared with the empty box that a character no font has (U+0378) comes out as. One that reaches
+  // far above or below the line (꧁ ꧂, stacked "zalgo" marks) counts as not drawable too, since it
+  // would run into the next line. Answers are remembered for each font.
+  const known = new Map();
+  const boxes = new Map();
+  let spare = null;
+  const spareCanvas = () => {
+    if (!spare && typeof document !== 'undefined') spare = Object.assign(document.createElement('canvas'), { width: 96, height: 48 });
+    return spare;
+  };
+
+  function canDraw(g, family, canvas) {
+    if (!g.trim()) return true;
+    const key = `${family}\n${g}`;
+    if (known.has(key)) return known.get(key);
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const shape = (s) => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillText(s, 4, canvas.height / 2);
+      const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      const alpha = new Uint8Array(data.length / 4);
+      for (let i = 0; i < alpha.length; i += 1) alpha[i] = data[i * 4 + 3];
+      return alpha;
+    };
+    let ok;
+    ctx.save();
+    try {
+      ctx.font = fontFor(family, 600, 32);
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#000000';
+      if (!boxes.has(family)) boxes.set(family, shape('͸'));
+      const box = boxes.get(family);
+      const mine = shape(g);
+      const m = ctx.measureText(g);
+      ok = mine.some((a) => a > 0) && mine.some((a, i) => a !== box[i]) && !(Math.max(m.actualBoundingBoxAscent || 0, m.actualBoundingBoxDescent || 0) > 32);
+    } catch {
+      return true; // can't tell here; draw it as it is
+    } finally {
+      ctx.restore();
+    }
+    if (known.size > 5000) known.clear();
+    known.set(key, ok);
+    return ok;
+  }
+
+  // A line of card text ready to draw: plain letters, and nothing that would show as an empty box.
+  // canvas: a spare canvas for the check (the app makes its own; the portal passes one).
+  function cardText(value, family = 'Poppins', canvas = spareCanvas()) {
+    const plain = plainLetters(value);
+    if (!canvas) return plain;
+    const parts = graphemes(plain);
+    const kept = parts.map((g) => {
+      if (EMOJI.test(g)) return canDraw(g, family, canvas) ? g : '';
+      // Letters and their accents are already joined into one character (é, ñ, й) by plainLetters, so
+      // marks still left on a Latin, Greek or Cyrillic letter are "zalgo" piles: keep just the letter.
+      const piece = PLAIN_BASE.test(g) ? g.replace(/\p{M}+/gu, '') : g;
+      if (piece && canDraw(piece, family, canvas)) return piece;
+      // A letter the fonts only have without its accent (ệ on the portal) keeps the letter.
+      const bare = PLAIN_BASE.test(g) ? piece.normalize('NFD').replace(/\p{M}+/gu, '') : '';
+      return bare && bare !== piece && canDraw(bare, family, canvas) ? bare : '';
+    });
+    // Where something was left out, tidy the gap it leaves.
+    return kept.every((g, i) => g === parts[i]) ? plain : kept.join('').replace(/\s{2,}/g, ' ').trim();
+  }
+
+  const letterCount = (value) => (String(value).match(/[\p{L}\p{N}]/gu) || []).length;
+
+  // A member's name for the card. When some of its letters can't be drawn (a script the card's fonts
+  // don't have, like Cyrillic or Japanese on the portal), their username is used instead, since
+  // usernames are only plain letters, digits, _ and .
+  function cardName(name, username, family = 'Poppins', canvas = spareCanvas()) {
+    const shown = cardText(name, family, canvas);
+    if (username && letterCount(shown) < letterCount(plainLetters(name))) return cardText(username, family, canvas);
+    return shown;
+  }
 
   // The largest size (down to min) at which the text fits; too long even then, it's cut with "…".
   function fitText(ctx, value, family, weight, size, min, maxWidth) {
@@ -129,8 +230,13 @@
       s -= 2;
       ctx.font = fontFor(family, weight, s);
     }
+    const parts = graphemes(value);
     let shown = value;
-    while (shown.length > 1 && ctx.measureText(shown).width > maxWidth) shown = `${shown.slice(0, -2)}…`;
+    let n = parts.length;
+    while (n > 1 && ctx.measureText(shown).width > maxWidth) {
+      n -= 1;
+      shown = `${parts.slice(0, n).join('').trimEnd()}…`;
+    }
     return shown;
   }
 
@@ -145,8 +251,9 @@
   }
 
   // Draws a card on a WIDTH × HEIGHT canvas. images: { avatar, background } (loaded images or null);
-  // vars fill the {placeholders}.
-  function draw(ctx, card, vars, images = {}) {
+  // vars fill the {placeholders}. spare: a small canvas for checking which characters can be drawn
+  // (made automatically in the app).
+  function draw(ctx, card, vars, images = {}, { spare: spareGiven } = {}) {
     const c = normalizeCard(card);
     const bg = c.background;
     ctx.clearRect(0, 0, WIDTH, HEIGHT);
@@ -175,7 +282,9 @@
     }
 
     const centered = c.layout === 'center';
-    const lines = LINES.map((key) => ({ key, ...c[key], value: fill(c[key].text, vars, { inImage: true }) })).filter((l) => l.key !== 'extra' || l.value.trim());
+    const spare = spareGiven || spareCanvas();
+    const shownVars = { ...vars, user: cardName(vars?.user ?? '', vars?.username, c.font, spare), server: cardText(vars?.server ?? '', c.font, spare) };
+    const lines = LINES.map((key) => ({ key, ...c[key], value: cardText(fill(c[key].text, shownVars, { inImage: true }), c.font, spare) })).filter((l) => l.key !== 'extra' || l.value.trim());
     const three = lines.length === 3;
     // A third line moves the centred avatar up a little to make room.
     const avatar = centered ? { x: WIDTH / 2, y: three ? 130 : 150, r: three ? 86 : 96 } : { x: 210, y: HEIGHT / 2, r: 124 };
@@ -220,5 +329,5 @@
     ctx.restore();
   }
 
-  return { WIDTH, HEIGHT, KINDS, FONTS, PRESETS, DEFAULTS, PLACEHOLDERS, LIMITS, SIZE_RANGE, normalizeCard, normalizeKind, applyPreset, fill, draw };
+  return { WIDTH, HEIGHT, KINDS, FONTS, PRESETS, DEFAULTS, PLACEHOLDERS, LIMITS, SIZE_RANGE, normalizeCard, normalizeKind, applyPreset, fill, plainLetters, cardText, cardName, draw };
 });

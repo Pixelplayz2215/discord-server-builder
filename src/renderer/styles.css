@@ -8,6 +8,8 @@
 @font-face { font-family: 'Poppins'; font-weight: 700; font-display: swap; src: url('fonts/poppins-latin-700-normal.woff2') format('woff2'); }
 @font-face { font-family: 'Poppins'; font-weight: 800; font-display: swap; src: url('fonts/poppins-latin-800-normal.woff2') format('woff2'); }
 @font-face { font-family: 'Silkscreen'; font-weight: 400; font-display: swap; src: url('fonts/silkscreen-latin-400-normal.woff2') format('woff2'); }
+/* Only for welcome card previews, so emoji look the way the bot posts them. */
+@font-face { font-family: 'Twemoji'; font-display: swap; src: url('fonts/twemoji-15.0.3.woff2') format('woff2'); }
 
 :root {
   /* Theme inputs */
