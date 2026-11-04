@@ -6,6 +6,8 @@ To release: add your changes as `- ` lines under **Unreleased**, then run `npm r
 
 ## Unreleased
 
+## 1.2.11 (2026-11-04)
+
 - **Previews show Discord's formatting.** The previews on Announcements, Giveaways, Reaction roles, Polls, Tickets, the Verify button and Welcome & goodbye now show text the way Discord does: `#`, `##` and `###` headings, `-#` small text, `>` quotes, lists, code blocks, *italics*, __underline__, ~~strikethrough~~, spoilers, links, role and channel mentions, server emojis and timestamps. Before, only **bold** and `code` showed, so a `# Rules` heading looked like plain text.
 - **Lock behind Verify.** On the Auto roles page, one button sets up a Verify button's permissions instead of changing every channel by hand. @everyone stops seeing your channels except the Verify channel (and any you keep open, like #rules), and the role the button gives sees everything @everyone could see before. Channels that let @everyone in by name let that role in instead, private channels stay private, and the Verify channel can disappear once members verify. Bots whose roles relied on @everyone get View Channels on their own role, so they keep working. You can give the role to everyone already in the server first, so nobody's locked out. It shows exactly what will change before doing anything, makes a backup first, and **Unlock** puts it back.
 
