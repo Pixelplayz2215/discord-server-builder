@@ -20,6 +20,7 @@ const welcome = require('./welcome');
 const tickets = require('./tickets');
 const stats = require('./stats');
 const autoRoles = require('./autoroles');
+const verifyLock = require('./verifylock');
 const announce = require('./announce');
 const giveaways = require('./giveaways');
 const always = require('./always');
@@ -625,6 +626,27 @@ const autoRoleEngines = new Map(); // botId -> auto roles engine
 const autoRoleProblems = new Map(); // `${botId}:${guildId}` -> latest problem
 
 const autoRolesOn = (botId) => store.listGuildConfigs().some(({ botId: b, config }) => b === botId && config.autoroles?.enabled);
+
+// What locking a server behind its Verify button would change, with the names the app shows.
+// openChannelIds: channels @everyone keeps seeing besides the Verify one (like #rules).
+async function verifyLockPlan(botId, guildId, { openChannelIds = [], hideVerify = true } = {}) {
+  const v = store.getGuildConfig(botId, guildId).autoroles?.verify;
+  if (!v?.enabled || !v.channelId || !v.roles?.length) throw new Error('Post a Verify button first: Edit → Post a Verify button, with the roles it gives.');
+  const rest = restFor(botId);
+  const [roles, channels, me] = await Promise.all([rest.request('GET', `/guilds/${guildId}/roles`), rest.request('GET', `/guilds/${guildId}/channels`), rest.request('GET', `/guilds/${guildId}/members/${botId}`)]);
+  const open = (Array.isArray(openChannelIds) ? openChannelIds : []).map(String).filter((id) => /^\d{15,21}$/.test(id) && id !== v.channelId);
+  const plan = verifyLock.planLock({ guildId, roles, channels, botRoleIds: me.roles || [], verifyChannelId: v.channelId, verifiedRoleIds: v.roles, openChannelIds: open, hideVerify: hideVerify !== false });
+  const name = (id) => channels.find((c) => c.id === id)?.name || 'a channel';
+  return {
+    ...plan,
+    verifyChannelId: v.channelId,
+    verifyChannelName: name(v.channelId),
+    verifiedRoles: v.roles.map((id) => ({ id, name: roles.find((r) => r.id === id)?.name || 'a role' })),
+    openChannels: open.map((id) => ({ id, name: name(id) })),
+    // Channels that could stay open to everyone too, for the app's list.
+    textChannels: channels.filter((c) => (c.type === 0 || c.type === 5) && c.id !== v.channelId).sort((a, b) => a.position - b.position).map((c) => ({ id: c.id, name: c.name })),
+  };
+}
 
 function autoRolesFor(botId) {
   if (!autoRoleEngines.has(botId)) {
@@ -1541,7 +1563,7 @@ const handlers = {
         store
           .listGuildConfigs()
           .filter(({ botId, config }) => botId === b.id && config.autoroles)
-          .map(({ guildId, config }) => ({ ...config.autoroles, botId: b.id, guildId, problem: autoRoleProblems.get(`${b.id}:${guildId}`) || null, membersIntent: !!b.intents?.members, answeredBy: b.slashCommands ? 'portal' : 'app' })),
+          .map(({ guildId, config }) => ({ ...config.autoroles, botId: b.id, guildId, problem: autoRoleProblems.get(`${b.id}:${guildId}`) || null, membersIntent: !!b.intents?.members, answeredBy: b.slashCommands ? 'portal' : 'app', lock: config.verifyLock ? { at: config.verifyLock.at, partial: !!config.verifyLock.partial } : null })),
       ),
 
   // Saves a server's auto roles, and posts, updates or removes the Verify message.
@@ -1552,6 +1574,11 @@ const handlers = {
     if (!s.guildId) throw new Error('Pick the server.');
     const rest = restFor(botId);
     const previous = store.getGuildConfig(botId, s.guildId).autoroles?.verify || null;
+    // Locked behind this Verify button: it has to stay where it is, giving the same roles.
+    const lock = store.getGuildConfig(botId, s.guildId).verifyLock;
+    if (lock && (!s.verify.enabled || s.verify.channelId !== lock.verifyChannelId || String(s.verify.roles) !== String(lock.roleIds))) {
+      throw new Error("The server is locked behind this Verify button, so it can't be turned off, moved or give other roles. Unlock the server first (on the Auto roles page).");
+    }
     const old = previous?.messageId ? { channelId: previous.channelId, messageId: previous.messageId, emojis: [] } : null;
     if (s.verify.enabled) {
       s.verify.messageId = await reactionRoles.publishMessage(rest, { channelId: s.verify.channelId, body: autoRoles.verifyMessage(s.verify), emojis: [] }, old);
@@ -1568,6 +1595,7 @@ const handlers = {
   'autoroles:remove': async (botId, guildId) => {
     if (isMod(botId)) ownerOnly();
     const id = snowflake(guildId, 'server');
+    if (store.getGuildConfig(botId, id).verifyLock) throw new Error("The server is locked behind this Verify button. Unlock it first, or new members couldn't get in.");
     const v = store.getGuildConfig(botId, id).autoroles?.verify;
     if (v?.messageId) await restFor(botId).request('DELETE', `/channels/${v.channelId}/messages/${v.messageId}`).catch(() => {});
     store.setGuildConfig(botId, id, { autoroles: null });
@@ -1581,6 +1609,51 @@ const handlers = {
     if (isMod(botId)) ownerOnly();
     const id = snowflake(guildId, 'server');
     return autoRolesFor(botId).giveExisting(id, (done, total) => send('autoroles:progress', { botId, guildId: id, done, total }));
+  },
+
+  // Locking a server behind its Verify button (src/main/verifylock.js): what it would change.
+  'verifylock:plan': async (botId, guildId, options = {}) => {
+    if (isMod(botId)) ownerOnly();
+    return verifyLockPlan(botId, snowflake(guildId, 'server'), options);
+  },
+
+  // Backs the server up, gives the verified roles to everyone already here (unless asked not to),
+  // then changes the permissions, keeping a record so Unlock can put them back.
+  'verifylock:lock': async (botId, guildId, options = {}) => {
+    if (isMod(botId)) ownerOnly();
+    const id = snowflake(guildId, 'server');
+    if (store.getGuildConfig(botId, id).verifyLock) throw new Error('This server is already locked behind Verify. Unlock it first to lock it again.');
+    const plan = await verifyLockPlan(botId, id, options);
+    const rest = restFor(botId);
+    const progress = (text) => send('verifylock:progress', { botId, guildId: id, text });
+    progress('Making a backup…');
+    backups.saveBackup(backupsRoot(), id, await backups.snapshotServer(rest, id, { label: 'Before locking behind Verify' }));
+    const roleIds = plan.verifiedRoles.map((r) => r.id);
+    if (options.giveExisting !== false) {
+      await verifyLock.giveToMembers(rest, id, roleIds, { reason: 'Already here when the server was locked behind Verify', onProgress: (done, total) => progress(`Giving the role… ${done}/${total}`) });
+    }
+    progress('Changing permissions…');
+    const keep = (record, partial = false) => store.setGuildConfig(botId, id, { verifyLock: { ...record, partial, verifyChannelId: plan.verifyChannelId, roleIds } });
+    try {
+      keep(await verifyLock.applyLock(rest, id, plan, { reason: 'Locked behind the Verify button', onStep: (done, total) => progress(`Changing permissions… ${done}/${total}`) }));
+    } catch (err) {
+      if (err.record && (err.record.roles.length || err.record.channels.length)) {
+        keep(err.record, true);
+        throw new Error(`Locking stopped part way: ${err.message} Press Unlock to put back what changed.`);
+      }
+      throw err;
+    }
+    return handlers['autoroles:list']();
+  },
+
+  'verifylock:unlock': async (botId, guildId) => {
+    if (isMod(botId)) ownerOnly();
+    const id = snowflake(guildId, 'server');
+    const lock = store.getGuildConfig(botId, id).verifyLock;
+    if (!lock) throw new Error("This server isn't locked behind Verify.");
+    await verifyLock.undoLock(restFor(botId), id, lock, { reason: 'Unlocked from the Verify button' });
+    store.setGuildConfig(botId, id, { verifyLock: null });
+    return handlers['autoroles:list']();
   },
 
   // Every announcement of the owner's bots: scheduled first (soonest first), then the newest.

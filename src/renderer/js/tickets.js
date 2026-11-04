@@ -306,7 +306,7 @@ const TicketsPage = {
     function drawPreview() {
       const p = draft.panel;
       const fill = (t) => String(t || '').replace(/\{user\}/g, 'Anna').replace(/\{mention\}/g, '@Anna').replace(/\{server\}/g, draft.guildName || 'your server');
-      const panelInner = [p.title.trim() ? h('div', { class: 'rr-title' }, p.title.trim()) : null, p.text.trim() ? h('div', { class: 'rr-text' }, p.text.trim()) : null];
+      const panelInner = [p.title.trim() ? h('div', { class: 'rr-title' }, p.title.trim()) : null, p.text.trim() ? h('div', { class: 'rr-text' }, discordText(p.text.trim(), { roles })) : null];
       const ticketRoles = draft.pingSupport ? roles.filter((r) => draft.supportRoles.includes(r.id)) : [];
       preview.replaceChildren(
         h('div', { class: 'label' }, 'The panel'),
@@ -317,7 +317,7 @@ const TicketsPage = {
           { class: 'rr-preview' },
           author(),
           h('div', { class: 'rr-text' }, h('span', { class: 'rr-mention' }, '@Anna'), ...ticketRoles.map((r) => [' ', h('span', { class: 'rr-mention', style: { color: roleColor(r) } }, `@${r.name}`)])),
-          h('div', { class: 'rr-embed', style: { borderLeftColor: hex(draft.ticket.color), marginTop: '6px' } }, fill(draft.ticket.title).trim() ? h('div', { class: 'rr-title' }, fill(draft.ticket.title)) : null, h('div', { class: 'rr-text' }, fill(draft.ticket.text)), h('div', { class: 'ticket-field' }, h('b', null, 'Opened by'), h('span', { class: 'rr-mention' }, '@Anna'))),
+          h('div', { class: 'rr-embed', style: { borderLeftColor: hex(draft.ticket.color), marginTop: '6px' } }, fill(draft.ticket.title).trim() ? h('div', { class: 'rr-title' }, fill(draft.ticket.title)) : null, h('div', { class: 'rr-text' }, discordText(fill(draft.ticket.text), { roles })), h('div', { class: 'ticket-field' }, h('b', null, 'Opened by'), h('span', { class: 'rr-mention' }, '@Anna'))),
           h('div', { class: 'row', style: { marginTop: '8px', gap: '8px' } }, button('Claim', 'success', { name: '🙋' }), button('Close', 'danger', { name: '🔒' })),
         ),
       );

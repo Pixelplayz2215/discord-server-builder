@@ -313,7 +313,7 @@ const ReactionRolesPage = {
       };
       const text = message.value.trim();
       const lines = draft.listRoles !== false ? draft.pairs.map(roleLine) : [];
-      const inner = [title.value.trim() ? h('div', { class: 'rr-title' }, title.value.trim()) : null, text ? h('div', { class: 'rr-text' }, text) : null, lines.length ? h('div', { class: 'rr-lines' }, lines) : null];
+      const inner = [title.value.trim() ? h('div', { class: 'rr-title' }, title.value.trim()) : null, text ? h('div', { class: 'rr-text' }, discordText(text, { roles })) : null, lines.length ? h('div', { class: 'rr-lines' }, lines) : null];
       const bubble = draft.style === 'embed' ? h('div', { class: 'rr-embed', style: { borderLeftColor: color.value } }, inner) : h('div', { class: 'rr-plain' }, inner);
       const reactions = h('div', { class: 'row wrap', style: { gap: '6px', marginTop: '8px' } }, draft.pairs.map((p) => h('span', { class: 'rr-reaction' }, emojiNode(p.emoji, 16), h('span', null, '1'))));
       const botUser = App.bot(draft.botId);

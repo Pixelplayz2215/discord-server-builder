@@ -311,7 +311,7 @@ const PollsPage = {
       const status = `📊 ${votesLabel(total)} · React to vote`;
       const inner = [
         h('div', { class: 'rr-title' }, title.value.trim() || 'Your question'),
-        text ? h('div', { class: 'rr-text' }, text) : null,
+        text ? h('div', { class: 'rr-text' }, discordText(text)) : null,
         h('div', { class: 'poll-hint' }, draft.multiple !== false ? 'Select one or more answers' : 'Select one answer'),
         h('div', { class: 'rr-lines', style: { gap: '10px' } }, answerEls),
         h('div', { class: 'poll-footer' }, status),

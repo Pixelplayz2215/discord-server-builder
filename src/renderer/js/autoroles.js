@@ -51,6 +51,7 @@ const AutoRolesPage = {
   error: null,
   loading: false,
   progress: {}, // `${botId}:${guildId}` -> 'done/total'
+  lockProgress: {}, // `${botId}:${guildId}` -> what locking is doing now
 
   async load() {
     AutoRolesPage.loading = true;
@@ -123,6 +124,25 @@ const AutoRolesPage = {
         AutoRolesPage.load();
       }
     }));
+    // Locking the server behind the Verify button, or unlocking it again.
+    const lockBtn = h('button', { class: 'btn sm', 'data-lock': key }, icon(s.lock ? 'unlock' : 'lock'), AutoRolesPage.lockProgress[key] || (s.lock ? 'Unlock' : 'Lock behind Verify…'));
+    lockBtn.addEventListener('click', withBusy(lockBtn, async () => {
+      try {
+        if (s.lock) {
+          if (!(await confirmDialog({ title: `Unlock ${s.guildName || 'the server'}?`, message: '@everyone sees the channels it could before it was locked, and the permission changes are put back. Members keep their verified role.', confirmLabel: 'Unlock' }))) return;
+          AutoRolesPage.data = await api('verifylock:unlock', s.botId, s.guildId);
+          toast('Unlocked: @everyone sees the channels again');
+        } else {
+          const options = await AutoRolesPage.lockDialog(s);
+          if (!options) return;
+          AutoRolesPage.data = await api('verifylock:lock', s.botId, s.guildId, options);
+          toast('Locked: new members see only the Verify channel until they verify');
+        }
+      } finally {
+        delete AutoRolesPage.lockProgress[key];
+        AutoRolesPage.load();
+      }
+    }));
     const line = (ic, label, value) => h('div', { class: 'ticket-line' }, icon(ic), h('span', { class: 'subtle' }, label), h('span', { class: 'ellipsis' }, value));
     const delay = AUTO_ROLE_DELAYS.find(([v]) => Number(v) === s.delay)?.[1].toLowerCase() || 'right away';
     return h(
@@ -138,6 +158,7 @@ const AutoRolesPage = {
         line('userPlus', 'New members get', s.enabled && s.roles.length ? `${roleNames(s.roles)}, ${delay}` : 'Nothing'),
         line('bot', 'New bots get', s.enabled && s.botRoles.length ? roleNames(s.botRoles) : 'Nothing'),
         line('check', 'Verify button', s.verify.enabled ? `In #${s.verify.channelName || s.verify.channelId}, gives ${roleNames(s.verify.roles)}` : 'Off'),
+        s.verify.enabled ? line('lock', 'Server', s.lock ? `Locked behind Verify ${fmtRelative(s.lock.at)}${s.lock.partial ? ' (only part way: press Unlock to put it back)' : ''}` : 'Open to everyone') : null,
       ),
       s.verify.enabled ? h('div', { class: 'subtle', style: { fontSize: 'calc(12rem / 14)', marginTop: '8px' } }, s.answeredBy === 'portal' ? 'The Verify button is answered around the clock by your mod portal.' : 'The Verify button is answered while this app runs. Turn on slash commands on the Home page to have your portal answer it around the clock.') : null,
       s.problem ? h('div', { class: 'callout warn', style: { marginTop: '10px' } }, icon('alert'), h('div', null, s.problem)) : null,
@@ -145,12 +166,85 @@ const AutoRolesPage = {
         'div',
         { class: 'row wrap', style: { marginTop: '14px' } },
         existing,
+        s.verify.enabled ? lockBtn : null,
         h('button', { class: 'btn sm', onclick: () => AutoRolesPage.edit(s) }, icon('edit'), 'Edit'),
         s.verify.messageId ? h('button', { class: 'btn sm ghost', onclick: () => openExternal(`https://discord.com/channels/${s.guildId}/${s.verify.channelId}/${s.verify.messageId}`) }, icon('external'), 'Open Verify message') : null,
         h('div', { class: 'grow' }),
         h('button', { class: 'btn sm danger', onclick: () => AutoRolesPage.remove(s) }, icon('trash'), 'Remove'),
       ),
     );
+  },
+
+  // Shows what locking the server behind its Verify button would change, with the choices.
+  // Resolves to the options to lock with, or null.
+  async lockDialog(s) {
+    const options = { giveExisting: true, hideVerify: true, openChannelIds: [] };
+    const summary = h('div', { class: 'stack', style: { gap: '8px' } }, h('div', { class: 'loading-block' }, h('div', { class: 'skeleton' })));
+    const openList = h('div', { class: 'verify-open-list' });
+    let plan = null;
+    let lockButton = null;
+    const names = (list, max = 6) => (list.length > max ? `${list.slice(0, max).join(', ')} and ${list.length - max} more` : list.join(', '));
+
+    async function refresh() {
+      lockButton && (lockButton.disabled = true);
+      try {
+        plan = await api('verifylock:plan', s.botId, s.guildId, options);
+      } catch (err) {
+        plan = null;
+        summary.replaceChildren(h('div', { class: 'callout warn' }, icon('alert'), h('div', null, err.message)));
+        return;
+      }
+      const verified = names(plan.verifiedRoles.map((r) => `@${r.name}`));
+      const open = [plan.verifyChannelName, ...plan.openChannels.map((c) => c.name)].map((n) => `#${n}`);
+      const openIds = new Set([plan.verifyChannelId, ...plan.openChannels.map((c) => c.id)]);
+      const byName = plan.channels.filter((c) => !openIds.has(c.id)).map((c) => `#${c.name}`);
+      const bots = plan.roles.filter((r) => r.bot).map((r) => r.name);
+      const item = (ic, text) => h('div', { class: 'ticket-line verify-plan-line' }, icon(ic), h('span', null, text));
+      summary.replaceChildren(
+        item('eyeOff', plan.alreadyHidden ? `@everyone already can't see channels unless a channel lets it in. ${names(open)} will let everyone in.` : `@everyone stops seeing your channels, except ${names(open)}.`),
+        item('eye', `${verified} ${plan.verifiedRoles.length === 1 ? 'sees' : 'see'} everything @everyone could see before${plan.roles.some((r) => !r.bot) ? ' (gets View Channels)' : ''}.`),
+        byName.length ? item('hash', `${byName.length} ${byName.length === 1 ? 'channel lets' : 'channels let'} @everyone in by name. ${byName.length === 1 ? 'It lets' : 'They let'} ${verified} in instead: ${names(byName)}.`) : null,
+        options.hideVerify ? item('check', `#${plan.verifyChannelName} disappears for members once they verify.`) : null,
+        bots.length ? item('bot', `These bots get View Channels on their own role, so they keep seeing your channels: ${names(bots)}.`) : null,
+        plan.stuckBots.length ? h('div', { class: 'callout warn' }, icon('alert'), h('div', null, h('b', null, 'These bots would stop seeing your channels: '), `${names(plan.stuckBots)}. Their roles are above the bot's, so it can't change them. Give them View Channels in Server Settings → Roles first.`)) : null,
+        item('archive', 'A backup of your roles, channels and permissions is made first, and Unlock puts the permission changes back.'),
+      );
+      openList.replaceChildren(
+        ...plan.textChannels.map((c) => {
+          const box = h('input', { type: 'checkbox', checked: options.openChannelIds.includes(c.id) });
+          box.addEventListener('change', () => {
+            options.openChannelIds = box.checked ? [...options.openChannelIds, c.id] : options.openChannelIds.filter((id) => id !== c.id);
+            refresh();
+          });
+          return h('label', { class: 'check-row' }, box, `#${c.name}`);
+        }),
+      );
+      lockButton && (lockButton.disabled = false);
+    }
+
+    const body = h(
+      'div',
+      { class: 'stack', style: { gap: '14px' } },
+      h('p', null, "One step instead of changing every channel by hand: new members see only the Verify channel until they press the button, and verified members see the rest."),
+      switchEl(options.giveExisting, (v) => (options.giveExisting = v), 'Give the verified role to everyone already in the server (recommended, or they lose access until they press Verify). On a big server this takes a few minutes.'),
+      switchEl(options.hideVerify, (v) => {
+        options.hideVerify = v;
+        refresh();
+      }, 'Hide the Verify channel once members have verified'),
+      h('div', null, h('div', { class: 'label', style: { marginBottom: '6px' } }, 'Also keep these open to everyone (like #rules)'), openList),
+      h('div', null, h('div', { class: 'label', style: { marginBottom: '6px' } }, 'What changes'), summary),
+    );
+    refresh();
+    const ok = await openModal({
+      title: `Lock ${s.guildName || 'the server'} behind Verify?`,
+      wide: true,
+      body,
+      actions: [
+        { label: 'Cancel', kind: 'ghost' },
+        { label: 'Lock the server', kind: 'primary', icon: 'lock', value: true, ref: (b) => ((lockButton = b), (b.disabled = true)) },
+      ],
+    });
+    return ok && plan ? options : null;
   },
 
   async remove(s) {
@@ -250,7 +344,7 @@ const AutoRolesPage = {
       const style = VERIFY_STYLES.find(([s]) => s === v.button.style) || VERIFY_STYLES[0];
       preview.replaceChildren(
         h('div', { class: 'rr-author' }, h('img', { class: 'avatar', src: userAvatar(bot, 64), width: 32, height: 32, alt: '' }), h('b', null, displayName(bot)), h('span', { class: 'badge peri' }, 'APP')),
-        h('div', { class: 'rr-embed', style: { borderLeftColor: colour.value } }, v.title.trim() ? h('div', { class: 'rr-title' }, v.title.trim()) : null, h('div', { class: 'rr-text' }, v.text.trim() || 'Press the button below to verify.')),
+        h('div', { class: 'rr-embed', style: { borderLeftColor: colour.value } }, v.title.trim() ? h('div', { class: 'rr-title' }, v.title.trim()) : null, h('div', { class: 'rr-text' }, discordText(v.text.trim() || 'Press the button below to verify.'))),
         h('div', { class: 'row', style: { marginTop: '8px' } }, h('span', { class: 'ticket-button', style: { background: style[2] } }, v.button.emoji ? emojiNode(v.button.emoji, 16) : null, v.button.label || 'Verify')),
       );
     }
@@ -286,7 +380,7 @@ const AutoRolesPage = {
           h('div', { class: 'ticket-section' }, switchEl(draft.enabled, (on) => { draft.enabled = on; join.style.display = on ? '' : 'none'; }, 'Give roles when someone joins'), join),
           h('div', { class: 'ticket-section' }, switchEl(v.enabled, (on) => { v.enabled = on; verifyBox.style.display = on ? '' : 'none'; }, 'Post a Verify button'), verifyBox),
         ),
-        h('div', null, h('div', { class: 'label', style: { marginBottom: '8px' } }, 'The Verify message'), preview, h('p', { class: 'subtle', style: { fontSize: 'calc(12rem / 14)', marginTop: '10px' } }, "A common setup: @everyone can only see the rules channel, and the role the Verify button gives can see the rest. The bot needs Manage Roles, and its role must be above the roles it gives.")),
+        h('div', null, h('div', { class: 'label', style: { marginBottom: '8px' } }, 'The Verify message'), preview, h('p', { class: 'subtle', style: { fontSize: 'calc(12rem / 14)', marginTop: '10px' } }, "A common setup: @everyone can only see the Verify channel, and the role the button gives can see the rest. After saving, press Lock behind Verify on the Auto roles page to set that up in one go. The bot needs Manage Roles, and its role must be above the roles it gives.")),
       ),
       actions: [
         { label: 'Cancel', kind: 'ghost' },
@@ -307,6 +401,14 @@ const AutoRolesPage = {
     });
   },
 };
+
+// Locking behind Verify: what it's doing now, on its button.
+onEvent('verifylock:progress', ({ botId, guildId, text }) => {
+  const key = `${botId}:${guildId}`;
+  AutoRolesPage.lockProgress[key] = text;
+  const btn = document.querySelector(`#autoroles-page [data-lock="${key}"]`);
+  if (btn) btn.lastChild.textContent = text;
+});
 
 onEvent('autoroles:progress', ({ botId, guildId, done, total }) => {
   const key = `${botId}:${guildId}`;

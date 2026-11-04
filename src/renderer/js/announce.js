@@ -283,11 +283,12 @@ const AnnouncePage = {
     }
     async function drawPreview() {
       const bot = App.bot(draft.botId);
-      const pingRole = roles.find((r) => r.id === draft.ping);
-      const ping = draft.ping === 'everyone' ? '@everyone' : draft.ping === 'here' ? '@here' : pingRole ? `@${pingRole.name}` : '';
-      const text = (t) => Updater.inline(t);
+      // The ping goes in front of the text, as it's sent.
+      const ping = draft.ping === 'everyone' ? '@everyone' : draft.ping === 'here' ? '@here' : roles.some((r) => r.id === draft.ping) ? `<@&${draft.ping}>` : '';
+      const text = (t) => discordText(t, { roles });
+      const content = [ping, draft.content.trim()].filter(Boolean).join(' ');
       const parts = [h('div', { class: 'rr-author' }, h('img', { class: 'avatar', src: userAvatar(bot, 64), width: 32, height: 32, alt: '' }), h('b', null, displayName(bot)), h('span', { class: 'badge peri' }, 'APP'))];
-      if (ping || draft.content.trim()) parts.push(h('div', { class: 'rr-text' }, ping ? h('span', { class: 'rr-mention', style: pingRole?.color ? { color: roleColor(pingRole) } : null }, ping) : null, ping && draft.content.trim() ? ' ' : null, text(draft.content.trim())));
+      if (content) parts.push(h('div', { class: 'rr-text' }, text(content)));
       if (e.on) {
         const image = e.imageFile ? await AnnouncePage.image(e.imageFile) : e.image;
         const fields = e.fields.filter((f) => f.name || f.value);

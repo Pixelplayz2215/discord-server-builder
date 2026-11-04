@@ -335,15 +335,18 @@ const GiveawaysPage = {
     }
     async function drawPreview() {
       const bot = App.bot(draft.botId);
-      const pingRole = roles.find((r) => r.id === draft.ping);
-      const ping = draft.ping === 'everyone' ? '@everyone' : draft.ping === 'here' ? '@here' : pingRole ? `@${pingRole.name}` : '';
+      const ping = draft.ping === 'everyone' ? '@everyone' : draft.ping === 'here' ? '@here' : roles.some((r) => r.id === draft.ping) ? `<@&${draft.ping}>` : '';
       const role = roles.find((r) => r.id === draft.requiredRole);
       const image = draft.imageFile ? await AnnouncePage.image(draft.imageFile) : draft.image;
-      const when = draft.endsAt ? new Date(draft.endsAt).toLocaleString(undefined, { day: 'numeric', month: 'long', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : '…';
-      const n = Number(draft.winners) || 1;
-      const mention = (r) => h('span', { class: 'rr-mention', style: r?.color ? { color: roleColor(r) } : null }, `@${r?.name || 'role'}`);
+      // The card's text as the bot writes it (src/main/giveaways.js), drawn the way Discord shows it.
+      const e = draft.emoji;
+      const emojiText = e.id ? `<${e.animated ? 'a' : ''}:${e.name}:${e.id}>` : e.name;
+      const at = Math.floor((draft.endsAt || Date.now()) / 1000);
+      const lines = [`React with ${emojiText} to enter!`, `**Winners:** ${Number(draft.winners) || 1}`, `**Enter by:** <t:${at}:f> (<t:${at}:R>)`];
+      if (role) lines.push(`Only members with <@&${role.id}> can win.`);
+      const cardText = [...(draft.description.trim() ? [draft.description.trim(), ''] : []), ...lines].join('\n');
       const parts = [h('div', { class: 'rr-author' }, h('img', { class: 'avatar', src: userAvatar(bot, 64), width: 32, height: 32, alt: '' }), h('b', null, displayName(bot)), h('span', { class: 'badge peri' }, 'APP'))];
-      if (ping) parts.push(h('div', { class: 'rr-text' }, h('span', { class: 'rr-mention', style: pingRole?.color ? { color: roleColor(pingRole) } : null }, ping)));
+      if (ping) parts.push(h('div', { class: 'rr-text' }, discordText(ping, { roles })));
       const ranBy = draft.ranBy.name.trim().replace(/^ran by\s*:?\s*/i, '');
       const fields = draft.fields.filter((f) => f.name || f.value);
       parts.push(
@@ -358,22 +361,8 @@ const GiveawaysPage = {
               { class: 'grow', style: { minWidth: 0 } },
               ranBy ? h('div', { class: 'announce-author' }, draft.ranBy.icon ? h('img', { src: draft.ranBy.icon, alt: '' }) : null, `Ran by ${ranBy}`) : null,
               h('div', { class: 'rr-title' }, `🎉 ${draft.prize.trim() || 'Your prize'}`),
-              h(
-                'div',
-                { class: 'rr-text' },
-                draft.description.trim() ? [Updater.inline(draft.description.trim()), h('br'), h('br')] : null,
-                'React with ',
-                emojiNode(draft.emoji, 16),
-                ' to enter!',
-                h('br'),
-                h('b', null, 'Winners:'),
-                ` ${n}`,
-                h('br'),
-                h('b', null, 'Enter by:'),
-                ` ${when} (${draft.endsAt ? fmtRelative(draft.endsAt) : '…'})`,
-                role ? [h('br'), 'Only members with ', mention(role), ' can win.'] : null,
-              ),
-              fields.length ? h('div', { class: 'announce-fields' }, fields.map((f) => h('div', { class: f.inline ? 'inline' : 'full' }, h('b', null, f.name), h('div', { class: 'rr-text' }, Updater.inline(f.value))))) : null,
+              h('div', { class: 'rr-text' }, discordText(cardText, { roles })),
+              fields.length ? h('div', { class: 'announce-fields' }, fields.map((f) => h('div', { class: f.inline ? 'inline' : 'full' }, h('b', null, f.name), h('div', { class: 'rr-text' }, discordText(f.value, { roles }))))) : null,
             ),
             draft.thumbnail.trim() ? h('img', { class: 'announce-thumb', src: draft.thumbnail.trim(), alt: '' }) : null,
           ),

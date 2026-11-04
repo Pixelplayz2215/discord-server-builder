@@ -296,7 +296,9 @@ const WelcomePage = {
       const k = draft[kind];
       const bot = App.bot(draft.botId);
       const vars = WelcomePage.sampleVars(bot, draft.guildName, memberCount);
-      previewText.textContent = WelcomeCard.fill(k.message, vars);
+      // {mention} pings them in the message, so it shows as a mention there (the card draws their name).
+      const mention = bot?.id ? { ...vars, mention: `<@${bot.id}>` } : vars;
+      previewText.replaceChildren(...discordText(WelcomeCard.fill(k.message, mention), { users: bot?.id ? [{ id: bot.id, name: displayName(bot) }] : [] }));
       canvas.style.display = k.showCard ? '' : 'none';
       previewHost.replaceChildren(h('div', { class: 'rr-author' }, h('img', { class: 'avatar', src: userAvatar(bot, 64), width: 32, height: 32, alt: '' }), h('b', null, displayName(bot)), h('span', { class: 'badge peri' }, 'APP')), k.message.trim() ? previewText : null, canvas);
       const mine = ++drawing;
