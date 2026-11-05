@@ -6,6 +6,8 @@ To release: add your changes as `- ` lines under **Unreleased**, then run `npm r
 
 ## Unreleased
 
+## 1.2.17 (2026-11-05)
+
 - **Updates retry by themselves.** When GitHub fails for a moment (like the "Download failed (HTTP 504)" right after a release), the connection drops or a download stalls, **Reload to update** now tries again on its own, up to 4 times, waiting a little longer each time. The update window shows the try it's on. A download that arrives cut short is caught and downloaded again instead of being installed. This starts working once you're on this version, since your current copy runs its own updater.
 
 ## 1.2.16 (2026-11-05)
