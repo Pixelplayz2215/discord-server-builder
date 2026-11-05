@@ -19,7 +19,7 @@ The portal checks every request against the mod's **own Discord permissions** in
 | View Audit Log | Audit log tab |
 | Any of the above | Warn members and see their case history; the Raid tab's recent joins list |
 
-Bulk actions in the Raid tab need the same permission as one at a time (ban, kick or timeout), and the lockdown needs Manage Channels. Bans, kicks, timeouts and warnings mods make in the app are recorded in `#mod-cases` with their name, like the slash commands' ones. AutoMod, Backups and server logs are owner-only.
+Bulk actions in the Raid tab need the same permission as one at a time (ban, kick or timeout), and the lockdown needs Manage Channels. Bans, kicks, timeouts and warnings mods make in the app are recorded in `#mod-cases` with their name, like the slash commands' ones. Bans and unbans mods make in the app DM the member the reason, like `/ban` and `/unban`. AutoMod, Backups and server logs are owner-only.
 
 These rules always apply:
 
@@ -112,7 +112,7 @@ Mods who don't use the app can moderate right in Discord. Your portal answers th
 | `/untimeout member [reason]` | Timeout Members | Ends a timeout |
 | `/kick member [reason]` | Kick Members | DMs them, then kicks |
 | `/ban member [reason] [delete_messages]` | Ban Members | DMs them, then bans. Works with a pasted user ID too |
-| `/unban user [reason]` | Ban Members | Lifts a ban |
+| `/unban user [reason]` | Ban Members | Lifts a ban and DMs them, if Discord lets the bot reach them (they need to share a server with it) |
 | `/cases member` | Any mod permission | Shows their warnings and moderation history |
 | `/purge count [reason]` | Manage Messages | Deletes up to 500 recent messages in the channel |
 | `/lock`, `/unlock [channel] [reason]` | Manage Channels | Stops members sending messages, or lets them again. The bot tells everyone in the channel, with the reason |

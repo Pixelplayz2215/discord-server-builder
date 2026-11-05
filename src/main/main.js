@@ -10,7 +10,7 @@ const { buildServer, cloneServer, fetchAllMembers, purgeMessages, setChannelLock
 const updater = require('./updater');
 const portal = require('./portal');
 const commands = require('./commands');
-const { createCases, caseFromCall, warnMember, privateChannel, publicChannel, avatarUrl, PUBLIC_CHANNEL_NAME } = require('./cases');
+const { createCases, caseFromCall, warnMember, privateChannel, publicChannel, avatarUrl, notifyUser, tellBanned, BAN_UNTOLD, unbanMessage, UNBAN_UNTOLD, PUBLIC_CHANNEL_NAME } = require('./cases');
 const backups = require('./backup');
 const { createServerLogger, intentsFor: logIntents, normalizeConfig: normalizeLogConfig } = require('./logs');
 const social = require('./social');
@@ -256,8 +256,9 @@ async function guildAndRoles(rest, guildId) {
 }
 
 // Bans, kicks, timeouts and unbans made in the app are recorded in #mod-cases with the bot as the
-// moderator, and bans are posted publicly when that's on. Runs in the background; a failure is
-// reported to the UI without undoing the action.
+// moderator, and bans are posted publicly when that's on. An unbanned user is told in a DM with the
+// reason, like /unban does. Runs in the background; a failure is reported to the UI without undoing
+// the action.
 function recordCall(botId, method, apiPath, { body, reason }) {
   const found = caseFromCall(method, apiPath, body);
   if (!found) return;
@@ -265,6 +266,7 @@ function recordCall(botId, method, apiPath, { body, reason }) {
     const rest = restFor(botId);
     const user = await rest.request('GET', `/users/${found.memberId}`).catch(() => null);
     const { guild, roles } = await guildAndRoles(rest, found.guildId);
+    if (found.type === 'unban' && !user?.bot && !(await notifyUser(rest, found.memberId, unbanMessage(guild.name, typeof reason === 'string' ? reason.slice(0, 400) : '')))) send('cases:untold', { botId, message: UNBAN_UNTOLD });
     const done = await casesFor(botId).record(guild, roles, {
       type: found.type,
       member: { id: found.memberId, label: user ? user.global_name || user.username : found.memberId, avatar: user ? avatarUrl(user) : null },
@@ -1440,8 +1442,18 @@ const handlers = {
       throw new Error('Blocked request.');
     }
     if (isMod(botId)) return modCall(botId, '/api/discord', { method, path: apiPath, query: opts.query, body: opts.body, reason: opts.reason, noCase: !!opts.noCase });
+    // A ban DMs them the reason first, like /ban (once they're out the bot can't reach them).
+    // Bulk raid bans (noCase) don't.
+    const found = opts.noCase ? null : caseFromCall(method, apiPath, opts.body);
+    let told = null;
+    if (found?.type === 'ban') {
+      const rest = restFor(botId);
+      const guild = await rest.request('GET', `/guilds/${found.guildId}`).catch(() => null);
+      if (guild) told = await tellBanned(rest, guild, found.memberId, typeof opts.reason === 'string' ? opts.reason.slice(0, 400) : '');
+    }
     const result = await restFor(botId).request(method, apiPath, opts);
     if (!opts.noCase) recordCall(botId, method, apiPath, opts);
+    if (told === false) send('cases:untold', { botId, message: BAN_UNTOLD });
     return result;
   },
 

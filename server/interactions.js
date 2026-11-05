@@ -11,7 +11,7 @@ const crypto = require('crypto');
 const { purgeMessages, lockWithNotice } = require('../src/main/builder');
 const { DURATIONS, DELETE_WINDOWS, SLOWMODES, MAX_ROLE_PAIRS, labelFor } = require('../src/main/commands');
 const { auditReason, P } = require('./guard');
-const { createCases, notifyUser, warnMember, TYPES, escapeMarkdown, avatarUrl } = require('../src/main/cases');
+const { createCases, notifyUser, banMessage, unbanMessage, UNBAN_UNTOLD, warnMember, TYPES, escapeMarkdown, avatarUrl } = require('../src/main/cases');
 const { normalizePoll, pollMessage, parseEmojiInput, emojiChoices, MAX_OPTIONS } = require('../src/main/polls');
 const { emojiPath, normalizePanel, panelMessage } = require('../src/main/reactionroles');
 const announce = require('../src/main/announce');
@@ -245,7 +245,7 @@ function createInteractions({ rest, guard, tickets = null, verify = null, always
       await guard.requireTarget(actor, target.id);
       const seconds = Number(ctx.options.delete_messages || 0);
       if (!DELETE_WINDOWS.some((d) => d.value === seconds)) throw fail('Pick how many messages to delete from the list.');
-      const told = target.inServer && !target.bot ? await notify(target.id, `🔨 You were banned from **${escapeMarkdown(actor.guild.name)}**.${reasonLine(ctx)}`) : null;
+      const told = target.inServer && !target.bot ? await notify(target.id, banMessage(actor.guild.name, ctx.options.reason)) : null;
       await rest.request('PUT', `/guilds/${ctx.guildId}/bans/${target.id}`, { body: { delete_message_seconds: seconds }, reason: audit(ctx) });
       return lines(`🔨 Banned <@${target.id}>.`, await logCase(actor, ctx, { type: 'ban', member: target }), told === false ? DMS_CLOSED : null);
     },
@@ -254,7 +254,8 @@ function createInteractions({ rest, guard, tickets = null, verify = null, always
       const actor = await actorFor(ctx, P.BAN_MEMBERS);
       const target = picked(ctx, 'user');
       await rest.request('DELETE', `/guilds/${ctx.guildId}/bans/${target.id}`, { reason: audit(ctx) });
-      return lines(`✅ Unbanned <@${target.id}>.`, await logCase(actor, ctx, { type: 'unban', member: target }));
+      const told = target.bot ? null : await notify(target.id, unbanMessage(actor.guild.name, ctx.options.reason));
+      return lines(`✅ Unbanned <@${target.id}>.`, await logCase(actor, ctx, { type: 'unban', member: target }), told === false ? UNBAN_UNTOLD : null);
     },
 
     async cases(ctx) {

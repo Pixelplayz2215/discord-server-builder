@@ -9,7 +9,7 @@ const { loadConfig } = require('./config');
 const { createAuth } = require('./auth');
 const { createGuard, auditReason } = require('./guard');
 const { createInteractions, once } = require('./interactions');
-const { createCases, caseFromCall, warnMember, avatarUrl } = require('../src/main/cases');
+const { createCases, caseFromCall, warnMember, avatarUrl, notifyUser, tellBanned, unbanMessage } = require('../src/main/cases');
 const { createTickets, transcriptSignature, checkTranscriptSignature } = require('../src/main/tickets');
 const { createVerify } = require('../src/main/autoroles');
 const Always = require('../src/main/always');
@@ -117,7 +117,7 @@ function createPortal({ config, rest, auth, guard, interactions, always = null, 
   // A member for a case: their name and avatar, or just the ID if Discord doesn't say.
   const caseMember = async (id) => {
     const u = await rest.request('GET', `/users/${id}`).catch(() => null);
-    return { id, label: u ? u.global_name || u.username : id, avatar: u ? avatarUrl(u) : null };
+    return { id, label: u ? u.global_name || u.username : id, avatar: u ? avatarUrl(u) : null, bot: !!u?.bot };
   };
   const snowflake = (value, what) => {
     if (!/^\d{15,21}$/.test(String(value))) throw httpError(400, `Invalid ${what}.`);
@@ -125,14 +125,17 @@ function createPortal({ config, rest, auth, guard, interactions, always = null, 
   };
 
   // A ban, kick, timeout or unban a mod made in the app becomes a case, like the slash commands' ones
-  // (and a ban is posted publicly when that's on).
+  // (and a ban is posted publicly when that's on). An unbanned user is told in a DM with the reason,
+  // like /unban does.
   async function recordCall(user, call, reason) {
     const found = caseFromCall(call.method, call.path, call.body);
     if (!found) return;
     const actor = await guard.actorIn(found.guildId, user);
+    const member = await caseMember(found.memberId);
+    if (found.type === 'unban' && !member.bot) await notifyUser(rest, member.id, unbanMessage(actor.guild.name, reason));
     const done = await caseLog.record(actor.guild, actor.roles, {
       type: found.type,
-      member: await caseMember(found.memberId),
+      member,
       moderator: user,
       reason,
       duration: found.duration,
@@ -167,9 +170,13 @@ function createPortal({ config, rest, auth, guard, interactions, always = null, 
       const request = await readJson(req);
       const call = await guard.authorize(user, request);
       if (call.special === 'guilds') return guard.modGuilds(user);
+      const reason = typeof request.reason === 'string' ? request.reason.slice(0, 400) : '';
+      // A ban from the app DMs them the reason first, like /ban. Bulk raid bans don't.
+      const found = request.noCase ? null : caseFromCall(call.method, call.path, call.body);
+      if (found?.type === 'ban') await tellBanned(rest, (await guard.actorIn(found.guildId, user)).guild, found.memberId, reason).catch(() => null);
       const result = await rest.request(call.method, call.path, { query: call.query, body: call.body, reason: call.reason });
       // Recorded in the background so the app isn't kept waiting; bulk raid actions opt out.
-      if (!request.noCase) recordCall(user, call, typeof request.reason === 'string' ? request.reason.slice(0, 400) : '').catch((err) => console.error('Recording a case failed:', err.message));
+      if (!request.noCase) recordCall(user, call, reason).catch((err) => console.error('Recording a case failed:', err.message));
       return result;
     },
 

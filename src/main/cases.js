@@ -227,6 +227,24 @@ async function notifyUser(rest, userId, content) {
   }
 }
 
+const reasonLine = (reason) => (reason ? `\n**Reason:** ${reason}` : '');
+
+// What a banned member is told, and tellBanned tells them: before the ban, since once they're out
+// of the server the bot can't DM them. null when there's nobody to tell (a bot, or someone who
+// isn't in the server), else whether the DM went.
+const banMessage = (guildName, reason) => `🔨 You were banned from **${escapeMarkdown(guildName)}**.${reasonLine(reason)}`;
+const BAN_UNTOLD = "Their DMs are closed, so they weren't told.";
+async function tellBanned(rest, guild, userId, reason) {
+  const member = await rest.request('GET', `/guilds/${guild.id}/members/${userId}`).catch(() => null);
+  if (!member || member.user?.bot) return null;
+  return notifyUser(rest, userId, banMessage(guild.name, reason));
+}
+
+// What an unbanned user is told. Discord only lets a bot DM people who share a server with it, so
+// someone who was only in this one (and left it when banned) usually can't be reached.
+const unbanMessage = (guildName, reason) => `✅ You were unbanned from **${escapeMarkdown(guildName)}**. You can join again with an invite.${reasonLine(reason)}`;
+const UNBAN_UNTOLD = "They weren't told: Discord only lets the bot DM people who share a server with it and allow DMs.";
+
 // Records a warning and DMs the member the reason.
 async function warnMember(rest, caseLog, { guild, roles, member, moderator, reason }) {
   const { number } = await caseLog.record(guild, roles, { type: 'warn', member, moderator, reason });
@@ -261,4 +279,4 @@ function caseFromCall(method, path, body, now = Date.now()) {
   return null;
 }
 
-module.exports = { createCases, parseCase, caseEmbed, publicBanEmbed, escapeMarkdown, avatarUrl, notifyUser, warnMember, caseFromCall, durationLabel, privateChannel, publicChannel, TYPES, CHANNEL_NAME, PUBLIC_CHANNEL_NAME };
+module.exports = { createCases, parseCase, caseEmbed, publicBanEmbed, escapeMarkdown, avatarUrl, notifyUser, banMessage, tellBanned, BAN_UNTOLD, unbanMessage, UNBAN_UNTOLD, warnMember, caseFromCall, durationLabel, privateChannel, publicChannel, TYPES, CHANNEL_NAME, PUBLIC_CHANNEL_NAME };

@@ -6,6 +6,8 @@ To release: add your changes as `- ` lines under **Unreleased**, then run `npm r
 
 ## Unreleased
 
+- **Reasons for unbans, and DMs for bans and unbans from the app.** **Unban** in the app now opens a window with a **Reason** box, like Ban and Kick, instead of always writing "Unbanned in Discord Server Builder". The reason goes in the audit log and `#mod-cases`. Unbanned members now get a DM saying they can join again, with the reason, whether you unban in the app or with `/unban`. Banning someone in the app now DMs them the reason first, like `/ban` already did (bulk bans from the Raid tools don't). Discord only lets a bot DM people who share a server with it, so someone who was only in your server usually can't be told about an unban. When a DM doesn't arrive, the app and the command say so. Update your mod portal with **Sync fork** for `/unban` and for your mods' bans and unbans.
+
 ## 1.2.15 (2026-11-05)
 
 - **No more empty boxes on welcome cards.** Names written with "fancy text" letters (𝓢𝓹𝓲𝓭𝓮𝓻, ｆａｎｃｙ, ᴘɪxᴇʟ, 🅿🅸🆇) used to come out as rows of □ on cards your mod portal drew, because its font only has plain letters. Cards now write them in plain letters (Spiderblock). Anything the card still can't draw is left out, along with decorations that would run into the line below (꧁ ꧂) and "zalgo" piles of accent marks. If a name's letters can't be drawn at all, for example a script the portal has no font for, the card uses the member's username. Long names are cut without breaking an emoji in half.

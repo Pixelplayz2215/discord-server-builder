@@ -594,12 +594,13 @@ const Mod = {
 
   async ban(ctx, userId, label) {
     const reason = Mod.reasonInput();
+    reason.placeholder = 'Reason (they see it in a DM, and it shows in the audit log)';
     const purge = selectEl(BAN_DELETE_OPTIONS, '0');
     const shownIn = ctx.srv.channels?.find((c) => c.id === ModLog.publicBansIn(ctx.srv.channels));
     return openModal({
       title: `Ban ${label}?`,
       body: [
-        h('p', null, 'They are removed and cannot rejoin until unbanned.'),
+        h('p', null, 'They are removed and cannot rejoin until unbanned. The bot DMs them the reason first.'),
         field('Message history', purge),
         field('Reason', reason),
         shownIn ? h('div', { class: 'callout' }, icon('megaphone'), h('div', null, `Public bans are on: everyone in #${shownIn.name} sees this ban and the reason.`)) : null,
@@ -623,14 +624,26 @@ const Mod = {
   },
 
   async unban(ctx, userId, label) {
-    try {
-      await rest(ctx.botId, 'DELETE', `/guilds/${ctx.guildId}/bans/${userId}`, { reason: 'Unbanned in Discord Server Builder' });
-      if (ctx.srv.bans) ctx.srv.bans = ctx.srv.bans.filter((b) => b.user.id !== userId);
-      toast(`Unbanned ${label}`);
-      ctx.rerender();
-    } catch (err) {
-      toastError(err);
-    }
+    const reason = Mod.reasonInput();
+    reason.placeholder = 'Reason (they see it in a DM, and it shows in the audit log)';
+    return openModal({
+      title: `Unban ${label}?`,
+      body: [h('p', null, 'They can join again with an invite. The bot DMs them the reason if Discord lets it: they need to share another server with the bot.'), field('Reason', reason)],
+      actions: [
+        { label: 'Cancel', kind: 'ghost' },
+        {
+          label: 'Unban',
+          kind: 'primary',
+          icon: 'unlock',
+          onClick: async () => {
+            await rest(ctx.botId, 'DELETE', `/guilds/${ctx.guildId}/bans/${userId}`, { reason: reason.value.trim() });
+            if (ctx.srv.bans) ctx.srv.bans = ctx.srv.bans.filter((b) => b.user.id !== userId);
+            toast(`Unbanned ${label}`);
+            ctx.rerender();
+          },
+        },
+      ],
+    });
   },
 
   async nickname(ctx, member) {
@@ -963,6 +976,7 @@ const Cases = {
 
 onEvent('cases:error', ({ message }) => toast(`The action worked, but it couldn't be recorded in #mod-cases: ${message}`, 'error'));
 onEvent('cases:announceError', ({ message }) => toast(`The ban worked, but it couldn't be posted publicly: ${message}`, 'error'));
+onEvent('cases:untold', ({ message }) => toast(message, 'error'));
 
 /* ======================= Members ======================= */
 const MembersTab = {
