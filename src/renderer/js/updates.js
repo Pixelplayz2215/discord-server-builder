@@ -59,7 +59,13 @@ const Updater = {
       progress.classList.remove('hidden');
       status.classList.remove('hidden');
       status.textContent = 'Downloading…';
-      const off = onEvent('update:progress', ({ received, total }) => {
+      const off = onEvent('update:progress', ({ received, total, retrying }) => {
+        // A try failed (GitHub hiccuped or the connection dropped); the next one starts by itself.
+        if (retrying) {
+          const seconds = Math.round(retrying.waitMs / 1000);
+          status.textContent = `${retrying.message} Trying again in ${seconds} second${seconds === 1 ? '' : 's'} (try ${retrying.next} of ${retrying.tries})…`;
+          return;
+        }
         bar.style.width = total ? `${Math.min(100, (received / total) * 100)}%` : '50%';
         status.textContent = total ? `Downloading… ${mb(received)} of ${mb(total)}` : `Downloading… ${mb(received)}`;
       });

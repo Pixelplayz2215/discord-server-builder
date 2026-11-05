@@ -49,8 +49,18 @@ function isInstalled() {
 const canSelfUpdate = () => !!portableExe() || isInstalled();
 
 // The release, the version its files are, and the exe this copy should update to (null if none).
+// No connection, or GitHub's API failing for a moment (5xx), is tried again after a short wait.
 async function fetchRelease() {
-  const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, { headers: HEADERS });
+  const res = await withRetries(
+    async () => {
+      const r = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, { headers: HEADERS }).catch(() => {
+        throw failure('GitHub couldn\'t be reached. Check your internet connection.', { retry: true });
+      });
+      if (r.status >= 500) throw httpFailure(r, `GitHub returned HTTP ${r.status}.`);
+      return r;
+    },
+    { waits: [1000, 3000] },
+  );
   if (res.status === 404) return null;
   if (res.status === 403 || res.status === 429) throw new Error('GitHub\'s rate limit was reached. Try again in a little while.');
   if (!res.ok) throw new Error(`GitHub returned HTTP ${res.status}.`);
@@ -136,24 +146,104 @@ function createReleaseWatcher({ onNewVersion, current = () => app.getVersion(), 
   };
 }
 
-async function downloadFile(url, dest, onProgress) {
-  const res = await fetch(url, { headers: { 'User-Agent': HEADERS['User-Agent'] } });
-  if (!res.ok || !res.body) throw new Error(`Download failed (HTTP ${res.status}).`);
-  const total = Number(res.headers.get('content-length')) || 0;
-  let received = 0;
-  const counter = new Transform({
-    transform(chunk, _encoding, done) {
-      received += chunk.length;
-      onProgress(received, total);
-      done(null, chunk);
-    },
-  });
+// GitHub's servers sometimes fail for a moment (HTTP 5xx), most often right after a release is
+// published, and connections drop or stall. Those are tried again after these waits (so 4 tries in
+// all). A 404, a refused link or a full disk isn't: trying again wouldn't help.
+const RETRY_WAITS_MS = [2000, 5000, 15000];
+const MAX_WAIT_MS = 60 * 1000;
+// A download that sends nothing for this long is stopped and tried again.
+const STALL_MS = 30 * 1000;
+const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const failure = (message, { retry = false, waitMs = 0 } = {}) => Object.assign(new Error(message), { retry, waitMs });
+
+// Timeouts, rate limits and server errors are worth another try, after the Retry-After the server
+// asks for (in seconds), up to a minute.
+function httpFailure(res, message) {
+  const after = Number(res.headers?.get('retry-after'));
+  return failure(message, { retry: res.status === 408 || res.status === 429 || res.status >= 500, waitMs: after > 0 ? after * 1000 : 0 });
+}
+
+// Runs attempt() until it succeeds or fails in a way another try can't fix. onRetry({ message,
+// waitMs, next, tries }) says a try failed and when the next one starts.
+async function withRetries(attempt, { waits = RETRY_WAITS_MS, sleep = pause, onRetry = () => {} } = {}) {
+  for (let n = 1; ; n++) {
+    try {
+      return await attempt(n);
+    } catch (err) {
+      if (!err.retry || n > waits.length) throw err;
+      const waitMs = Math.min(MAX_WAIT_MS, Math.max(waits[n - 1], err.waitMs || 0));
+      onRetry({ message: err.message, waitMs, next: n + 1, tries: waits.length + 1 });
+      await sleep(waitMs);
+    }
+  }
+}
+
+// One try at the download, into the partial file. size is the file's size from the release, which
+// catches a download that arrives cut short.
+async function downloadOnce(url, partial, onProgress, { size, stallMs, fetchImpl }) {
+  const controller = new AbortController();
+  let stalled = false;
+  let timer = null;
+  const watch = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      stalled = true;
+      controller.abort();
+    }, stallMs);
+  };
+  watch();
+  try {
+    let res;
+    try {
+      res = await fetchImpl(url, { headers: { 'User-Agent': HEADERS['User-Agent'] }, signal: controller.signal });
+    } catch {
+      throw failure(stalled ? 'Download failed (GitHub stopped answering).' : 'Download failed (GitHub couldn\'t be reached).', { retry: true });
+    }
+    if (!res.ok || !res.body) {
+      res.body?.cancel().catch(() => {});
+      throw httpFailure(res, `Download failed (HTTP ${res.status}).`);
+    }
+    // Content-Length counts compressed bytes when the server compresses, so it only stands in for
+    // the release's size when it doesn't.
+    const total = size || (res.headers.get('content-encoding') ? 0 : Number(res.headers.get('content-length')) || 0);
+    let received = 0;
+    onProgress(0, total);
+    const counter = new Transform({
+      transform(chunk, _encoding, done) {
+        watch();
+        received += chunk.length;
+        onProgress(received, total);
+        done(null, chunk);
+      },
+    });
+    // pipeline() passes one stream's error on to the others, so the side that failed first says
+    // whether it was the connection (worth another try) or the disk (not).
+    let failedFirst = null;
+    const source = Readable.fromWeb(res.body).on('error', () => (failedFirst ??= 'network'));
+    const file = fs.createWriteStream(partial).on('error', () => (failedFirst ??= 'disk'));
+    try {
+      await pipeline(source, counter, file);
+    } catch (err) {
+      if (failedFirst !== 'network') throw err;
+      throw failure(stalled ? 'Download failed (GitHub stopped sending the file).' : 'Download failed (the connection dropped).', { retry: true });
+    }
+    if (total && received !== total) throw failure('Download failed (the file arrived incomplete).', { retry: true });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Downloads url to dest, trying again when GitHub fails for a moment or the connection drops. The
+// file only appears at dest once it's complete.
+async function downloadFile(url, dest, onProgress, { size = 0, onRetry, waits, sleep, stallMs = STALL_MS, fetchImpl = fetch } = {}) {
   const partial = `${dest}.download`;
   try {
-    await pipeline(Readable.fromWeb(res.body), counter, fs.createWriteStream(partial));
+    await withRetries(() => downloadOnce(url, partial, onProgress, { size, stallMs, fetchImpl }), { waits, sleep, onRetry });
     fs.renameSync(partial, dest);
   } catch (err) {
     fs.rmSync(partial, { force: true });
+    if (err.retry) err.message += ` It was tried ${(waits || RETRY_WAITS_MS).length + 1} times. Try again in a few minutes.`;
     throw err;
   }
   return dest;
@@ -161,8 +251,9 @@ async function downloadFile(url, dest, onProgress) {
 
 // Looks the release up again here rather than trusting a URL from the UI, and only accepts
 // assets served from this repository's release downloads. The portable exe is downloaded next to
-// the running one; the installer goes to the temp folder.
-async function installUpdate(onProgress) {
+// the running one; the installer goes to the temp folder. onRetry is told when a try fails and the
+// download starts again.
+async function installUpdate(onProgress, { onRetry } = {}) {
   if (!canSelfUpdate()) throw new Error('This copy can\'t update itself (it isn\'t the installed app or the portable exe). Download the new version from GitHub instead.');
   const found = await fetchRelease();
   if (!found?.exe || !isNewer(found.version, app.getVersion())) throw new Error('No newer version was found.');
@@ -173,7 +264,7 @@ async function installUpdate(onProgress) {
   }
   const exe = portableExe();
   const dest = exe ? path.join(path.dirname(exe), `${path.parse(exe).name}.update.exe`) : path.join(os.tmpdir(), 'DiscordServerBuilder-setup.exe');
-  return downloadFile(url.href, dest, onProgress);
+  return downloadFile(url.href, dest, onProgress, { size: found.exe.size, onRetry });
 }
 
 // A small batch file that waits for this copy to exit, moves the new exe over the old one (so the

@@ -2439,7 +2439,9 @@ const handlers = {
   'update:check': () => updater.checkForUpdate(),
 
   'update:install': async () => {
-    const file = await updater.installUpdate((received, total) => send('update:progress', { received, total }));
+    const file = await updater.installUpdate((received, total) => send('update:progress', { received, total }), {
+      onRetry: (retrying) => send('update:progress', { retrying }),
+    });
     // Give the UI a moment to show "Restarting…" before this window closes.
     setTimeout(() => updater.restartInto(file), 400);
     return { file };
