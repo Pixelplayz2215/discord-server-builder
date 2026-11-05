@@ -11,7 +11,7 @@ const crypto = require('crypto');
 const { purgeMessages, lockWithNotice } = require('../src/main/builder');
 const { DURATIONS, DELETE_WINDOWS, SLOWMODES, MAX_ROLE_PAIRS, labelFor } = require('../src/main/commands');
 const { auditReason, P } = require('./guard');
-const { createCases, notifyUser, warnMember, TYPES, escapeMarkdown } = require('../src/main/cases');
+const { createCases, notifyUser, warnMember, TYPES, escapeMarkdown, avatarUrl } = require('../src/main/cases');
 const { normalizePoll, pollMessage, parseEmojiInput, emojiChoices, MAX_OPTIONS } = require('../src/main/polls');
 const { emojiPath, normalizePanel, panelMessage } = require('../src/main/reactionroles');
 const announce = require('../src/main/announce');
@@ -30,8 +30,6 @@ const EMOJI_CACHE_MS = 60000;
 const CAN = { ADD_REACTIONS: 1n << 6n, VIEW_CHANNEL: 1n << 10n, SEND_MESSAGES: 1n << 11n, MANAGE_MESSAGES: 1n << 13n, EMBED_LINKS: 1n << 14n, READ_HISTORY: 1n << 16n, MENTION_EVERYONE: 1n << 17n, MANAGE_ROLES: 1n << 28n, SEND_IN_THREADS: 1n << 38n, SEND_POLLS: 1n << 49n };
 // The commands whose emoji boxes suggest emojis as you type, and which boxes.
 const EMOJI_BOXES = { poll: /^emoji\d$/, giveaway: /^emoji$/, reactionroles: /^emoji\d$/ };
-
-const avatarUrl = (u) => (u.avatar ? `https://cdn.discordapp.com/avatars/${u.id}/${u.avatar}.png?size=64` : `https://cdn.discordapp.com/embed/avatars/${Number((BigInt(u.id) >> 22n) % 6n)}.png`);
 
 const fail = (message, status = 400) => Object.assign(new Error(message), { status });
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -84,7 +82,7 @@ function createInteractions({ rest, guard, tickets = null, verify = null, always
       channelName: interaction.channel?.name || '',
       user: { id: u.id, username: u.username, global_name: u.global_name || null },
       memberRoles: interaction.member.roles || [],
-      shownAs: { name: interaction.member.nick || u.global_name || u.username, icon: avatarUrl(u) },
+      shownAs: { name: interaction.member.nick || u.global_name || u.username, icon: avatarUrl(u, 64) },
       // The member's and the bot's permissions in this channel, as Discord worked them out.
       permissions: BigInt(interaction.member.permissions || 0),
       appPermissions: BigInt(interaction.app_permissions || 0),
@@ -117,7 +115,7 @@ function createInteractions({ rest, guard, tickets = null, verify = null, always
     const id = String(ctx.options[name] || '');
     if (!/^\d{15,21}$/.test(id)) throw fail('Pick a member.');
     const u = ctx.resolved.users?.[id];
-    return { id, label: u ? u.global_name || u.username : id, bot: !!u?.bot, inServer: !!ctx.resolved.members?.[id] };
+    return { id, label: u ? u.global_name || u.username : id, avatar: u ? avatarUrl(u) : null, bot: !!u?.bot, inServer: !!ctx.resolved.members?.[id] };
   }
 
   async function memberTarget(ctx, need) {
@@ -131,10 +129,11 @@ function createInteractions({ rest, guard, tickets = null, verify = null, always
   const notify = (userId, content) => notifyUser(rest, userId, content);
 
   // Records a case after an action that already happened, so a logging problem is reported, not thrown.
+  // With public bans on, a ban is also posted for everyone.
   async function logCase(actor, ctx, entry) {
     try {
-      const { number } = await caseLog.record(actor.guild, actor.roles, { moderator: ctx.user, reason: ctx.options.reason, ...entry });
-      return `Recorded as case ${number}.`;
+      const { number, announced, announceError } = await caseLog.record(actor.guild, actor.roles, { moderator: ctx.user, reason: ctx.options.reason, ...entry });
+      return lines(`Recorded as case ${number}.`, announced ? `Posted publicly in <#${announced}>.` : null, announceError ? `It couldn't be posted publicly: ${announceError}` : null);
     } catch (err) {
       return `It couldn't be recorded in #mod-cases: ${err.message}`;
     }

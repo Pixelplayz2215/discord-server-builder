@@ -10,7 +10,7 @@ const { buildServer, cloneServer, fetchAllMembers, purgeMessages, setChannelLock
 const updater = require('./updater');
 const portal = require('./portal');
 const commands = require('./commands');
-const { createCases, caseFromCall, warnMember, privateChannel } = require('./cases');
+const { createCases, caseFromCall, warnMember, privateChannel, publicChannel, avatarUrl, PUBLIC_CHANNEL_NAME } = require('./cases');
 const backups = require('./backup');
 const { createServerLogger, intentsFor: logIntents, normalizeConfig: normalizeLogConfig } = require('./logs');
 const social = require('./social');
@@ -256,7 +256,8 @@ async function guildAndRoles(rest, guildId) {
 }
 
 // Bans, kicks, timeouts and unbans made in the app are recorded in #mod-cases with the bot as the
-// moderator. Runs in the background; a failure is reported to the UI without undoing the action.
+// moderator, and bans are posted publicly when that's on. Runs in the background; a failure is
+// reported to the UI without undoing the action.
 function recordCall(botId, method, apiPath, { body, reason }) {
   const found = caseFromCall(method, apiPath, body);
   if (!found) return;
@@ -264,13 +265,14 @@ function recordCall(botId, method, apiPath, { body, reason }) {
     const rest = restFor(botId);
     const user = await rest.request('GET', `/users/${found.memberId}`).catch(() => null);
     const { guild, roles } = await guildAndRoles(rest, found.guildId);
-    await casesFor(botId).record(guild, roles, {
+    const done = await casesFor(botId).record(guild, roles, {
       type: found.type,
-      member: { id: found.memberId, label: user ? user.global_name || user.username : found.memberId },
+      member: { id: found.memberId, label: user ? user.global_name || user.username : found.memberId, avatar: user ? avatarUrl(user) : null },
       moderator: { id: botId },
       reason: typeof reason === 'string' ? reason.slice(0, 400) : '',
       duration: found.duration,
     });
+    if (done.announceError) send('cases:announceError', { botId, message: done.announceError });
   })().catch((err) => send('cases:error', { botId, message: err.message }));
 }
 
@@ -1390,6 +1392,25 @@ const handlers = {
     logErrors.delete(key);
     syncConnection(botId);
     return handlers['logs:get'](botId, guildId);
+  },
+
+  // Public bans: the channel bans are posted in (null for private bans), named in #mod-cases' topic
+  // so the mod portal and /ban follow it too. Returns #mod-cases as it is now.
+  'cases:publicBans': async (botId, guildId, channelId) => {
+    if (isMod(botId)) ownerOnly();
+    const rest = restFor(botId);
+    const { guild, roles } = await guildAndRoles(rest, snowflake(guildId, 'server'));
+    return casesFor(botId).setPublicBans(guild, roles, channelId ? snowflake(channelId, 'channel') : null);
+  },
+
+  'cases:createPublicChannel': async (botId, guildId) => {
+    if (isMod(botId)) ownerOnly();
+    const rest = restFor(botId);
+    const guild = await rest.request('GET', `/guilds/${snowflake(guildId, 'server')}`);
+    return rest.request('POST', `/guilds/${guildId}/channels`, {
+      body: publicChannel(PUBLIC_CHANNEL_NAME, 'Bans, posted by the bot for everyone to see.', guild, botId),
+      reason: 'Channel for public bans',
+    });
   },
 
   // A private #server-logs channel: hidden from @everyone, readable by mod roles.

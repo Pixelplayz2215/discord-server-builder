@@ -2,12 +2,15 @@
 // server. Discord is the store, so cases survive portal restarts (free hosts wipe their disk) and
 // mods can read them in Discord too. Each case is one embed whose footer holds the IDs to search by.
 // Shared by the app (owner bots) and the mod portal (server/), so it must not depend on Electron.
+// With public bans on (#mod-cases' topic names a channel, see src/shared/modlog.js), each ban is
+// also posted there for everyone, with the member and the reason but not the moderator.
+const { publicBansIn, withPublicBans, isTextType, CASES_CHANNEL: CHANNEL_NAME } = require('../shared/modlog');
 
-const CHANNEL_NAME = 'mod-cases';
 // Kick, Ban or Timeout: the roles that can read #mod-cases (same rule as the portal's mod access).
 const MOD_ACCESS = (1n << 1n) | (1n << 2n) | (1n << 40n);
 const SCAN_PAGES = 10; // newest 1000 messages
-const BIT = { VIEW_CHANNEL: 1n << 10n, SEND_MESSAGES: 1n << 11n, EMBED_LINKS: 1n << 14n, READ_MESSAGE_HISTORY: 1n << 16n };
+const BIT = { VIEW_CHANNEL: 1n << 10n, SEND_MESSAGES: 1n << 11n, EMBED_LINKS: 1n << 14n, READ_MESSAGE_HISTORY: 1n << 16n, CREATE_PUBLIC_THREADS: 1n << 35n, CREATE_PRIVATE_THREADS: 1n << 36n, SEND_IN_THREADS: 1n << 38n };
+const PUBLIC_CHANNEL_NAME = 'public-execution';
 const TYPES = {
   warn: { label: 'Warn', color: 0xf5a623 },
   timeout: { label: 'Timeout', color: 0x7f8cf0 },
@@ -20,6 +23,9 @@ const FOOTER = /^Member ID (\d+) · Moderator ID (\d+) · (\w+)$/;
 const TITLE = /^Case (\d+) · /;
 
 const escapeMarkdown = (text) => String(text).replace(/[\\*_`~|>[\]()]/g, '\\$&');
+
+// A user's avatar (or Discord's default one for them).
+const avatarUrl = (u, size = 128) => (u.avatar ? `https://cdn.discordapp.com/avatars/${u.id}/${u.avatar}.png?size=${size}` : `https://cdn.discordapp.com/embed/avatars/${Number((BigInt(u.id) >> 22n) % 6n)}.png`);
 
 function parseCase(message, botId) {
   if (message.author?.id !== botId) return null;
@@ -52,6 +58,31 @@ function caseEmbed(number, { type, member, moderator, reason, duration }) {
     ],
     footer: { text: `Member ID ${member.id} · Moderator ID ${moderator.id} · ${type}` },
     timestamp: new Date().toISOString(),
+  };
+}
+
+// A ban as everyone sees it in the public bans channel: who and why, not which mod.
+function publicBanEmbed({ member, reason }) {
+  return {
+    title: `🔨 ${escapeMarkdown([...String(member.label)].slice(0, 100).join(''))} was banned`,
+    color: TYPES.ban.color,
+    description: `<@${member.id}>`,
+    fields: [{ name: 'Reason', value: (reason || 'No reason given').slice(0, 1024) }],
+    ...(member.avatar ? { thumbnail: { url: member.avatar } } : {}),
+    timestamp: new Date().toISOString(),
+  };
+}
+
+// A text channel everyone can read but only the bot posts in, for public bans.
+function publicChannel(name, topic, guild, botUserId) {
+  return {
+    name,
+    type: 0,
+    topic,
+    permission_overwrites: [
+      { id: guild.id, type: 0, allow: '0', deny: String(BIT.SEND_MESSAGES | BIT.SEND_IN_THREADS | BIT.CREATE_PUBLIC_THREADS | BIT.CREATE_PRIVATE_THREADS) },
+      { id: botUserId, type: 1, allow: String(BIT.VIEW_CHANNEL | BIT.SEND_MESSAGES | BIT.EMBED_LINKS | BIT.READ_MESSAGE_HISTORY), deny: '0' },
+    ],
   };
 }
 
@@ -116,7 +147,9 @@ function createCases(rest, { botId }) {
     return 0;
   }
 
-  // entry: { type, member: { id, label }, moderator: { id }, reason, duration }
+  // entry: { type, member: { id, label, avatar }, moderator: { id }, reason, duration }
+  // A ban is also posted publicly when that's on: announced is that channel's id, and
+  // announceError says why the post failed (the case is recorded either way).
   function record(guild, roles, entry) {
     const write = () =>
       withChannel(guild, roles, true, async (channelId) => {
@@ -126,7 +159,38 @@ function createCases(rest, { botId }) {
       });
     const next = (queues.get(guild.id) || Promise.resolve()).catch(() => {}).then(write);
     queues.set(guild.id, next);
-    return next;
+    if (entry.type !== 'ban') return next;
+    return next.then(async (done) => {
+      try {
+        return { ...done, announced: await announceBan(guild.id, entry) };
+      } catch (err) {
+        return { ...done, announced: null, announceError: err.message };
+      }
+    });
+  }
+
+  // Read fresh each ban, so turning public bans on or off (here, in the app or in Discord) counts at once.
+  async function announceBan(guildId, entry) {
+    const channelId = publicBansIn(await rest.request('GET', `/guilds/${guildId}/channels`));
+    if (!channelId) return null;
+    await rest.request('POST', `/channels/${channelId}/messages`, { body: { embeds: [publicBanEmbed(entry)], allowed_mentions: { parse: [] } } });
+    return channelId;
+  }
+
+  // Turns public bans on (in channelId) or off (null) by naming the channel in #mod-cases' topic,
+  // making #mod-cases first if needed. Returns #mod-cases as it is now (null if there's none).
+  async function setPublicBans(guild, roles, channelId) {
+    if (channelId) {
+      const list = await rest.request('GET', `/guilds/${guild.id}/channels`);
+      if (!list.some((c) => c.id === channelId && isTextType(c.type))) throw new Error('Pick a text channel in this server.');
+    }
+    return withChannel(guild, roles, !!channelId, async (id) => {
+      if (!id) return null;
+      const channel = await rest.request('GET', `/channels/${id}`);
+      const topic = withPublicBans(channel.topic, channelId);
+      if (topic === (channel.topic || '')) return channel;
+      return rest.request('PATCH', `/channels/${id}`, { body: { topic }, reason: channelId ? 'Public bans turned on' : 'Public bans turned off' });
+    });
   }
 
   // A member's cases, newest first.
@@ -149,7 +213,7 @@ function createCases(rest, { botId }) {
     });
   }
 
-  return { record, list };
+  return { record, list, setPublicBans };
 }
 
 // DMs a user; false when their DMs are closed (or they share no server with the bot).
@@ -197,4 +261,4 @@ function caseFromCall(method, path, body, now = Date.now()) {
   return null;
 }
 
-module.exports = { createCases, parseCase, caseEmbed, escapeMarkdown, notifyUser, warnMember, caseFromCall, durationLabel, privateChannel, TYPES, CHANNEL_NAME };
+module.exports = { createCases, parseCase, caseEmbed, publicBanEmbed, escapeMarkdown, avatarUrl, notifyUser, warnMember, caseFromCall, durationLabel, privateChannel, publicChannel, TYPES, CHANNEL_NAME, PUBLIC_CHANNEL_NAME };

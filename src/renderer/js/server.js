@@ -595,9 +595,15 @@ const Mod = {
   async ban(ctx, userId, label) {
     const reason = Mod.reasonInput();
     const purge = selectEl(BAN_DELETE_OPTIONS, '0');
+    const shownIn = ctx.srv.channels?.find((c) => c.id === ModLog.publicBansIn(ctx.srv.channels));
     return openModal({
       title: `Ban ${label}?`,
-      body: [h('p', null, 'They are removed and cannot rejoin until unbanned.'), field('Message history', purge), field('Reason', reason)],
+      body: [
+        h('p', null, 'They are removed and cannot rejoin until unbanned.'),
+        field('Message history', purge),
+        field('Reason', reason),
+        shownIn ? h('div', { class: 'callout' }, icon('megaphone'), h('div', null, `Public bans are on: everyone in #${shownIn.name} sees this ban and the reason.`)) : null,
+      ],
       actions: [
         { label: 'Cancel', kind: 'ghost' },
         {
@@ -956,6 +962,7 @@ const Cases = {
 };
 
 onEvent('cases:error', ({ message }) => toast(`The action worked, but it couldn't be recorded in #mod-cases: ${message}`, 'error'));
+onEvent('cases:announceError', ({ message }) => toast(`The ban worked, but it couldn't be posted publicly: ${message}`, 'error'));
 
 /* ======================= Members ======================= */
 const MembersTab = {
@@ -1316,7 +1323,75 @@ const ModerationTab = {
     srv.modList ??= 'bans';
     if (srv.modList === 'bans' && !srv.bans && !srv.bansLoading && !srv.bansError) ModerationTab.loadBans(ctx);
     if (srv.modList === 'kicks' && !srv.kicks && !srv.kicksLoading && !srv.kicksError) ModerationTab.loadKicks(ctx);
-    el.append(h('div', { class: 'split', style: { gridTemplateColumns: 'minmax(0,1fr) 380px' } }, ModerationTab.removedCard(ctx), h('div', { class: 'stack', style: { gap: '16px' } }, ModerationTab.quickCard(ctx), ctx.mod ? null : ModerationTab.pruneCard(ctx))));
+    el.append(h('div', { class: 'split', style: { gridTemplateColumns: 'minmax(0,1fr) 380px' } }, ModerationTab.removedCard(ctx), h('div', { class: 'stack', style: { gap: '16px' } }, ctx.mod ? null : ModerationTab.publicBansCard(ctx), ModerationTab.quickCard(ctx), ctx.mod ? null : ModerationTab.pruneCard(ctx))));
+  },
+
+  // Private bans (only the mod and #mod-cases see them) or public ones, posted in a channel for
+  // everyone. The switch is kept in #mod-cases' topic, so the mod portal and /ban follow it too.
+  publicBansCard(ctx) {
+    const { srv } = ctx;
+    const textChannels = srv.channels.filter((c) => ModLog.isTextType(c.type)).sort((a, b) => a.position - b.position);
+    const current = ModLog.publicBansIn(srv.channels);
+    const made = textChannels.find((c) => c.name === 'public-execution');
+    const showPublic = !!current || !!srv.publicBansPicking;
+
+    const save = async (channelId) => {
+      const cases = await api('cases:publicBans', ctx.botId, ctx.guildId, channelId);
+      if (cases) srv.channels = srv.channels.some((c) => c.id === cases.id) ? srv.channels.map((c) => (c.id === cases.id ? cases : c)) : [...srv.channels, cases];
+      srv.publicBansPicking = false;
+      const name = srv.channels.find((c) => c.id === channelId)?.name;
+      toast(channelId ? `Bans are posted in #${name} now` : 'Bans are private now');
+      ctx.rerender();
+    };
+    const run = (fn) => async (...args) => {
+      try {
+        await fn(...args);
+      } catch (err) {
+        toastError(err);
+        ctx.rerender();
+      }
+    };
+    const choose = run(async (pub) => {
+      if (pub === showPublic) return;
+      if (!pub) {
+        srv.publicBansPicking = false;
+        if (current) await save(null);
+        else ctx.rerender();
+      } else if (made) await save(made.id);
+      else {
+        srv.publicBansPicking = true;
+        ctx.rerender();
+      }
+    });
+
+    const seg = h(
+      'div',
+      { class: 'seg' },
+      h('button', { type: 'button', class: `seg-btn ${showPublic ? '' : 'active'}`, onclick: () => choose(false) }, icon('lock'), 'Private bans'),
+      h('button', { type: 'button', class: `seg-btn ${showPublic ? 'active' : ''}`, onclick: () => choose(true) }, icon('megaphone'), 'Public bans'),
+    );
+    const body = [seg];
+    if (!showPublic) {
+      body.push(h('p', { class: 'muted', style: { fontSize: 'calc(13rem / 14)' } }, 'Only the moderator who bans sees it, and the mods who can read #mod-cases.'));
+    } else {
+      const pick = selectEl([['', 'Pick a channel…'], ...textChannels.map((c) => [c.id, `#${c.name}`])], current || '', run((v) => (v ? save(v) : ctx.rerender())));
+      const createBtn = made ? null : h('button', { class: 'btn sm' }, icon('plus'), 'Create #public-execution');
+      createBtn?.addEventListener(
+        'click',
+        withBusy(createBtn, async () => {
+          const channel = await api('cases:createPublicChannel', ctx.botId, ctx.guildId);
+          srv.channels = [...srv.channels, channel];
+          await save(channel.id);
+        }),
+      );
+      body.push(
+        h('p', { class: 'muted', style: { fontSize: 'calc(13rem / 14)' } }, "Each ban is posted in this channel for everyone to see, with the member's name and the reason. Who banned them isn't shown."),
+        h('div', { class: 'row wrap' }, h('div', { style: { width: '220px' } }, pick), createBtn),
+        current ? null : h('div', { class: 'subtle', style: { fontSize: 'calc(12rem / 14)' } }, 'Bans stay private until you pick a channel.'),
+        h('div', { class: 'subtle', style: { fontSize: 'calc(12rem / 14)' } }, "Bans made here, by mods in the app and with /ban are posted. Bulk bans from Raid tools and bans made in Discord itself aren't."),
+      );
+    }
+    return h('div', { class: 'card' }, h('div', { class: 'card-head' }, icon('ban'), h('h3', null, 'Who sees bans'), current ? h('span', { class: 'badge coral' }, 'Public') : h('span', { class: 'badge' }, 'Private')), h('div', { class: 'stack' }, body));
   },
 
   // Bans (from Discord's ban list) and kicks (from the audit log), with a switch between them.

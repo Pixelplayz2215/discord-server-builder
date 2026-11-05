@@ -5,7 +5,7 @@ const INVOKE = new Set([
   'bots:list', 'bots:add', 'bots:refresh', 'bots:update', 'bots:remove', 'bots:reorder',
   'mod:signIn', 'mod:cancelSignIn', 'mod:checkPortal',
   'commands:status', 'commands:enable', 'commands:disable',
-  'cases:list', 'cases:warn',
+  'cases:list', 'cases:warn', 'cases:publicBans', 'cases:createPublicChannel',
   'servers:config', 'raid:saveLockdown', 'raid:ban',
   'backups:list', 'backups:create', 'backups:delete', 'backups:setAuto', 'backups:plan', 'backups:restore', 'backups:export', 'backups:import',
   'logs:get', 'logs:set', 'logs:createChannel', 'logs:test',
@@ -27,7 +27,7 @@ const INVOKE = new Set([
   'update:check', 'update:install',
   'open:external', 'app:info',
 ]);
-const EVENTS = new Set(['presence:state', 'builder:event', 'update:progress', 'update:available', 'update:open', 'stats:changed', 'autoroles:progress', 'verifylock:progress', 'announce:changed', 'giveaways:changed', 'rr:changed', 'cases:error', 'raid:progress', 'backup:event', 'backups:changed', 'social:changed', 'polls:changed', 'always:changed']);
+const EVENTS = new Set(['presence:state', 'builder:event', 'update:progress', 'update:available', 'update:open', 'stats:changed', 'autoroles:progress', 'verifylock:progress', 'announce:changed', 'giveaways:changed', 'rr:changed', 'cases:error', 'cases:announceError', 'raid:progress', 'backup:event', 'backups:changed', 'social:changed', 'polls:changed', 'always:changed']);
 
 contextBridge.exposeInMainWorld('bridge', {
   // Read synchronously so theme.js can style the page before its first paint.

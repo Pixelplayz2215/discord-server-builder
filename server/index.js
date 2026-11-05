@@ -9,7 +9,7 @@ const { loadConfig } = require('./config');
 const { createAuth } = require('./auth');
 const { createGuard, auditReason } = require('./guard');
 const { createInteractions, once } = require('./interactions');
-const { createCases, caseFromCall, warnMember } = require('../src/main/cases');
+const { createCases, caseFromCall, warnMember, avatarUrl } = require('../src/main/cases');
 const { createTickets, transcriptSignature, checkTranscriptSignature } = require('../src/main/tickets');
 const { createVerify } = require('../src/main/autoroles');
 const Always = require('../src/main/always');
@@ -114,27 +114,30 @@ function createPortal({ config, rest, auth, guard, interactions, always = null, 
     return interactions;
   }
 
-  const userLabel = async (id) => {
+  // A member for a case: their name and avatar, or just the ID if Discord doesn't say.
+  const caseMember = async (id) => {
     const u = await rest.request('GET', `/users/${id}`).catch(() => null);
-    return u ? u.global_name || u.username : id;
+    return { id, label: u ? u.global_name || u.username : id, avatar: u ? avatarUrl(u) : null };
   };
   const snowflake = (value, what) => {
     if (!/^\d{15,21}$/.test(String(value))) throw httpError(400, `Invalid ${what}.`);
     return String(value);
   };
 
-  // A ban, kick, timeout or unban a mod made in the app becomes a case, like the slash commands' ones.
+  // A ban, kick, timeout or unban a mod made in the app becomes a case, like the slash commands' ones
+  // (and a ban is posted publicly when that's on).
   async function recordCall(user, call, reason) {
     const found = caseFromCall(call.method, call.path, call.body);
     if (!found) return;
     const actor = await guard.actorIn(found.guildId, user);
-    await caseLog.record(actor.guild, actor.roles, {
+    const done = await caseLog.record(actor.guild, actor.roles, {
       type: found.type,
-      member: { id: found.memberId, label: await userLabel(found.memberId) },
+      member: await caseMember(found.memberId),
       moderator: user,
       reason,
       duration: found.duration,
     });
+    if (done.announceError) console.error('Posting a ban publicly failed:', done.announceError);
   }
 
   const sessionUser = (req) => {

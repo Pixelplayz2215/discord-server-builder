@@ -1,5 +1,6 @@
 // Reading moderation back from Discord: whether a channel is locked (from the channel, or from an
-// audit log entry), and the reasons the app, the mod portal and the slash commands write.
+// audit log entry), the reasons the app, the mod portal and the slash commands write, and where
+// bans are posted publicly.
 // Loaded with require() in main and the portal, and as a plain <script> in the renderer, where it
 // defines window.ModLog.
 (function (root, factory) {
@@ -51,5 +52,27 @@
     return { reason: (m[1] || '').trim(), by: { name: m[2], id: m[3] }, via: m[4].trim() };
   }
 
-  return { isLocked, lockFromAudit, parseAuditReason, isVoiceType };
+  // Public bans: #mod-cases' topic names the channel where bans are also posted for everyone, so the
+  // app, the mod portal and /ban all follow the same switch, kept in Discord. Mods see it there too.
+  const CASES_CHANNEL = 'mod-cases';
+  const PUBLIC_BANS = /\s*Bans are also posted publicly in <#(\d{15,21})>\./;
+  const MAX_TOPIC = 1024;
+  const isTextType = (type) => type === 0 || type === 5;
+
+  const publicBansFrom = (topic) => String(topic || '').match(PUBLIC_BANS)?.[1] || null;
+
+  // A topic with public bans in channelId, or without them when channelId is null.
+  function withPublicBans(topic, channelId) {
+    const note = channelId ? ` Bans are also posted publicly in <#${channelId}>.` : '';
+    return `${String(topic || '').replace(PUBLIC_BANS, '').trim().slice(0, MAX_TOPIC - note.length)}${note}`.trim();
+  }
+
+  // The channel bans are posted in, from a server's channel list, or null (private bans).
+  function publicBansIn(channels) {
+    const list = channels || [];
+    const id = publicBansFrom(list.find((c) => c.type === 0 && c.name === CASES_CHANNEL)?.topic);
+    return id && list.some((c) => c.id === id && isTextType(c.type)) ? id : null;
+  }
+
+  return { isLocked, lockFromAudit, parseAuditReason, isVoiceType, publicBansFrom, withPublicBans, publicBansIn, isTextType, CASES_CHANNEL };
 });
