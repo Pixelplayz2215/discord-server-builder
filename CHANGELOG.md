@@ -6,6 +6,8 @@ To release: add your changes as `- ` lines under **Unreleased**, then run `npm r
 
 ## Unreleased
 
+## 1.2.16 (2026-11-05)
+
 - **Reasons for unbans, and DMs for bans and unbans from the app.** **Unban** in the app now opens a window with a **Reason** box, like Ban and Kick, instead of always writing "Unbanned in Discord Server Builder". The reason goes in the audit log and `#mod-cases`. Unbanned members now get a DM saying they can join again, with the reason, whether you unban in the app or with `/unban`. Banning someone in the app now DMs them the reason first, like `/ban` already did (bulk bans from the Raid tools don't). Discord only lets a bot DM people who share a server with it, so someone who was only in your server usually can't be told about an unban. When a DM doesn't arrive, the app and the command say so. Update your mod portal with **Sync fork** for `/unban` and for your mods' bans and unbans.
 
 ## 1.2.15 (2026-11-05)
