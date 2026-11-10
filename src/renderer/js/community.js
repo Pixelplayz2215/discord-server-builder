@@ -11,7 +11,7 @@ const COMMUNITY_PAGES = [
   ['giveaways', 'Giveaways', 'gift', 'Prizes with winners picked for you'],
   ['polls', 'Polls', 'poll', 'Votes with coloured bars'],
   ['stats', 'Server stats', 'stats', 'Live member, bot and role counts'],
-  ['social', 'Social alerts', 'megaphone', 'YouTube, Twitch and GitHub releases'],
+  ['social', 'Social alerts', 'megaphone', 'YouTube, Twitch, TikTok, Instagram and GitHub releases'],
 ];
 
 const Community = {
@@ -38,7 +38,7 @@ const Community = {
   note() {
     const on = App.bots.filter((b) => b.type !== 'mod' && b.always?.on);
     if (!on.length) return h('p', { class: 'community-note subtle' }, 'These run while this app is open or in the tray. To keep them going when your PC is off, turn on ', h('b', null, 'Run 24/7'), ' on the Home page.');
-    return h('p', { class: 'community-note subtle' }, h('b', null, '24/7 is on'), ` for ${on.map(displayName).join(', ')}: your mod portal runs these around the clock. Twitch alerts still need this app.`);
+    return h('p', { class: 'community-note subtle' }, h('b', null, '24/7 is on'), ` for ${on.map(displayName).join(', ')}: your mod portal runs these around the clock. Twitch, TikTok and Instagram alerts still need this app.`);
   },
 
   render(page) {

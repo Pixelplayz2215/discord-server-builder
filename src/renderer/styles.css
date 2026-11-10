@@ -813,6 +813,12 @@ input[type='range'] { width: 100%; accent-color: var(--accent); cursor: pointer;
 .social-icon.youtube { background: color-mix(in srgb, #ff0033 16%, transparent); color: #ff4d6d; }
 .social-icon.twitch { background: color-mix(in srgb, #9146ff 18%, transparent); color: #a970ff; }
 .social-icon.github { background: color-mix(in srgb, var(--text) 10%, transparent); color: var(--text); }
+.social-icon.tiktok { background: color-mix(in srgb, #25f4ee 16%, transparent); color: #1fc8c3; }
+.social-icon.instagram { background: color-mix(in srgb, #dd2a7b 16%, transparent); color: #e4407f; }
+.ig-account { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
+.ig-account > svg { width: 20px; height: 20px; flex-shrink: 0; color: #e4407f; }
+.ig-account > img { border-radius: 50%; flex-shrink: 0; }
+.ig-account + .ig-account { border-top: 1px solid var(--border); }
 .client-id-box { margin: 4px 0 8px 46px; padding: 12px 14px; border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); font-size: calc(13rem / 14); }
 .client-id-box summary { cursor: pointer; font-weight: 600; }
 .client-id-box ol { margin: 10px 0 12px; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }

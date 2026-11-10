@@ -182,7 +182,7 @@ async function runAutoBackups() {
   }
 }
 
-/* ---------- Social alerts (YouTube uploads, Twitch going live) ---------- */
+/* ---------- Social alerts (YouTube uploads, Twitch going live, GitHub releases, TikTok and Instagram posts) ---------- */
 // A Twitch Client ID built into this copy (package.json), or one the owner pasted in the app.
 const twitchClientId = () => pkg.twitchClientId || store.getSocial().clientId || '';
 let twitchClient = null; // { clientId, api }
@@ -201,6 +201,15 @@ function getTwitch() {
   return twitchClient.api;
 }
 
+// Connected Instagram accounts' posts, read with each one's token (renewed as it comes due).
+const instagramConnected = (id) => store.getSocial().instagram.some((a) => a.id === id);
+const instagramClient = social.createInstagramClient({
+  getToken: (id) => store.getInstagramTokens()[id] || null,
+  // A renewal that finishes after the account was removed isn't saved.
+  saveToken: (id, token) => instagramConnected(id) && store.setInstagramToken(id, token),
+  fetchImpl: fetch,
+});
+
 function updateAlert(id, patch) {
   const { alerts } = store.getSocial();
   store.saveSocial({ alerts: alerts.map((a) => (a.id === id ? { ...a, ...patch } : a)) });
@@ -213,9 +222,9 @@ async function postAlert(alert, message) {
 }
 
 // With 24/7 on, the portal checks a bot's YouTube alerts, and its GitHub ones once it's new enough
-// to (the app waits until it has heard from the portal).
+// to (the app waits until it has heard from the portal). The rest stay with the app.
 function appChecksAlert(a) {
-  if (a.platform === 'twitch' || !alwaysOn(a.botId)) return true;
+  if (!always.PORTAL_ALERTS.has(a.platform) || !alwaysOn(a.botId)) return true;
   if (a.platform === 'youtube') return false;
   const status = alwaysStatus.get(a.botId)?.status;
   return !!status && !status.features?.includes('github');
@@ -226,6 +235,7 @@ const socialWatcher = social.createSocialWatcher({
   updateState: (id, state) => updateAlert(id, { state }),
   post: postAlert,
   getTwitch,
+  getInstagram: () => instagramClient,
   fetchImpl: fetch,
   youtubeKey: () => store.getYouTubeKey(),
 });
@@ -233,12 +243,15 @@ const socialWatcher = social.createSocialWatcher({
 function socialStatus() {
   const data = store.getSocial();
   const key = store.getYouTubeKey();
+  const igTokens = store.getInstagramTokens();
   return {
     alerts: data.alerts,
     defaults: social.DEFAULT_MESSAGES,
     twitch: { builtInClientId: !!pkg.twitchClientId, clientId: pkg.twitchClientId ? '' : data.clientId, account: data.account, loggedIn: !!store.getTwitchTokens() },
     // Only the end of the key is shown.
     youtube: { hasKey: !!key, keyHint: key ? key.slice(-4) : '' },
+    // When each token runs out and was last renewed; never the token itself.
+    instagram: { accounts: data.instagram.map((a) => ({ ...a, connected: !!igTokens[a.id], expiresAt: igTokens[a.id]?.expiresAt || 0, renewedAt: igTokens[a.id]?.renewedAt || 0 })) },
   };
 }
 
@@ -876,7 +889,7 @@ function alwaysFile(name) {
 // Servers with settings in the app, plus ones saved for the portal before (to tell it they're off).
 function alwaysServerIds(botId) {
   const ids = new Set(store.listGuildConfigs().filter((c) => c.botId === botId).map((c) => c.guildId));
-  for (const a of store.getSocial().alerts) if (a.botId === botId && a.platform !== 'twitch') ids.add(a.guildId);
+  for (const a of store.getSocial().alerts) if (a.botId === botId && always.PORTAL_ALERTS.has(a.platform)) ids.add(a.guildId);
   for (const id of Object.keys(store.getBot(botId)?.always?.saved || {})) ids.add(id);
   return [...ids].filter((id) => /^\d{15,21}$/.test(id));
 }
@@ -1162,7 +1175,7 @@ async function describeBot(rest) {
   };
 }
 
-const SAFE_HOSTS = ['discord.com', 'support.discord.com', 'discord.dev', 'pixelplayz.org', 'github.com', 'render.com', 'twitch.tv', 'youtube.com', 'console.cloud.google.com'];
+const SAFE_HOSTS = ['discord.com', 'support.discord.com', 'discord.dev', 'pixelplayz.org', 'github.com', 'render.com', 'twitch.tv', 'youtube.com', 'console.cloud.google.com', 'developers.facebook.com', 'help.instagram.com'];
 const isSafeUrl = (url) => {
   try {
     const u = new URL(url);
@@ -2152,10 +2165,41 @@ const handlers = {
     return socialStatus();
   },
 
-  // Turns what the owner typed (a link, @handle or channel name) into the channel to watch.
+  // Connects an Instagram account with a token made for it in Meta for Developers. It's tried before
+  // it's saved; pasting a new token for a connected account replaces the old one.
+  'social:addInstagram': async (token) => {
+    const value = String(token || '').trim();
+    if (!value) throw new Error('Paste the token first.');
+    const account = await social.checkInstagramToken(value, fetch);
+    const { instagram, alerts } = store.getSocial();
+    store.saveSocial({
+      instagram: [...instagram.filter((a) => a.id !== account.id), account],
+      // Its alerts are checked again now, with the new token.
+      alerts: alerts.map((a) => (a.platform === 'instagram' && a.source.id === account.id ? { ...a, state: { ...a.state, checkedAt: 0 } } : a)),
+    });
+    store.setInstagramToken(account.id, social.newInstagramToken(value));
+    setTimeout(() => socialWatcher.tick().catch(() => {}), 500);
+    return { ...socialStatus(), added: account };
+  },
+
+  'social:removeInstagram': (id) => {
+    const accountId = String(id);
+    store.saveSocial({ instagram: store.getSocial().instagram.filter((a) => a.id !== accountId) });
+    store.setInstagramToken(accountId, null);
+    return socialStatus();
+  },
+
+  // Turns what the owner typed (a link, @handle or channel name) into the channel to watch. For
+  // Instagram it's the ID of one of the connected accounts.
   'social:resolve': async (platform, input) => {
     if (platform === 'youtube') return social.resolveYouTubeChannel(input, fetch, { apiKey: store.getYouTubeKey() });
     if (platform === 'github') return social.resolveGitHubSource(input, fetch);
+    if (platform === 'tiktok') return social.resolveTikTokAccount(input, fetch);
+    if (platform === 'instagram') {
+      const account = store.getSocial().instagram.find((a) => a.id === String(input));
+      if (!account) throw new Error('Connect your Instagram account first (Accounts, above).');
+      return { id: account.id, login: account.username, name: account.username, url: `https://www.instagram.com/${account.username}/`, avatar: account.avatar || null };
+    }
     if (platform !== 'twitch') throw new Error('Unknown platform.');
     const twitch = getTwitch();
     if (!twitch) throw new Error('Log in with Twitch first.');
@@ -2166,13 +2210,14 @@ const handlers = {
 
   'social:saveAlert': (input) => {
     const a = input || {};
-    if (!['youtube', 'twitch', 'github'].includes(a.platform)) throw new Error('Pick YouTube, Twitch or GitHub.');
+    if (!['youtube', 'twitch', 'github', 'tiktok', 'instagram'].includes(a.platform)) throw new Error('Pick YouTube, Twitch, GitHub, TikTok or Instagram.');
     const bot = store.getBot(String(a.botId));
     if (!bot || bot.type === 'mod') throw new Error('Pick one of your bots.');
     const id = String(a.source?.id || '');
     const kind = a.source?.kind === 'repo' ? 'repo' : 'user';
-    const sourceOk = { youtube: /^UC[\w-]{22}$/, twitch: /^\d{1,20}$/, github: kind === 'repo' ? /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/ : /^[A-Za-z0-9-]{1,39}$/ }[a.platform].test(id);
-    if (!sourceOk) throw new Error(a.platform === 'github' ? 'Check the GitHub link first.' : 'Check the channel first.');
+    const sourceOk = { youtube: /^UC[\w-]{22}$/, twitch: /^\d{1,20}$/, github: kind === 'repo' ? /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/ : /^[A-Za-z0-9-]{1,39}$/, tiktok: /^[a-z0-9_.]{2,24}$/, instagram: /^\d{1,25}$/ }[a.platform].test(id);
+    if (!sourceOk) throw new Error({ github: 'Check the GitHub link first.', tiktok: 'Check the TikTok account first.', instagram: 'Pick your Instagram account.' }[a.platform] || 'Check the channel first.');
+    if (a.platform === 'instagram' && !instagramConnected(id)) throw new Error('Connect that Instagram account first (Accounts, above).');
     // GitHub: releases, and new repos (an account only).
     const events = a.platform === 'github' ? { releases: a.events?.releases !== false, repos: kind === 'user' && a.events?.repos !== false } : undefined;
     if (events && !events.releases && !events.repos) throw new Error('Pick releases, new repos, or both.');
@@ -2235,6 +2280,14 @@ const handlers = {
       const event = (await social.fetchGitHubEvents(alert.source, fetch)).find((e) => (e.kind === 'repo' ? wanted.repos : wanted.releases));
       if (!event) throw new Error(alert.source.kind === 'repo' ? 'This repo has no releases to show in a test yet.' : 'There are no recent releases or new repos to show in a test yet.');
       message = social.githubMessage(alert, event);
+    } else if (alert.platform === 'tiktok') {
+      const page = await social.fetchTikTok(alert.source.id, fetch);
+      if (!page.videos.length) throw new Error('This account has no videos to show in a test yet.');
+      message = social.tiktokMessage(alert, page.user.name, page.videos[0]);
+    } else if (alert.platform === 'instagram') {
+      const [post] = await instagramClient.posts(alert.source.id);
+      if (!post) throw new Error('This account has no posts to show in a test yet.');
+      message = social.instagramMessage(alert, '', post);
     } else {
       const twitch = getTwitch();
       if (!twitch) throw new Error('Log in with Twitch first.');

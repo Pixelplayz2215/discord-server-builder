@@ -6,6 +6,8 @@ To release: add your changes as `- ` lines under **Unreleased**, then run `npm r
 
 ## Unreleased
 
+- **TikTok and Instagram alerts.** Social alerts can now post when a TikTok account posts a video, or when your Instagram account posts a photo, carousel or reel. Like YouTube and Twitch, each alert has its own channel, ping and message, with {name}, {title} (the caption) and {url}. Each post also comes with a card showing the caption and the cover picture, since Discord doesn't preview TikTok and Instagram links well. **TikTok** needs no login: paste any public account (tiktok.com/@name), and it's checked every 10 minutes. **Instagram** only lets apps see accounts that connect to them, so it works for your own accounts. On the Social page, **Connect your Instagram account** walks you through making a free token in Meta for Developers (your account needs to be a free Creator or Business account). The app renews the token every week, so you paste it once. Stories aren't announced. Both are checked by the app while it's open or in the tray, also when Run 24/7 is on.
+
 ## 1.2.18 (2026-11-10)
 
 - **Duplicate announcements.** Each announcement now has a **Duplicate** button, for sending the same message to another server or channel without typing it again. It opens a copy where you pick the server. There, the same-named channel and ping role are picked for you, and channel links in the text are switched to that server's channels with the same names. A link with no match is pointed out under the preview. Pictures and the schedule come along too. A one-off time that has already passed is turned off.

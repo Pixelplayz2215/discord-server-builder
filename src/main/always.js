@@ -17,7 +17,8 @@ const STATE_FILE = 'state.dsb';
 const FILE_PREFIX = 'f-';
 const SILENT = 1 << 12; // posted without notifying anyone
 const MAX_SKEW_MS = 5 * 60 * 1000;
-// Social alerts the portal checks (Twitch's stay with the app, which has the login).
+// Social alerts the portal checks (Twitch's and Instagram's stay with the app, which has the logins,
+// and TikTok's, whose pages may not answer a server).
 const PORTAL_ALERTS = new Set(['youtube', 'github']);
 const BIT = { VIEW_CHANNEL: 1n << 10n, SEND_MESSAGES: 1n << 11n, ATTACH_FILES: 1n << 15n, READ_MESSAGE_HISTORY: 1n << 16n };
 const FILE_TYPES = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' };
@@ -327,6 +328,7 @@ async function saveState({ rest, token, channelId, existing, state }) {
 }
 
 module.exports = {
+  PORTAL_ALERTS,
   VERSION,
   CHANNEL_NAME,
   MARKER,

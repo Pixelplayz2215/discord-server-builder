@@ -9,7 +9,7 @@ const INVOKE = new Set([
   'servers:config', 'raid:saveLockdown', 'raid:ban',
   'backups:list', 'backups:create', 'backups:delete', 'backups:setAuto', 'backups:plan', 'backups:restore', 'backups:export', 'backups:import',
   'logs:get', 'logs:set', 'logs:createChannel', 'logs:test',
-  'social:get', 'social:setClientId', 'social:setYouTubeKey', 'social:twitchLoginStart', 'social:twitchLoginWait', 'social:twitchLoginCancel', 'social:twitchLogout',
+  'social:get', 'social:setClientId', 'social:setYouTubeKey', 'social:twitchLoginStart', 'social:twitchLoginWait', 'social:twitchLoginCancel', 'social:twitchLogout', 'social:addInstagram', 'social:removeInstagram',
   'social:resolve', 'social:saveAlert', 'social:setEnabled', 'social:removeAlert', 'social:test',
   'rr:list', 'rr:save', 'rr:delete', 'rr:sync',
   'polls:list', 'polls:save', 'polls:end', 'polls:delete', 'polls:emojiColor',

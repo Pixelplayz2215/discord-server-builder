@@ -136,11 +136,32 @@ const store = {
     return all[key];
   },
 
-  // Social alerts, the Twitch account and the YouTube API key. The Twitch tokens and the API key are
-  // encrypted like bot tokens and never leave the main process.
+  // Social alerts, the Twitch account, the YouTube API key and the connected Instagram accounts. The
+  // Twitch and Instagram tokens and the API key are encrypted like bot tokens and never leave the main process.
   getSocial() {
-    const { twitchTokens, youtubeKey, ...social } = readJson('social.json', {});
-    return { clientId: '', account: null, alerts: [], ...social };
+    const { twitchTokens, youtubeKey, instagramTokens, ...social } = readJson('social.json', {});
+    return { clientId: '', account: null, alerts: [], instagram: [], ...social };
+  },
+
+  // The tokens of connected Instagram accounts, by account ID: { token, renewedAt, expiresAt, triedAt }.
+  getInstagramTokens() {
+    const record = readJson('social.json', {}).instagramTokens;
+    if (!record) return {};
+    try {
+      return JSON.parse(decrypt(record));
+    } catch {
+      return {};
+    }
+  },
+
+  setInstagramToken(accountId, token) {
+    const tokens = { ...store.getInstagramTokens() };
+    if (token) tokens[accountId] = token;
+    else delete tokens[accountId];
+    const all = readJson('social.json', {});
+    if (Object.keys(tokens).length) all.instagramTokens = encrypt(JSON.stringify(tokens));
+    else delete all.instagramTokens;
+    writeJson('social.json', all);
   },
 
   getYouTubeKey() {
