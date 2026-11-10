@@ -6,6 +6,8 @@ To release: add your changes as `- ` lines under **Unreleased**, then run `npm r
 
 ## Unreleased
 
+## 1.2.21 (2026-11-10)
+
 - **Instagram tokens from Unified login work.** New Meta apps only offer **API setup with Unified login**, and its token starts with EAA like a Facebook token. The app used to turn that token down ("That's a Facebook token"). It now accepts it and reads your posts through it. This token doesn't run out, so there's nothing to renew. If it was made for several Instagram accounts, they're all connected at once. The steps on the Social page now include creating the configuration in **1. Configure your app**, which Meta needs before **Generate token** works. Older Instagram login tokens (starting with IG) still work as before.
 
 ## 1.2.20 (2026-11-10)
