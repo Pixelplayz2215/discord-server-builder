@@ -108,6 +108,7 @@ const AnnouncePage = {
         'div',
         { class: 'row wrap', style: { marginTop: '12px' } },
         h('button', { class: 'btn sm', onclick: () => AnnouncePage.edit(a) }, icon('edit'), 'Edit'),
+        h('button', { class: 'btn sm', title: 'Make a copy to send to another server or channel', onclick: () => AnnouncePage.duplicate(a).catch(toastError) }, icon('copy'), 'Duplicate'),
         sendNow,
         a.lastMessageId ? update : null,
         a.lastMessageId ? h('button', { class: 'btn sm ghost', onclick: () => openExternal(`https://discord.com/channels/${a.guildId}/${a.lastChannelId || a.channelId}/${a.lastMessageId}`) }, icon('external'), 'Open in Discord') : null,
@@ -141,16 +142,34 @@ const AnnouncePage = {
     return AnnouncePage.images[file];
   },
 
+  // A copy to send somewhere else, without typing it again. The server is left for you to pick; in
+  // the one you pick, its channel, role ping and channel links are matched by name.
+  async duplicate(a) {
+    const copy = JSON.parse(JSON.stringify(a));
+    for (const key of ['id', 'createdAt', 'lastSentAt', 'lastMessageId', 'lastChannelId', 'missedAt', 'problem']) delete copy[key];
+    Object.assign(copy, { name: `${a.name} (copy)`.slice(0, 80), guildId: '', guildName: '', channelId: '' });
+    // A one-off time that has passed can't be scheduled again; a repeating schedule carries on.
+    if (copy.schedule?.on && copy.schedule.repeat === 'once' && !(copy.schedule.at > Date.now())) copy.schedule.on = false;
+    const channels = await rest(a.botId, 'GET', `/guilds/${a.guildId}/channels`).catch(() => []);
+    return AnnouncePage.edit(null, { copyOf: copy, channels });
+  },
+
   /* ---------- Builder ---------- */
-  async edit(existing) {
+  // existing: the announcement to edit. copyOf: a copy of one to start a new one from, with
+  // channels: its server's channels (to match its channel links by name).
+  async edit(existing, { copyOf = null, channels: copiedChannels = [] } = {}) {
     const owners = App.bots.filter((b) => b.type !== 'mod');
     const blankEmbed = { on: true, title: '', url: '', description: '', color: 0x7f8cf0, author: { name: '', icon: '' }, image: '', imageFile: '', thumbnail: '', footer: '', timestamp: false, fields: [] };
-    const draft = existing
-      ? JSON.parse(JSON.stringify(existing))
+    const draft = existing || copyOf
+      ? JSON.parse(JSON.stringify(existing || copyOf))
       : { botId: owners[0].id, guildId: '', guildName: '', channelId: '', name: '', ping: 'none', content: '', embed: blankEmbed, buttons: [], schedule: { on: false, at: Date.now() + 3600e3, repeat: 'once' } };
     if (!App.bot(draft.botId)) draft.botId = owners[0].id;
     const e = draft.embed;
     let roles = [];
+    // Every channel in the server (voice and forums too), so channel links in the text show their names.
+    let serverChannels = [];
+    // The names of channels seen in any server picked here (or the copied one's), by ID.
+    const channelNames = new Map(copiedChannels.map((c) => [c.id, c.name]));
 
     const options = (sel, list, value) => {
       sel.replaceChildren(...list.map(([v, label]) => h('option', { value: v }, label)));
@@ -177,25 +196,56 @@ const AnnouncePage = {
       loadServer();
     };
     const loadServer = async () => {
+      // What was picked before, by name, so the same can be picked in another server.
+      const wantChannel = serverChannels.find((c) => c.id === draft.channelId)?.name || draft.channelName;
+      const wantRole = roles.find((r) => r.id === draft.ping)?.name || draft.pingName;
       let channels = [];
       roles = [];
+      serverChannels = [];
       if (draft.guildId) {
         try {
           const [list, roleList] = await Promise.all([rest(draft.botId, 'GET', `/guilds/${draft.guildId}/channels`), rest(draft.botId, 'GET', `/guilds/${draft.guildId}/roles`)]);
+          serverChannels = list;
+          for (const c of list) channelNames.set(c.id, c.name);
           channels = list.filter((c) => c.type === 0 || c.type === 5).sort((a, b) => a.position - b.position);
           roles = roleList.filter((r) => r.id !== draft.guildId && !r.managed).sort((a, b) => b.position - a.position);
         } catch {
           channels = [];
         }
       }
-      options(channelSel, draft.guildId ? [['', 'Pick a channel…'], ...channels.map((c) => [c.id, `#${c.name}${c.type === 5 ? ' (announcements)' : ''}`])] : [['', 'Pick a server first']], draft.channelId);
-      options(pingSel, [['none', 'No ping'], ['everyone', '@everyone'], ['here', '@here (online members)'], ...roles.map((r) => [r.id, `@${r.name}`])], draft.ping);
+      const channelId = channels.some((c) => c.id === draft.channelId) ? draft.channelId : channels.find((c) => c.name === wantChannel)?.id || '';
+      const ping = ['none', 'everyone', 'here'].includes(draft.ping) || roles.some((r) => r.id === draft.ping) ? draft.ping : roles.find((r) => r.name === wantRole)?.id || 'none';
+      options(channelSel, draft.guildId ? [['', 'Pick a channel…'], ...channels.map((c) => [c.id, `#${c.name}${c.type === 5 ? ' (announcements)' : ''}`])] : [['', 'Pick a server first']], channelId);
+      options(pingSel, [['none', 'No ping'], ['everyone', '@everyone'], ['here', '@here (online members)'], ...roles.map((r) => [r.id, `@${r.name}`])], ping);
       if (draft.guildId) {
         draft.channelId = channelSel.value;
         draft.ping = pingSel.value;
+        relink();
       }
       drawPreview();
     };
+
+    // Channel links point at one server's channels. In another server, each is switched to the
+    // channel there with the same name, if it has one.
+    const relinkText = (text) =>
+      String(text || '').replace(/<#(\d{15,21})>/g, (link, id) => {
+        if (serverChannels.some((c) => c.id === id)) return link;
+        const match = channelNames.has(id) && serverChannels.find((c) => c.name === channelNames.get(id));
+        return match ? `<#${match.id}>` : link;
+      });
+    function relink() {
+      if (!serverChannels.length) return;
+      draft.content = relinkText(draft.content);
+      contentInput.value = draft.content;
+      e.description = relinkText(e.description);
+      descriptionInput.value = e.description;
+      const before = e.fields.map((f) => f.value).join('\n');
+      for (const f of e.fields) f.value = relinkText(f.value);
+      if (e.fields.map((f) => f.value).join('\n') !== before) drawFields();
+    }
+    // How many channel links point outside the picked server (members there can't open them).
+    const strayLinks = () =>
+      serverChannels.length ? ([draft.content, ...(e.on ? [e.description, ...e.fields.map((f) => f.value)] : [])].join('\n').match(/<#\d{15,21}>/g) || []).filter((link) => !serverChannels.some((c) => link === `<#${c.id}>`)).length : 0;
 
     // Inputs that redraw the preview as you type.
     const input = (obj, key, attrs = {}) => {
@@ -261,10 +311,12 @@ const AnnouncePage = {
     const repeat = selectEl(ANNOUNCE_REPEATS, draft.schedule.repeat || 'once', (v) => { draft.schedule.repeat = v; });
     const scheduleBox = h('div', { class: 'grid cols-2', style: { gap: '12px', display: draft.schedule.on ? '' : 'none' } }, field('Send on', when), field('Repeat', repeat));
 
+    const contentInput = input(draft, 'content', { rows: 3, maxlength: 2000, placeholder: 'Text above the card (optional)' });
+    const descriptionInput = input(e, 'description', { rows: 5, maxlength: 4096 });
     const cardBox = h('div', { class: 'stack', style: { gap: '12px', display: e.on ? '' : 'none' } });
     cardBox.append(
       h('div', { class: 'grid cols-2', style: { gap: '12px' } }, field('Title', input(e, 'title', { maxlength: 256 })), field('Title link (optional)', input(e, 'url', { placeholder: 'https://…', maxlength: 2048 }))),
-      field('Text', input(e, 'description', { rows: 5, maxlength: 4096 }), 'Discord formatting works: **bold**, *italics*, [links](https://…), lists and more.'),
+      field('Text', descriptionInput, 'Discord formatting works: **bold**, *italics*, [links](https://…), lists and more. Link a channel with <#channel ID>.'),
       h('div', { class: 'grid cols-2', style: { gap: '12px' } }, field('Author (optional)', input(e.author, 'name', { maxlength: 256 })), field('Author picture link', input(e.author, 'icon', { placeholder: 'https://…', maxlength: 2048 }))),
       field('Big picture', imageHost),
       field('Small picture, top right (link)', input(e, 'thumbnail', { placeholder: 'https://…', maxlength: 2048 })),
@@ -276,6 +328,7 @@ const AnnouncePage = {
 
     /* Preview */
     const preview = h('div', { class: 'rr-preview announce-preview' });
+    const strayNote = h('div');
     let previewTimer;
     function drawPreviewSoon() {
       clearTimeout(previewTimer);
@@ -285,7 +338,7 @@ const AnnouncePage = {
       const bot = App.bot(draft.botId);
       // The ping goes in front of the text, as it's sent.
       const ping = draft.ping === 'everyone' ? '@everyone' : draft.ping === 'here' ? '@here' : roles.some((r) => r.id === draft.ping) ? `<@&${draft.ping}>` : '';
-      const text = (t) => discordText(t, { roles });
+      const text = (t) => discordText(t, { roles, channels: serverChannels });
       const content = [ping, draft.content.trim()].filter(Boolean).join(' ');
       const parts = [h('div', { class: 'rr-author' }, h('img', { class: 'avatar', src: userAvatar(bot, 64), width: 32, height: 32, alt: '' }), h('b', null, displayName(bot)), h('span', { class: 'badge peri' }, 'APP'))];
       if (content) parts.push(h('div', { class: 'rr-text' }, text(content)));
@@ -317,6 +370,12 @@ const AnnouncePage = {
       const buttons = draft.buttons.filter((b) => b.label);
       if (buttons.length) parts.push(h('div', { class: 'row wrap', style: { gap: '8px', marginTop: '8px' } }, buttons.map((b) => h('span', { class: 'ticket-button', style: { background: '#4e5058' } }, b.label, icon('external')))));
       preview.replaceChildren(...parts);
+      const stray = strayLinks();
+      strayNote.replaceChildren(
+        ...(stray
+          ? [h('div', { class: 'callout warn', style: { marginTop: '10px' } }, icon('alert'), h('div', null, `${stray === 1 ? 'A channel link isn\'t' : `${stray} channel links aren't`} to a channel in this server, so members here can't open ${stray === 1 ? 'it' : 'them'}. ${stray === 1 ? 'It shows' : 'They show'} as "#channel" above. Link a channel from this server instead.`))]
+          : []),
+      );
     }
 
     loadGuilds();
@@ -377,7 +436,7 @@ const AnnouncePage = {
     });
 
     return openModal({
-      title: existing ? `Edit "${existing.name}"` : 'New announcement',
+      title: existing ? `Edit "${existing.name}"` : copyOf ? 'Duplicate announcement' : 'New announcement',
       wide: 'xl',
       dismissable: false,
       body: h(
@@ -389,12 +448,12 @@ const AnnouncePage = {
           h('div', { class: 'grid cols-2', style: { gap: '12px' } }, field('Bot', botSel), field('Server', guildSel)),
           h('div', { class: 'grid cols-2', style: { gap: '12px' } }, field('Post in', channelSel), field('Ping', pingSel)),
           field('Name (only shown in this app)', input(draft, 'name', { maxlength: 80, placeholder: 'e.g. Weekly event reminder' })),
-          field('Message', input(draft, 'content', { rows: 3, maxlength: 2000, placeholder: 'Text above the card (optional)' })),
+          field('Message', contentInput),
           h('div', { class: 'ticket-section' }, switchEl(e.on, (v) => { e.on = v; cardBox.style.display = v ? '' : 'none'; drawPreview(); }, 'Add a card'), cardBox),
           h('div', { class: 'ticket-section' }, h('div', { class: 'row' }, h('div', { class: 'ticket-section-title grow' }, 'Link buttons'), addButton), buttonsHost),
           h('div', { class: 'ticket-section' }, switchEl(draft.schedule.on, (v) => { draft.schedule.on = v; scheduleBox.style.display = v ? '' : 'none'; }, 'Schedule it'), scheduleBox, h('p', { class: 'hint', style: { margin: 0 } }, "Scheduled messages go out while this app is open or in the tray, at your PC's time.")),
         ),
-        h('div', null, h('div', { class: 'label', style: { marginBottom: '8px' } }, 'Preview'), preview),
+        h('div', null, h('div', { class: 'label', style: { marginBottom: '8px' } }, 'Preview'), preview, strayNote),
       ),
       actions,
     });

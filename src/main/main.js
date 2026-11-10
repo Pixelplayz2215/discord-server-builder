@@ -1744,8 +1744,15 @@ const handlers = {
     if (!a.guildId || !a.channelId) throw new Error('Pick the server and channel.');
     const list = store.getGuildConfig(botId, a.guildId).announcements || [];
     const previous = a.id ? list.find((x) => x.id === a.id) : null;
-    const saved = { ...previous, ...a, id: previous?.id || crypto.randomUUID(), createdAt: previous?.createdAt || Date.now(), missedAt: null, problem: null };
+    // Moved to another server (or bot) before it was sent: it's taken out of the one it was in.
+    // (Duplicate makes a copy instead.)
+    const moved = a.id && !previous ? allAnnouncements().find((x) => x.id === a.id) : null;
+    const saved = { ...previous, ...a, id: previous?.id || crypto.randomUUID(), createdAt: previous?.createdAt || moved?.createdAt || Date.now(), missedAt: null, problem: null };
     store.setGuildConfig(botId, a.guildId, { announcements: previous ? list.map((x) => (x.id === saved.id ? saved : x)) : [...list, saved] });
+    if (moved) {
+      const old = store.getGuildConfig(moved.botId, moved.guildId).announcements || [];
+      store.setGuildConfig(moved.botId, moved.guildId, { announcements: old.filter((x) => x.id !== a.id) });
+    }
     if (sendNow) {
       const message = await postAnnouncement({ ...saved, botId });
       updateAnnouncement(botId, a.guildId, saved.id, { lastSentAt: Date.now(), lastMessageId: message.id, lastChannelId: saved.channelId });
