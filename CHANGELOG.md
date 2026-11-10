@@ -8,7 +8,6 @@ To release: add your changes as `- ` lines under **Unreleased**, then run `npm r
 
 - **Duplicate announcements.** Each announcement now has a **Duplicate** button, for sending the same message to another server or channel without typing it again. It opens a copy where you pick the server. There, the same-named channel and ping role are picked for you, and channel links in the text are switched to that server's channels with the same names. A link with no match is pointed out under the preview. Pictures and the schedule come along too. A one-off time that has already passed is turned off.
 - Moving an announcement that hasn't been sent to another server in **Edit** now moves it, instead of leaving a copy behind in the first server.
-
 - **Channel links show their names in the announcement preview.** A channel link like `<#123…>` in an announcement's text used to show as "#channel" in the preview. It now shows the channel's real name (#general), the way Discord will. The card's **Text** box also says how to link a channel.
 
 ## 1.2.17 (2026-11-05)
