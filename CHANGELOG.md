@@ -6,6 +6,8 @@ To release: add your changes as `- ` lines under **Unreleased**, then run `npm r
 
 ## Unreleased
 
+- **Instagram tokens from Unified login work.** New Meta apps only offer **API setup with Unified login**, and its token starts with EAA like a Facebook token. The app used to turn that token down ("That's a Facebook token"). It now accepts it and reads your posts through it. This token doesn't run out, so there's nothing to renew. If it was made for several Instagram accounts, they're all connected at once. The steps on the Social page now include creating the configuration in **1. Configure your app**, which Meta needs before **Generate token** works. Older Instagram login tokens (starting with IG) still work as before.
+
 ## 1.2.20 (2026-11-10)
 
 - **Instagram steps match Meta's dashboard.** The steps for connecting Instagram on the Social page now say where the token is today: **Use cases → Customize → API setup with Unified login**. They also say that Meta needs a free business portfolio first (just a name and an email, no verification), and that a brand-new Facebook account has to wait about an hour before it can make one.

@@ -127,18 +127,20 @@ const SocialPage = {
     return SettingsPage.card('Accounts', 'link', h('div', { class: 'stack', style: { gap: '4px' } }, youtube, SocialPage.youtubeKeyBox(y), twitch, t.builtInClientId ? null : SocialPage.clientIdBox(t), tiktok, instagram, SocialPage.instagramBox(ig), x));
   },
 
-  // Connecting an Instagram account: a token made for it in Meta for Developers, pasted here.
+  // Connecting Instagram accounts: a token made for them in Meta for Developers, pasted here.
   instagramBox(accounts) {
-    const input = h('input', { class: 'input mono', type: 'password', placeholder: 'Instagram token (IG…)', autocomplete: 'off', spellcheck: false });
+    const input = h('input', { class: 'input mono', type: 'password', placeholder: 'Instagram access token', autocomplete: 'off', spellcheck: false });
     const connect = h('button', { class: 'btn sm' }, icon('logIn'), 'Connect');
     connect.addEventListener('click', withBusy(connect, async () => {
       if (!input.value.trim()) return toast('Paste the token first.', 'error');
       const data = await api('social:addInstagram', input.value.trim());
       SocialPage.data = data;
-      toast(`Connected @${data.added.username}. You can add Instagram alerts for it now.`);
+      const names = data.added.map((a) => `@${a.username}`).join(', ');
+      toast(`Connected ${names}. You can add Instagram alerts for ${data.added.length === 1 ? 'it' : 'them'} now.`);
       SocialPage.rerender();
     }));
-    // A token that runs out within two weeks (a working one is renewed long before).
+    // An Instagram login token that runs out within two weeks (a working one is renewed long before).
+    // A Unified login token has no end date.
     const soon = (a) => a.expiresAt && a.expiresAt - Date.now() < 14 * 86400000;
     const list = accounts.map((a) => {
       const remove = h('button', { class: 'btn sm ghost' }, icon('trash'), 'Disconnect');
@@ -150,7 +152,7 @@ const SocialPage = {
         SocialPage.rerender();
       }));
       const warn = !a.connected || soon(a);
-      const detail = !a.connected ? 'Its token is missing: paste a new one below.' : soon(a) ? `Its token runs out ${fmtDate(a.expiresAt)} and hasn't been renewed yet. If that doesn't change, paste a new one below.` : 'The token renews itself while the app runs.';
+      const detail = !a.connected ? 'Its token is missing: paste a new one below.' : soon(a) ? `Its token runs out ${fmtDate(a.expiresAt)} and hasn't been renewed yet. If that doesn't change, paste a new one below.` : a.api === 'facebook' ? "Connected through Unified login. Its token doesn't run out." : 'Connected through Instagram login. The token renews itself while the app runs.';
       return h(
         'div',
         { class: 'ig-account' },
@@ -171,10 +173,11 @@ const SocialPage = {
         h('li', null, 'Open Meta for Developers and log in with Facebook. Press ', h('b', null, 'Create app'), ', give it any name, and pick the use case ', h('b', null, 'Manage messaging & content on Instagram'), '.'),
         h('li', null, 'In your new app, open ', h('b', null, 'Use cases'), ', press ', h('b', null, 'Customize'), ' on the Instagram one, and pick ', h('b', null, 'API setup with Unified login'), ' (not "with Facebook login").'),
         h('li', null, 'Meta needs a ', h('b', null, 'business portfolio'), ' for this first. Press ', h('b', null, '+ Business portfolio'), ' and pick yours, or make one: it\'s free, takes a name and an email, and needs no business or verification. A brand-new Facebook account has to wait about an hour before it can make one.'),
-        h('li', null, 'Under ', h('b', null, 'Generate access tokens'), ', press ', h('b', null, 'Add account'), ' and log in to Instagram, then press ', h('b', null, 'Generate token'), ' and paste it here. It starts with ', h('b', null, 'IG'), '. Keep it private, like a password.'),
-        h('li', null, 'If Meta says the account needs a role on the app: in ', h('b', null, 'App roles → Roles'), ', add it as an ', h('b', null, 'Instagram Tester'), ', accept the invite in Instagram (', h('b', null, 'Settings → Website permissions → Apps and websites → Tester invites'), '), then do step 5 again.'),
+        h('li', null, 'Under ', h('b', null, '1. Configure your app'), ', press ', h('b', null, 'Create new configuration'), ' and save it. The suggested settings work (the app only needs ', h('b', null, 'instagram_basic'), '). Leave the Redirect URL empty.'),
+        h('li', null, 'Under ', h('b', null, '2. Generate access tokens'), ', press ', h('b', null, 'Add account'), ' and log in to Instagram, then press ', h('b', null, 'Generate token'), ' and paste it here. Meta shows it only once, and it starts with EAA like a Facebook token; that\'s right. Keep it private, like a password.'),
+        h('li', null, 'If Meta says the account needs a role on the app: in ', h('b', null, 'App roles → Roles'), ', add it as an ', h('b', null, 'Instagram Tester'), ', accept the invite in Instagram (', h('b', null, 'Settings → Website permissions → Apps and websites → Tester invites'), '), then do step 6 again.'),
       ),
-      h('p', { class: 'subtle', style: { fontSize: 'calc(12rem / 14)', margin: '0 0 8px' } }, "The token is checked before it's saved, then kept encrypted on this PC. It lasts 60 days and the app renews it every week while it runs, so you paste it once. Posts and reels are announced; stories aren't."),
+      h('p', { class: 'subtle', style: { fontSize: 'calc(12rem / 14)', margin: '0 0 8px' } }, "The token is checked before it's saved, then kept encrypted on this PC. A Unified login token doesn't run out, so you paste it once. Every Instagram account it was made for is connected. Posts and reels are announced; stories aren't."),
       h(
         'div',
         { class: 'row wrap' },

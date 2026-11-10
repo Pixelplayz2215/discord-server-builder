@@ -251,7 +251,7 @@ function socialStatus() {
     // Only the end of the key is shown.
     youtube: { hasKey: !!key, keyHint: key ? key.slice(-4) : '' },
     // When each token runs out and was last renewed; never the token itself.
-    instagram: { accounts: data.instagram.map((a) => ({ ...a, connected: !!igTokens[a.id], expiresAt: igTokens[a.id]?.expiresAt || 0, renewedAt: igTokens[a.id]?.renewedAt || 0 })) },
+    instagram: { accounts: data.instagram.map((a) => ({ ...a, connected: !!igTokens[a.id], api: igTokens[a.id]?.api || 'instagram', expiresAt: igTokens[a.id]?.expiresAt || 0, renewedAt: igTokens[a.id]?.renewedAt || 0 })) },
   };
 }
 
@@ -2165,21 +2165,22 @@ const handlers = {
     return socialStatus();
   },
 
-  // Connects an Instagram account with a token made for it in Meta for Developers. It's tried before
-  // it's saved; pasting a new token for a connected account replaces the old one.
+  // Connects the Instagram accounts a token made in Meta for Developers covers (a Unified login token
+  // can cover several). It's tried before it's saved; a new token for a connected account replaces the old one.
   'social:addInstagram': async (token) => {
     const value = String(token || '').trim();
     if (!value) throw new Error('Paste the token first.');
-    const account = await social.checkInstagramToken(value, fetch);
+    const accounts = await social.checkInstagramToken(value, fetch);
+    const ids = new Set(accounts.map((a) => a.id));
     const { instagram, alerts } = store.getSocial();
     store.saveSocial({
-      instagram: [...instagram.filter((a) => a.id !== account.id), account],
-      // Its alerts are checked again now, with the new token.
-      alerts: alerts.map((a) => (a.platform === 'instagram' && a.source.id === account.id ? { ...a, state: { ...a.state, checkedAt: 0 } } : a)),
+      instagram: [...instagram.filter((a) => !ids.has(a.id)), ...accounts.map(({ api, ...account }) => account)],
+      // Their alerts are checked again now, with the new token.
+      alerts: alerts.map((a) => (a.platform === 'instagram' && ids.has(a.source.id) ? { ...a, state: { ...a.state, checkedAt: 0 } } : a)),
     });
-    store.setInstagramToken(account.id, social.newInstagramToken(value));
+    for (const a of accounts) store.setInstagramToken(a.id, social.newInstagramToken(value, Date.now(), a.api));
     setTimeout(() => socialWatcher.tick().catch(() => {}), 500);
-    return { ...socialStatus(), added: account };
+    return { ...socialStatus(), added: accounts };
   },
 
   'social:removeInstagram': (id) => {

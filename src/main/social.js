@@ -8,7 +8,7 @@
 // releases, or an account's public activity), which need no login and aren't rate limited like its API.
 // TikTok is read from an account's creator embed (the page sites show its latest videos in), which
 // needs no login. Instagram only lets an app see accounts that connected to it, so it goes through
-// the Instagram API with a token the owner makes for their own account in Meta for Developers.
+// the Instagram API with a token the owner makes for their own accounts in Meta for Developers.
 // No Electron here, so it can be tested with a fake fetch.
 
 const YT_FEED = 'https://www.youtube.com/feeds/videos.xml?channel_id=';
@@ -26,9 +26,10 @@ const GITHUB_UA = 'DiscordServerBuilder (social alerts)';
 const TIKTOK = 'https://www.tiktok.com';
 const TIKTOK_EVERY_MS = 10 * 60 * 1000; // TikTok's page isn't an API: read it gently
 const INSTAGRAM_API = 'https://graph.instagram.com';
+const FACEBOOK_GRAPH = 'https://graph.facebook.com/v27.0'; // Instagram through Unified login
 const INSTAGRAM_EVERY_MS = 5 * 60 * 1000;
 const INSTAGRAM_POSTS = 15;
-// Instagram tokens last 60 days and can be renewed once they're a day old. Each is renewed a week
+// Instagram login tokens last 60 days and can be renewed once they're a day old. Each is renewed a week
 // after it was made or last renewed (a failed try waits a day), so it never runs out while the app is used.
 const INSTAGRAM_TOKEN_MS = 60 * 86400000;
 const INSTAGRAM_RENEW_AFTER_MS = 7 * 86400000;
@@ -520,22 +521,33 @@ async function resolveTikTokAccount(input, fetchImpl, options) {
 const tiktokMessage = (alert, name, video) => postMessage(alert, name || alert.source.name, video, { platform: 'tiktok', author: `${name || alert.source.name} on TikTok`, untitled: 'New TikTok' });
 
 /* ---------------- Instagram ---------------- */
+// Two kinds of token. New Meta apps get "API setup with Unified login": its token belongs to a system
+// user of the owner's business portfolio, is read through graph.facebook.com, can cover several
+// Instagram accounts and doesn't need renewing. Apps made before that could use "Instagram login": its
+// token is one account's, is read through graph.instagram.com, and lasts 60 days unless it's renewed.
+// A saved token is { token, api: 'facebook'|'instagram', renewedAt, expiresAt (0: doesn't run out), triedAt }.
+
+const INSTAGRAM_HOSTS = { facebook: FACEBOOK_GRAPH, instagram: INSTAGRAM_API };
+const INSTAGRAM_PERMISSION_HELP =
+  "Meta didn't let this token read the account's posts. In your Meta app, under Use cases → Customize → API setup with Unified login, edit the configuration so it has instagram_basic (if it already has, add business_management under Facebook Login for Business → Configurations), save it, then generate a new token and paste it under Accounts.";
 
 function instagramError(status, error = {}) {
   const code = Number(error.code) || 0;
+  const message = String(error.message || '');
   let err;
-  if (code === 190 || status === 401) err = new InstagramTokenProblem("This Instagram token doesn't work any more (it ran out, or was removed in Meta for Developers). Make a new one and paste it under Accounts.");
+  if (code === 190 || status === 401) err = new InstagramTokenProblem("This Instagram token doesn't work any more (it was removed or ran out, or the Meta app left your business portfolio). Generate a new one and paste it under Accounts.");
   else if ([4, 17, 32, 613].includes(code) || status === 429) err = new Error('Instagram says the app checked too often. It tries again in a few minutes.');
-  else if (code === 10 || code === 200) err = new InstagramTokenProblem("This token isn't allowed to read the account's posts. Make it under Use cases → Customize → API setup with Unified login, as the steps under Accounts say.");
-  else err = new Error(`Instagram's API said: ${error.message || `HTTP ${status}`}`);
-  return Object.assign(err, { code });
+  else if (code === 10 || code === 200 || (code === 100 && Number(error.error_subcode) === 33)) err = Object.assign(new InstagramTokenProblem(INSTAGRAM_PERMISSION_HELP), { permission: true });
+  else err = new Error(`Instagram's API said: ${message || `HTTP ${status}`}`);
+  return Object.assign(err, { code, missingField: code === 100 && /nonexisting field/i.test(message) });
 }
 
-// A call to the Instagram API. The token goes in a header, not the address.
-async function instagramApi(path, params, token, fetchImpl) {
+// A call to the Instagram API, through Facebook's host or Instagram's. The token goes in a header,
+// not the address.
+async function instagramApi(path, params, token, fetchImpl, api = 'instagram') {
   let res;
   try {
-    res = await fetchImpl(`${INSTAGRAM_API}/${path}?${new URLSearchParams(params)}`, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
+    res = await fetchImpl(`${INSTAGRAM_HOSTS[api]}/${path}?${new URLSearchParams(params)}`, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
   } catch (err) {
     throw new Error(`Couldn't reach Instagram (${err.cause?.code || err.message}).`);
   }
@@ -544,36 +556,53 @@ async function instagramApi(path, params, token, fetchImpl) {
   throw instagramError(res.status, body.error);
 }
 
-// Asks for some fields, or fewer if Instagram says one of them doesn't exist (error 100).
-async function instagramFields(path, fields, fallback, params, token, fetchImpl) {
+// Asks for some fields, or fewer if Meta says one of them doesn't exist.
+async function instagramFields(path, fields, fallback, params, token, fetchImpl, api) {
   try {
-    return await instagramApi(path, { ...params, fields }, token, fetchImpl);
+    return await instagramApi(path, { ...params, fields }, token, fetchImpl, api);
   } catch (err) {
-    if (err.code !== 100) throw err;
-    return instagramApi(path, { ...params, fields: fallback }, token, fetchImpl);
+    if (!err.missingField) throw err;
+    return instagramApi(path, { ...params, fields: fallback }, token, fetchImpl, api);
   }
 }
 
-// The account a pasted token belongs to: { id, username, name, avatar, type }.
+// The accounts a Unified login token was given. (Its /me is the system user, not an account.)
+async function unifiedLoginAccounts(token, fetchImpl) {
+  const body = await instagramFields('me/assigned_instagram_accounts', 'id,username,name,profile_picture_url', 'id,username', {}, token, fetchImpl, 'facebook');
+  const accounts = (body.data || []).filter((a) => a.id && a.username);
+  if (!accounts.length) throw new Error('That token works, but no Instagram account is connected to it. Under Generate access tokens, press Add account for your Instagram, then generate a new token.');
+  return accounts.map((a) => ({ id: String(a.id), username: a.username, name: a.name || a.username, avatar: a.profile_picture_url || null, api: 'facebook' }));
+}
+
+// The account an Instagram login token belongs to.
+async function instagramLoginAccounts(token, fetchImpl) {
+  const me = await instagramFields('me', 'user_id,username,name,profile_picture_url', 'user_id,username', {}, token, fetchImpl, 'instagram');
+  if (!me.username) throw new Error("Instagram didn't say which account that token is for.");
+  return [{ id: String(me.user_id || me.id), username: me.username, name: me.name || me.username, avatar: me.profile_picture_url || null, api: 'instagram' }];
+}
+
+// The accounts a pasted token reads: [{ id, username, name, avatar, api }]. A token doesn't say which
+// kind it is, so each way is tried, the likelier first, until one accepts it.
 async function checkInstagramToken(token, fetchImpl) {
   const value = String(token || '').trim();
-  if (/^EAA/.test(value)) throw new Error("That's a Facebook token. Use the one from Use cases → Customize → API setup with Unified login (it starts with IG).");
-  if (!/^[\w.|-]{40,1000}$/.test(value)) throw new Error("That doesn't look like an Instagram token. Copy the whole token from Meta for Developers.");
-  let me;
-  try {
-    me = await instagramFields('me', 'user_id,username,name,account_type,profile_picture_url', 'user_id,username', {}, value, fetchImpl);
-  } catch (err) {
-    if (err instanceof InstagramTokenProblem) throw new Error("Instagram didn't accept that token. Make a new one (Use cases → Customize → API setup with Unified login → Generate token) and copy all of it.");
-    throw err;
+  if (!/^[\w.|-]{40,2000}$/.test(value)) throw new Error("That doesn't look like an Instagram token. Copy the whole token from Meta for Developers.");
+  const ways = /^IG/.test(value) ? [instagramLoginAccounts, unifiedLoginAccounts] : [unifiedLoginAccounts, instagramLoginAccounts];
+  for (const read of ways) {
+    try {
+      return await read(value, fetchImpl);
+    } catch (err) {
+      // Turned down as a token: try the other way. Anything else is an answer about this token.
+      if (!(err instanceof InstagramTokenProblem) || err.permission) throw err;
+    }
   }
-  if (!me.username) throw new Error("Instagram didn't say which account that token is for.");
-  return { id: String(me.user_id || me.id), username: me.username, name: me.name || me.username, avatar: me.profile_picture_url || null, type: me.account_type || '' };
+  throw new Error("Meta didn't accept that token. Generate a new one (Use cases → Customize → API setup with Unified login → Generate token) and copy all of it; Meta shows it only once.");
 }
 
-// The account's latest posts: photos, carousels, videos and reels (stories aren't included).
-async function fetchInstagramPosts(token, fetchImpl) {
+// An account's latest posts: photos, carousels, videos and reels (stories aren't included).
+async function fetchInstagramPosts(token, fetchImpl, { api = 'instagram', accountId = '' } = {}) {
   const basic = 'id,caption,media_type,permalink,thumbnail_url,media_url,timestamp';
-  const body = await instagramFields('me/media', `${basic},media_product_type`, basic, { limit: String(INSTAGRAM_POSTS) }, token, fetchImpl);
+  const path = api === 'facebook' ? `${encodeURIComponent(accountId)}/media` : 'me/media';
+  const body = await instagramFields(path, `${basic},media_product_type`, basic, { limit: String(INSTAGRAM_POSTS) }, token, fetchImpl, api);
   return (body.data || [])
     .filter((m) => m.id && /^https:\/\//.test(m.permalink || ''))
     .map((m) => {
@@ -589,25 +618,27 @@ async function fetchInstagramPosts(token, fetchImpl) {
     });
 }
 
-// A token renewed for another 60 days: { token, renewedAt, expiresAt }. Needs no app secret.
+// An Instagram login token renewed for another 60 days. Needs no app secret.
 async function renewInstagramToken(token, fetchImpl, now = Date.now()) {
   const res = await fetchImpl(`${INSTAGRAM_API}/refresh_access_token?${new URLSearchParams({ grant_type: 'ig_refresh_token', access_token: token })}`, { headers: { Accept: 'application/json' } });
   const body = await res.json().catch(() => ({}));
   if (!res.ok || !body.access_token) throw instagramError(res.status, body.error);
-  return { token: body.access_token, renewedAt: now, expiresAt: now + (Number(body.expires_in) || INSTAGRAM_TOKEN_MS / 1000) * 1000 };
+  return { token: body.access_token, api: 'instagram', renewedAt: now, expiresAt: now + (Number(body.expires_in) || INSTAGRAM_TOKEN_MS / 1000) * 1000 };
 }
 
-// A newly pasted token: assumed to be fresh, so it lasts 60 days from now until it's renewed.
-const newInstagramToken = (token, now = Date.now()) => ({ token: String(token).trim(), renewedAt: now, expiresAt: now + INSTAGRAM_TOKEN_MS });
+// A newly pasted token. An Instagram login one is taken to be fresh, so it lasts 60 days from now
+// until it's renewed; a Unified login one doesn't run out (Meta says so if it stops working).
+const newInstagramToken = (token, now = Date.now(), api = 'instagram') => ({ token: String(token).trim(), api, renewedAt: now, expiresAt: api === 'facebook' ? 0 : now + INSTAGRAM_TOKEN_MS });
 
-// Reads a connected account's posts with its saved token ({ token, renewedAt, expiresAt, triedAt }),
-// renewing the token when it's due. getToken/saveToken keep the tokens encrypted elsewhere.
+// Reads a connected account's posts with its saved token, renewing an Instagram login token when
+// it's due. getToken/saveToken keep the tokens encrypted elsewhere.
 function createInstagramClient({ getToken, saveToken, fetchImpl, now = Date.now }) {
   const renewing = new Map();
   async function tokenFor(accountId) {
     const record = getToken(accountId);
     if (!record?.token) throw new InstagramTokenProblem("This Instagram account isn't connected. Connect it under Accounts.");
-    if (record.expiresAt <= now()) throw new InstagramTokenProblem('This Instagram token ran out. Make a new one in Meta for Developers and paste it under Accounts.');
+    if (record.api === 'facebook') return record.token;
+    if (record.expiresAt <= now()) throw new InstagramTokenProblem('This Instagram token ran out. Generate a new one in Meta for Developers and paste it under Accounts.');
     if (now() - record.renewedAt < INSTAGRAM_RENEW_AFTER_MS || now() - (record.triedAt || 0) < INSTAGRAM_RENEW_RETRY_MS) return record.token;
     if (!renewing.has(accountId)) {
       const renewal = renewInstagramToken(record.token, fetchImpl, now())
@@ -627,7 +658,12 @@ function createInstagramClient({ getToken, saveToken, fetchImpl, now = Date.now 
     }
     return renewing.get(accountId);
   }
-  return { posts: async (accountId) => fetchInstagramPosts(await tokenFor(accountId), fetchImpl) };
+  return {
+    posts: async (accountId) => {
+      const token = await tokenFor(accountId);
+      return fetchInstagramPosts(token, fetchImpl, { api: getToken(accountId)?.api || 'instagram', accountId });
+    },
+  };
 }
 
 const INSTAGRAM_UNTITLED = { reel: 'New reel', video: 'New video', carousel: 'New post', photo: 'New post' };
