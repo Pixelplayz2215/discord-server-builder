@@ -526,7 +526,7 @@ function instagramError(status, error = {}) {
   let err;
   if (code === 190 || status === 401) err = new InstagramTokenProblem("This Instagram token doesn't work any more (it ran out, or was removed in Meta for Developers). Make a new one and paste it under Accounts.");
   else if ([4, 17, 32, 613].includes(code) || status === 429) err = new Error('Instagram says the app checked too often. It tries again in a few minutes.');
-  else if (code === 10 || code === 200) err = new InstagramTokenProblem("This token isn't allowed to read the account's posts. Make it under Instagram → API setup with Instagram login, as the steps under Accounts say.");
+  else if (code === 10 || code === 200) err = new InstagramTokenProblem("This token isn't allowed to read the account's posts. Make it under Use cases → Customize → API setup with Unified login, as the steps under Accounts say.");
   else err = new Error(`Instagram's API said: ${error.message || `HTTP ${status}`}`);
   return Object.assign(err, { code });
 }
@@ -557,13 +557,13 @@ async function instagramFields(path, fields, fallback, params, token, fetchImpl)
 // The account a pasted token belongs to: { id, username, name, avatar, type }.
 async function checkInstagramToken(token, fetchImpl) {
   const value = String(token || '').trim();
-  if (/^EAA/.test(value)) throw new Error("That's a Facebook token. Use the one from Instagram → API setup with Instagram login (it starts with IG).");
+  if (/^EAA/.test(value)) throw new Error("That's a Facebook token. Use the one from Use cases → Customize → API setup with Unified login (it starts with IG).");
   if (!/^[\w.|-]{40,1000}$/.test(value)) throw new Error("That doesn't look like an Instagram token. Copy the whole token from Meta for Developers.");
   let me;
   try {
     me = await instagramFields('me', 'user_id,username,name,account_type,profile_picture_url', 'user_id,username', {}, value, fetchImpl);
   } catch (err) {
-    if (err instanceof InstagramTokenProblem) throw new Error("Instagram didn't accept that token. Make a new one (Instagram → API setup with Instagram login → Generate token) and copy all of it.");
+    if (err instanceof InstagramTokenProblem) throw new Error("Instagram didn't accept that token. Make a new one (Use cases → Customize → API setup with Unified login → Generate token) and copy all of it.");
     throw err;
   }
   if (!me.username) throw new Error("Instagram didn't say which account that token is for.");

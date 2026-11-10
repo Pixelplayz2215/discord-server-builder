@@ -118,7 +118,7 @@ const SocialPage = {
     const instagram = row(
       'instagram',
       'Instagram',
-      ig.length ? `Connected: ${ig.map((a) => `@${a.username}`).join(', ')}. Instagram only lets the app see accounts you connect.` : 'Instagram only lets the app see accounts you connect, so these alerts are for your own account. Connect it below (free, about 10 minutes).',
+      ig.length ? `Connected: ${ig.map((a) => `@${a.username}`).join(', ')}. Instagram only lets the app see accounts you connect.` : 'Instagram only lets the app see accounts you connect, so these alerts are for your own account. Connect it below (free, about 15 minutes).',
       h('span', { class: `badge ${ig.length ? 'teal' : ''}` }, ig.length ? `${ig.length} connected` : 'Not connected'),
     );
 
@@ -162,15 +162,17 @@ const SocialPage = {
     return h(
       'details',
       { class: 'client-id-box instagram-box', open: !accounts.length },
-      h('summary', null, accounts.length ? `Instagram accounts (${accounts.length}): connect another, or paste a new token` : 'Connect your Instagram account (free, about 10 minutes)'),
+      h('summary', null, accounts.length ? `Instagram accounts (${accounts.length}): connect another, or paste a new token` : 'Connect your Instagram account (free, about 15 minutes)'),
       list.length ? h('div', { style: { margin: '10px 0 4px' } }, list) : null,
       h(
         'ol',
         { class: 'muted' },
         h('li', null, 'In Instagram, make the account a professional one: ', h('b', null, 'Settings → Account type and tools → Switch to professional account'), ". Creator and Business are both free; apps can't read personal accounts."),
         h('li', null, 'Open Meta for Developers and log in with Facebook. Press ', h('b', null, 'Create app'), ', give it any name, and pick the use case ', h('b', null, 'Manage messaging & content on Instagram'), '.'),
-        h('li', null, 'In your new app, open ', h('b', null, 'Instagram → API setup with Instagram login'), '. Under ', h('b', null, 'Generate access tokens'), ', press ', h('b', null, 'Add account'), ' and log in to Instagram, then press ', h('b', null, 'Generate token'), ' and paste it here. Keep it private, like a password.'),
-        h('li', null, 'If Meta says the account needs a role on the app: in ', h('b', null, 'App roles → Roles'), ', add it as an ', h('b', null, 'Instagram Tester'), ', accept the invite in Instagram (', h('b', null, 'Settings → Website permissions → Apps and websites → Tester invites'), '), then do step 3 again.'),
+        h('li', null, 'In your new app, open ', h('b', null, 'Use cases'), ', press ', h('b', null, 'Customize'), ' on the Instagram one, and pick ', h('b', null, 'API setup with Unified login'), ' (not "with Facebook login").'),
+        h('li', null, 'Meta needs a ', h('b', null, 'business portfolio'), ' for this first. Press ', h('b', null, '+ Business portfolio'), ' and pick yours, or make one: it\'s free, takes a name and an email, and needs no business or verification. A brand-new Facebook account has to wait about an hour before it can make one.'),
+        h('li', null, 'Under ', h('b', null, 'Generate access tokens'), ', press ', h('b', null, 'Add account'), ' and log in to Instagram, then press ', h('b', null, 'Generate token'), ' and paste it here. It starts with ', h('b', null, 'IG'), '. Keep it private, like a password.'),
+        h('li', null, 'If Meta says the account needs a role on the app: in ', h('b', null, 'App roles → Roles'), ', add it as an ', h('b', null, 'Instagram Tester'), ', accept the invite in Instagram (', h('b', null, 'Settings → Website permissions → Apps and websites → Tester invites'), '), then do step 5 again.'),
       ),
       h('p', { class: 'subtle', style: { fontSize: 'calc(12rem / 14)', margin: '0 0 8px' } }, "The token is checked before it's saved, then kept encrypted on this PC. It lasts 60 days and the app renews it every week while it runs, so you paste it once. Posts and reels are announced; stories aren't."),
       h(
