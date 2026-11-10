@@ -6,6 +6,8 @@ To release: add your changes as `- ` lines under **Unreleased**, then run `npm r
 
 ## Unreleased
 
+## 1.2.20 (2026-11-10)
+
 - **Instagram steps match Meta's dashboard.** The steps for connecting Instagram on the Social page now say where the token is today: **Use cases → Customize → API setup with Unified login**. They also say that Meta needs a free business portfolio first (just a name and an email, no verification), and that a brand-new Facebook account has to wait about an hour before it can make one.
 
 ## 1.2.19 (2026-11-10)
