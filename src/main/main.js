@@ -2176,7 +2176,7 @@ const handlers = {
     store.saveSocial({
       instagram: [...instagram.filter((a) => !ids.has(a.id)), ...accounts.map(({ api, ...account }) => account)],
       // Their alerts are checked again now, with the new token.
-      alerts: alerts.map((a) => (a.platform === 'instagram' && ids.has(a.source.id) ? { ...a, state: { ...a.state, checkedAt: 0 } } : a)),
+      alerts: alerts.map((a) => (a.platform === 'instagram' && ids.has(a.source.id) ? { ...a, state: { ...a.state, checkedAt: 0, waitUntil: 0 } } : a)),
     });
     for (const a of accounts) store.setInstagramToken(a.id, social.newInstagramToken(value, Date.now(), a.api));
     setTimeout(() => socialWatcher.tick().catch(() => {}), 500);

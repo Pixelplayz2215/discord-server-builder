@@ -34,6 +34,9 @@ const INSTAGRAM_POSTS = 15;
 const INSTAGRAM_TOKEN_MS = 60 * 86400000;
 const INSTAGRAM_RENEW_AFTER_MS = 7 * 86400000;
 const INSTAGRAM_RENEW_RETRY_MS = 86400000;
+// How long an Instagram alert waits after Meta turns its token down (blocked, no permission, gone)
+// before asking again. Pasting a new token checks at once.
+const TOKEN_PROBLEM_WAIT_MS = 30 * 60 * 1000;
 // Videos older than this are never announced, so a PC that was off for a week doesn't post a backlog.
 const CATCH_UP_MS = 2 * 86400000;
 const MAX_SEEN = 60;
@@ -530,6 +533,10 @@ const tiktokMessage = (alert, name, video) => postMessage(alert, name || alert.s
 const INSTAGRAM_HOSTS = { facebook: FACEBOOK_GRAPH, instagram: INSTAGRAM_API };
 const INSTAGRAM_PERMISSION_HELP =
   "Meta didn't let this token read the account's posts. In your Meta app, under Use cases → Customize → API setup with Unified login, edit the configuration so it has instagram_basic (if it already has, add business_management under Facebook Login for Business → Configurations), save it, then generate a new token and paste it under Accounts.";
+// Meta's "API access blocked." (error 200) is about the Meta app or developer account, not the token:
+// Meta wants something done on developers.facebook.com first, often "Confirm account".
+const INSTAGRAM_BLOCKED_HELP =
+  'Meta has blocked API access for your Meta app, so Instagram can\'t be read right now. This is on Meta\'s side: open developers.facebook.com and do what it asks (often "Confirm account", or an alert on your app\'s dashboard). Checks carry on by themselves once Meta lifts the block; if they don\'t within a few hours, generate a new token and paste it under Accounts.';
 
 function instagramError(status, error = {}) {
   const code = Number(error.code) || 0;
@@ -537,7 +544,8 @@ function instagramError(status, error = {}) {
   let err;
   if (code === 190 || status === 401) err = new InstagramTokenProblem("This Instagram token doesn't work any more (it was removed or ran out, or the Meta app left your business portfolio). Generate a new one and paste it under Accounts.");
   else if ([4, 17, 32, 613].includes(code) || status === 429) err = new Error('Instagram says the app checked too often. It tries again in a few minutes.');
-  else if (code === 10 || code === 200 || (code === 100 && Number(error.error_subcode) === 33)) err = Object.assign(new InstagramTokenProblem(INSTAGRAM_PERMISSION_HELP), { permission: true });
+  else if (code === 200 && /API access blocked/i.test(message)) err = Object.assign(new InstagramTokenProblem(INSTAGRAM_BLOCKED_HELP), { final: true });
+  else if (code === 10 || code === 200 || (code === 100 && Number(error.error_subcode) === 33)) err = Object.assign(new InstagramTokenProblem(INSTAGRAM_PERMISSION_HELP), { final: true });
   else err = new Error(`Instagram's API said: ${message || `HTTP ${status}`}`);
   return Object.assign(err, { code, missingField: code === 100 && /nonexisting field/i.test(message) });
 }
@@ -592,7 +600,7 @@ async function checkInstagramToken(token, fetchImpl) {
       return await read(value, fetchImpl);
     } catch (err) {
       // Turned down as a token: try the other way. Anything else is an answer about this token.
-      if (!(err instanceof InstagramTokenProblem) || err.permission) throw err;
+      if (!(err instanceof InstagramTokenProblem) || err.final) throw err;
     }
   }
   throw new Error("Meta didn't accept that token. Generate a new one (Use cases → Customize → API setup with Unified login → Generate token) and copy all of it; Meta shows it only once.");
@@ -776,21 +784,24 @@ function createSocialWatcher({ getAlerts, updateState, post, getTwitch, getInsta
   // share a read); new ones are posted oldest first. read(accountId) gives { name, posts }.
   async function checkPosts(alerts, every, read, message) {
     const byAccount = new Map();
-    for (const a of alerts) if (now() - (a.state?.checkedAt || 0) >= every) byAccount.set(a.source.id, [...(byAccount.get(a.source.id) || []), a]);
+    const due = (a) => now() - (a.state?.checkedAt || 0) >= every && now() >= (a.state?.waitUntil || 0);
+    for (const a of alerts) if (due(a)) byAccount.set(a.source.id, [...(byAccount.get(a.source.id) || []), a]);
     for (const [accountId, group] of byAccount) {
       let found;
       try {
         found = await read(accountId);
       } catch (err) {
+        // A token problem won't fix itself in 5 minutes, so it's checked again less often.
+        const tokenProblem = err instanceof InstagramTokenProblem;
         for (const a of group) {
           const failures = (a.state?.failures || 0) + 1;
-          const show = failures >= FAILS_BEFORE_ERROR || err instanceof InstagramTokenProblem;
-          updateState(a.id, { ...a.state, checkedAt: now(), failures, error: show ? err.message : a.state?.error || null });
+          const show = failures >= FAILS_BEFORE_ERROR || tokenProblem;
+          updateState(a.id, { ...a.state, checkedAt: now(), failures, error: show ? err.message : a.state?.error || null, waitUntil: tokenProblem ? now() + TOKEN_PROBLEM_WAIT_MS : 0 });
         }
         continue;
       }
       for (const a of group) {
-        const state = { ...a.state, checkedAt: now(), error: null, failures: 0 };
+        const state = { ...a.state, checkedAt: now(), error: null, failures: 0, waitUntil: 0 };
         const seen = new Set(state.seen || []);
         const since = Math.max(a.createdAt || 0, now() - CATCH_UP_MS);
         const fresh = found.posts.filter((p) => !seen.has(p.id) && p.at >= since).sort((x, y) => x.at - y.at);
