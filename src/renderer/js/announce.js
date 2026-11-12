@@ -272,7 +272,7 @@ const AnnouncePage = {
       }));
       imageHost.replaceChildren(
         h('div', { class: 'row wrap' }, pick, e.imageFile ? h('button', { type: 'button', class: 'btn sm ghost', onclick: () => { e.imageFile = ''; drawImage(); drawPreview(); } }, icon('x'), 'Remove picture') : null),
-        e.imageFile ? null : input(e, 'image', { placeholder: 'or paste an image link (https://…)', maxlength: 2048 }),
+        e.imageFile ? '' : input(e, 'image', { placeholder: 'or paste an image link (https://…)', maxlength: 2048 }),
       );
     }
 

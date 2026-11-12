@@ -299,7 +299,7 @@ const GiveawaysPage = {
       }));
       imageHost.replaceChildren(
         h('div', { class: 'row wrap' }, pick, draft.imageFile ? h('button', { type: 'button', class: 'btn sm ghost', onclick: () => { draft.imageFile = ''; drawImage(); drawPreview(); } }, icon('x'), 'Remove picture') : null),
-        draft.imageFile ? null : input(draft, 'image', { placeholder: 'or paste an image link (https://…)', maxlength: 2048 }),
+        draft.imageFile ? '' : input(draft, 'image', { placeholder: 'or paste an image link (https://…)', maxlength: 2048 }),
       );
     }
 

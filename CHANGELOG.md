@@ -6,6 +6,16 @@ To release: add your changes as `- ` lines under **Unreleased**, then run `npm r
 
 ## Unreleased
 
+- **The app always fits its window.** Something too wide could make the whole app wider than the window, so the right side, including the title bar, was cut off and stayed that way when you resized the window. That happened on the Social alerts page. The app now always matches the window's width, and every page was checked at narrow sizes, including with a bigger UI scale and text size:
+  - Long names, channels, errors and choices in drop-downs end with "…" in their own box.
+  - Card grids drop a column before they get cramped. The server header puts its buttons on their own line, and the server tabs fit without scrolling sideways.
+  - The member list keeps names readable, and the Moderation, Raid tools, Channels and Backups side cards move under their lists when there isn't room for both.
+  - Social alerts show the full name with "when they…" on its own line.
+  - Also fixed: oversized lock and "Text only" icons, a role name running over the next chip, and the eye button covering the bot token field.
+- The word "null" no longer shows up in the server stats preview, under the picture button in the announcement and giveaway editors, or in the welcome preview when the message is empty.
+- **Clearer Instagram errors.** When Meta blocks API access for your Meta app ("API access blocked", often after a brand-new developer account is flagged), the Instagram alert now says so and tells you to check developers.facebook.com, instead of suggesting a missing permission. While Meta keeps turning the token down, the alert checks every 30 minutes instead of every 5, and goes back to every 5 once it works. Posts missed in the meantime (up to 2 days old) are still posted.
+- Instagram profile pictures now show next to connected accounts on the Social page.
+
 ## 1.2.21 (2026-11-10)
 
 - **Instagram tokens from Unified login work.** New Meta apps only offer **API setup with Unified login**, and its token starts with EAA like a Facebook token. The app used to turn that token down ("That's a Facebook token"). It now accepts it and reads your posts through it. This token doesn't run out, so there's nothing to renew. If it was made for several Instagram accounts, they're all connected at once. The steps on the Social page now include creating the configuration in **1. Configure your app**, which Meta needs before **Generate token** works. Older Instagram login tokens (starting with IG) still work as before.

@@ -300,7 +300,7 @@ const WelcomePage = {
       const mention = bot?.id ? { ...vars, mention: `<@${bot.id}>` } : vars;
       previewText.replaceChildren(...discordText(WelcomeCard.fill(k.message, mention), { users: bot?.id ? [{ id: bot.id, name: displayName(bot) }] : [] }));
       canvas.style.display = k.showCard ? '' : 'none';
-      previewHost.replaceChildren(h('div', { class: 'rr-author' }, h('img', { class: 'avatar', src: userAvatar(bot, 64), width: 32, height: 32, alt: '' }), h('b', null, displayName(bot)), h('span', { class: 'badge peri' }, 'APP')), k.message.trim() ? previewText : null, canvas);
+      previewHost.replaceChildren(h('div', { class: 'rr-author' }, h('img', { class: 'avatar', src: userAvatar(bot, 64), width: 32, height: 32, alt: '' }), h('b', null, displayName(bot)), h('span', { class: 'badge peri' }, 'APP')), k.message.trim() ? previewText : '', canvas);
       const mine = ++drawing;
       if (k.showCard) WelcomePage.drawPreview(canvas, JSON.parse(JSON.stringify(k.card)), vars, bot, () => mine === drawing);
     }

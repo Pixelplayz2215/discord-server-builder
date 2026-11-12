@@ -359,11 +359,15 @@ const BotPage = {
       h('div', { class: 'card-head' }, icon('link'), h('h3', null, 'Invite link')),
       h(
         'div',
-        { class: 'row' },
+        { class: 'row wrap invite-row' },
         h('div', { style: { width: '280px', flexShrink: 0 } }, perms),
         h('div', { class: 'grow' }, urlInput),
-        h('button', { class: 'btn', onclick: () => copyText(urlInput.value, 'Invite link copied') }, icon('copy'), 'Copy'),
-        h('button', { class: 'btn teal', onclick: () => openExternal(urlInput.value) }, icon('external'), 'Open'),
+        h(
+          'div',
+          { class: 'row' },
+          h('button', { class: 'btn', onclick: () => copyText(urlInput.value, 'Invite link copied') }, icon('copy'), 'Copy'),
+          h('button', { class: 'btn teal', onclick: () => openExternal(urlInput.value) }, icon('external'), 'Open'),
+        ),
       ),
     );
   },

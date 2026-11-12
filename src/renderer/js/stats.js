@@ -213,9 +213,9 @@ const StatsPage = {
       const on = STAT_COUNTERS.filter(([key]) => draft.counters[key].on);
       const category = draft.categoryId === '__new__' ? '📊 Server Stats' : categories.find((c) => c.id === draft.categoryId)?.name;
       preview.replaceChildren(
-        category ? h('div', { class: 'stat-preview-cat' }, '⌄ ', category.toUpperCase()) : null,
+        category ? h('div', { class: 'stat-preview-cat' }, '⌄ ', category.toUpperCase()) : '',
         ...on.map(([key, , name]) => h('div', { class: 'stat-preview-row' }, icon('voice'), statName(draft.counters[key].name.trim() || name, counts[key], draft.format))),
-        on.length ? null : h('div', { class: 'subtle' }, 'Turn on a counter to see it here.'),
+        on.length ? '' : h('div', { class: 'subtle' }, 'Turn on a counter to see it here.'),
       );
     }
 
