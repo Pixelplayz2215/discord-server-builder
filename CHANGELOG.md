@@ -6,6 +6,8 @@ To release: add your changes as `- ` lines under **Unreleased**, then run `npm r
 
 ## Unreleased
 
+## 1.2.22 (2026-11-11)
+
 - **The app always fits its window.** Something too wide could make the whole app wider than the window, so the right side, including the title bar, was cut off and stayed that way when you resized the window. That happened on the Social alerts page. The app now always matches the window's width, and every page was checked at narrow sizes, including with a bigger UI scale and text size:
   - Long names, channels, errors and choices in drop-downs end with "…" in their own box.
   - Card grids drop a column before they get cramped. The server header puts its buttons on their own line, and the server tabs fit without scrolling sideways.
