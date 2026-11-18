@@ -38,7 +38,7 @@
   "build": {
     "appId": "org.pixelplayz.discordserverbuilder",
     "productName": "Discord Server Builder",
-    "copyright": "Copyright ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â© 2026 Pixelplayz2215",
+    "copyright": "Copyright © 2026 Pixelplayz2215",
     "directories": {
       "output": "dist",
       "buildResources": "build"
