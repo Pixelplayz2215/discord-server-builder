@@ -6,6 +6,10 @@ To release: add your changes as `- ` lines under **Unreleased**, then run `npm r
 
 ## Unreleased
 
+- **24/7 works again after you reset a bot's token.** The portal turned down a server's 24/7 settings with "These 24/7 settings were saved with a different bot token", even right after the app saved them again with the new token. Turning 24/7 off and on didn't help. The real problem was the portal's own record of what it had already done, which was still locked with the old token. The portal now starts that record fresh instead of turning the settings down. You'll get this after you press Sync fork on GitHub and Render finishes deploying.
+
+- **Clearer error when the mod portal's bot token stops working.** Signing in as a moderator showed "Invalid bot token (401 Unauthorized)", which looked like a problem with your sign-in or the app. It actually means the portal's own bot token was reset in the Discord Developer Portal. The app now says so and tells the server owner to copy the bot's current token into DISCORD_BOT_TOKEN on Render. After you press Sync fork on GitHub, the portal says this too and writes it in its Render logs.
+
 ## 1.2.22 (2026-11-11)
 
 - **The app always fits its window.** Something too wide could make the whole app wider than the window, so the right side, including the title bar, was cut off and stayed that way when you resized the window. That happened on the Social alerts page. The app now always matches the window's width, and every page was checked at narrow sizes, including with a bigger UI scale and text size:

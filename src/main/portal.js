@@ -35,6 +35,10 @@ async function call(portalUrl, route, { method = 'GET', token, body } = {}) {
     throw new Error(`Can't reach the mod portal (${err.cause?.code || err.name}). If it was asleep, try again in a minute.`);
   }
   const data = await res.json().catch(() => ({}));
+  // Portals from before 1.2.23 pass on Discord turning down their own bot token as if it were ours.
+  if (res.status === 401 && data.error === 'Invalid bot token (401 Unauthorized).') {
+    data.error = "The mod portal's bot token doesn't work anymore (it was probably reset in the Discord Developer Portal). Ask your server owner to copy the bot's current token into DISCORD_BOT_TOKEN on Render.";
+  }
   if (!res.ok) throw Object.assign(new Error(data.error || `The mod portal returned HTTP ${res.status}.`), { status: res.status, code: data.code ?? null });
   return data;
 }

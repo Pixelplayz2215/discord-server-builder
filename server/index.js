@@ -3,7 +3,7 @@
 // Mods only get moderation actions, and only those their own Discord permissions allow.
 // No dependencies beyond Node 20+. Start with: node server/index.js
 const http = require('http');
-const { DiscordRest } = require('../src/main/discord');
+const { DiscordRest, DiscordError } = require('../src/main/discord');
 const { fetchAllMembers, purgeMessages, setChannelLock, lockWithNotice } = require('../src/main/builder');
 const { loadConfig } = require('./config');
 const { createAuth } = require('./auth');
@@ -21,6 +21,9 @@ const MAX_BODY = 64 * 1024;
 const MAX_INTERACTION_BODY = 1024 * 1024;
 
 const httpError = (status, message) => Object.assign(new Error(message), { status });
+
+// Discord turned down the portal's own bot token. Not the mod's fault, so it isn't passed on as a 401.
+const BAD_BOT_TOKEN = "This mod portal's bot token doesn't work anymore (it was probably reset in the Discord Developer Portal). The server owner needs to copy the bot's current token into DISCORD_BOT_TOKEN on Render (portal → Environment) and wait for the deploy to finish.";
 
 function readBody(req, limit = MAX_BODY) {
   return new Promise((resolve, reject) => {
@@ -371,6 +374,10 @@ function createPortal({ config, rest, auth, guard, interactions, always = null, 
     try {
       return sendJson(res, 200, await route(req));
     } catch (err) {
+      if (err instanceof DiscordError && err.status === 401) {
+        console.error(`${req.method} ${url.pathname}: Discord rejected DISCORD_BOT_TOKEN (401). Update it in the Render environment.`);
+        return sendJson(res, 503, { error: BAD_BOT_TOKEN, code: 'bot-token' });
+      }
       // Discord's own errors carry a status and code; pass them through so the app can explain them.
       const status = err.status && err.status >= 400 && err.status < 600 ? err.status : 500;
       if (status >= 500) console.error(`${req.method} ${url.pathname}:`, err);

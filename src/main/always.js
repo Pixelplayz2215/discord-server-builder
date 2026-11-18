@@ -318,7 +318,9 @@ async function loadBundle({ rest, token, guildId, botUserId, fetchImpl = fetch }
   if (!found.settings) return null;
   const bundle = open(token, await download(found.settings.url, fetchImpl));
   let state = null;
-  if (found.state) state = await download(found.state.url, fetchImpl).then((raw) => open(token, raw), () => null);
+  // A state the portal saved before the bot's token was reset can't be opened: start a fresh one
+  // rather than turning down settings the app has just saved with the new token.
+  if (found.state) state = await download(found.state.url, fetchImpl).then((raw) => open(token, raw)).catch(() => null);
   return { channelId: channel.id, bundle, state, stateMessage: found.state, files: found.files };
 }
 
